@@ -6,6 +6,7 @@ import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef.POINT;
+import com.sun.jna.platform.win32.WinUser;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,13 +22,13 @@ import java.util.Set;
  * Foreground {@link InputProvider} backed by FakerInput virtual HID reports.
  *
  * <p>Screen-absolute caller coordinates are scaled to physical pixels with the existing DHXY rule, then
- * reached with relative HID reports and cursor read-back. The provider exists only when the user explicitly
- * selects {@code bot.input.backend=FAKER_INPUT}; a missing driver fails application startup.</p>
+ * mapped to FakerInput absolute HID coordinates and verified through cursor read-back. FakerInput is the
+ * default backend; a missing driver fails application startup instead of falling back to {@code SendInput}.</p>
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-@ConditionalOnProperty(prefix = "bot.input", name = "backend", havingValue = "FAKER_INPUT")
+@ConditionalOnProperty(prefix = "bot.input", name = "backend", havingValue = "FAKER_INPUT", matchIfMissing = true)
 public class FakerInputProvider implements InputProvider {
 
     private static final int MODIFIER_LEFT_CTRL = 0x01;
@@ -373,41 +374,46 @@ public class FakerInputProvider implements InputProvider {
         double scale = coordinateHelper.getScaleRatio();
         int targetX = (int) Math.round(logicalX * scale);
         int targetY = (int) Math.round(logicalY * scale);
+        int screenWidth = User32.INSTANCE.GetSystemMetrics(WinUser.SM_CXSCREEN);
+        int screenHeight = User32.INSTANCE.GetSystemMetrics(WinUser.SM_CYSCREEN);
+        if (screenWidth <= 1 || screenHeight <= 1) {
+            throw new IllegalStateException("FakerInput could not read primary screen bounds");
+        }
+        if (targetX < 0 || targetX >= screenWidth || targetY < 0 || targetY >= screenHeight) {
+            throw new IllegalStateException("FakerInput absolute target is outside the primary screen: target=("
+                    + targetX + "," + targetY + ") screen=(" + screenWidth + "," + screenHeight + ")");
+        }
+        int absoluteX = normalizeAbsoluteCoordinate(targetX, screenWidth);
+        int absoluteY = normalizeAbsoluteCoordinate(targetY, screenHeight);
         POINT current = new POINT();
         for (int attempt = 1; attempt <= MOVE_MAX_ATTEMPTS; attempt++) {
+            synchronized (this) {
+                device.updateAbsoluteMouse(heldMouseButtons, absoluteX, absoluteY, 0);
+            }
+            TaskSleep.sleep(MOVE_RETRY_DELAY_MS);
             if (!User32.INSTANCE.GetCursorPos(current)) {
                 throw new IllegalStateException("FakerInput could not read the current cursor position");
             }
-            int deltaX = targetX - current.x;
-            int deltaY = targetY - current.y;
-            if (Math.abs(deltaX) <= 1 && Math.abs(deltaY) <= 1) {
+            log.info("[INPUT_CURSOR_TRACE] backend=FAKER_INPUT mode=ABSOLUTE logical=({}, {}) physical=({}, {}) "
+                            + "actual=({}, {}) normalized=({}, {}) primaryScreen=({}, {}) attempt={}/{}",
+                    logicalX, logicalY, targetX, targetY, current.x, current.y, absoluteX, absoluteY,
+                    screenWidth, screenHeight, attempt, MOVE_MAX_ATTEMPTS);
+            if (Math.abs(current.x - targetX) <= 1 && Math.abs(current.y - targetY) <= 1) {
                 return;
             }
-            publishRelativeMove(deltaX, deltaY);
-            TaskSleep.sleep(MOVE_RETRY_DELAY_MS);
-            log.info("[INPUT_CURSOR_TRACE] backend=FAKER_INPUT logical=({}, {}) physical=({}, {}) attempt={}/{} delta=({}, {})",
-                    logicalX, logicalY, targetX, targetY, attempt, MOVE_MAX_ATTEMPTS, deltaX, deltaY);
         }
-        if (!User32.INSTANCE.GetCursorPos(current)
-                || Math.abs(current.x - targetX) > 1
-                || Math.abs(current.y - targetY) > 1) {
-            throw new IllegalStateException("FakerInput cursor move failed: target=(" + targetX + "," + targetY
-                    + ") actual=(" + current.x + "," + current.y + ")");
-        }
+        throw new IllegalStateException("FakerInput cursor move failed: target=(" + targetX + "," + targetY
+                + ") actual=(" + current.x + "," + current.y + ")");
     }
 
-    private void publishRelativeMove(int deltaX, int deltaY) {
-        int remainingX = deltaX;
-        int remainingY = deltaY;
-        while (remainingX != 0 || remainingY != 0) {
-            int chunkX = Math.max(Short.MIN_VALUE, Math.min(Short.MAX_VALUE, remainingX));
-            int chunkY = Math.max(Short.MIN_VALUE, Math.min(Short.MAX_VALUE, remainingY));
-            synchronized (this) {
-                device.updateRelativeMouse(heldMouseButtons, chunkX, chunkY, 0, 0);
-            }
-            remainingX -= chunkX;
-            remainingY -= chunkY;
+    static int normalizeAbsoluteCoordinate(int physicalPixel, int screenSpan) {
+        if (screenSpan <= 1) {
+            throw new IllegalArgumentException("screenSpan must be greater than one");
         }
+        if (physicalPixel < 0 || physicalPixel >= screenSpan) {
+            throw new IllegalArgumentException("physicalPixel is outside the screen: " + physicalPixel);
+        }
+        return (int) Math.round(physicalPixel * (double) Short.MAX_VALUE / (screenSpan - 1));
     }
 
     private void sweepRows(int leftX, int rightX, int startY, int endY, int rowStepPx) {

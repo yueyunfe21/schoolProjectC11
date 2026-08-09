@@ -74,14 +74,14 @@ final class TiantingDialogLocalMechanics {
     private static final List<String> RESIDENT_OPTIONS = List.of(KAIDA, DUOXIE, ZHUOYUE, YAOWANG);
 
     /**
-     * Every 天庭 option whose business meaning is already known.
+     * Non-post-combat 天庭 options whose business meaning is already known.
      *
      * <p>This set is deliberately wider than {@link #RESIDENT_OPTIONS}: it is used only after a green
-     * tracker click has proved that no movement started, when a dialog is the likely blocker. Keeping a
-     * separate set preserves the narrower accept, post-combat and ordinary-leg probes.</p>
+     * tracker click has proved that no movement started, when a dialog is the likely blocker. 引妖香 is
+     * deliberately excluded: only an explicit Tracker-classified {@code TIANTING_YINYAO} interest may match it.</p>
      */
     private static final List<String> RECOVERY_OPTIONS =
-            List.of(KAIDA, DUOXIE, ZHUOYUE, YAOWANG, FENGYAO, ACCEPT, YINYAO);
+            List.of(KAIDA, DUOXIE, ZHUOYUE, YAOWANG, FENGYAO, ACCEPT);
 
     private TiantingDialogLocalMechanics() {
     }

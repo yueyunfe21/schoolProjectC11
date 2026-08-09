@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "card": "G047",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "thin-client-design",
+    "clientCommit": "49cc45cec7ea9eaa48b0c6e014ea7a447c59e4ad",
+    "pushedReference": "origin/thin-client-design",
+    "cloudBranch": "navigation-migration",
+    "cloudCommit": "3b004086276972e8d89aa85eb81510082ab0f436",
+    "cloudPushedReference": "origin/navigation-migration"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-NPC-001"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/业务逻辑.md",
+    "docs/云端迁移常见错误清单.md",
+    "docs/business-rules.json",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G047.json",
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/NpcClickSmartQueueStore.java"},
+    {"repo": "cloud", "path": ".gitignore"},
+    {"repo": "cloud", "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/G047NpcClickProducerOutcomeGateContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "旧文档已要求 success/cancel/final-fail 停止生产，但 eager producer 在成功回报前已经启动后续 OCR，且 Map 删除无法停止持有 Session 引用的线程。",
+    "userDecision": "同一 NPC 请求打开 Dialog 后，来自同一任务的其余识别请求全部关闭，不能继续。可点击候选必须成为生产栅栏；失败才允许下一候选。",
+    "decisionRecordedAt": "2026-08-09",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G047"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-NPC-001",
+      "producer": "Cloud SmartClickRecognizer 按 MEMORY、TOOLTIP、YELLOW_NAME、PURPLE_FORMULA、CTRL_CANDIDATES 顺序向 NpcClickSmartQueueStore.Session push 候选。",
+      "transport": "Client 通过 NPC arrival FIFO poll 取得一个候选，执行 exact-window 原子点击和本地 verifier；失败后同 session 的下一次 poll 是继续信号，terminal outcome 通过现有 REPORT HTTP 回传。",
+      "consumer": "NpcClickSmartQueueStore.Session 在可点击候选 push 后暂停 producer；下一次 poll 只放行失败后的后续策略，terminal REPORT 终止 producer 并清空剩余消息。",
+      "ordering": "candidate computed -> actionable candidate pushed -> producer paused -> Client click and verifier -> failure then next poll releases producer OR success/terminal REPORT cancels producer; no later OCR may start on success",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/G047NpcClickProducerOutcomeGateContractTest.java",
+          "command": "focused G047 producer outcome-gate contract",
+          "proves": [
+            "an actionable tooltip pauses later strategy production until the Client requests another message",
+            "VERIFIED terminates the producer and prevents the next OCR stage from starting",
+            "VERIFICATION_FAILED followed by the next poll releases exactly the next strategy",
+            "terminal cancellation clears queued messages and wakes a blocked producer",
+            "an earlier no-action miss cannot release a later actionable tooltip"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "G047 business-rule gate", "result": "PASS"},
+    {"name": "Cloud production compile", "result": "PASS", "command": "mvn -q compile"},
+    {"name": "Cloud G047 producer outcome-gate contract", "result": "PASS 3/3", "note": "isolated javac + JUnit ConsoleLauncher; standard Maven focused test blocked before execution by unrelated stale test sources"},
+    {"name": "git diff --check", "result": "PASS"},
+    {"name": "fresh runtime", "result": "PENDING"}
+  ]
+}

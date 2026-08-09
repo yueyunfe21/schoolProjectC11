@@ -8,12 +8,16 @@ import com.bot.dhxy.config.WindowIsolationProperties;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.input.action.InputAction;
+import com.bot.dhxy.input.action.InputActionType;
 import com.bot.dhxy.model.dialog.DialogOperation;
 import com.bot.dhxy.service.DialogService;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.window.model.WindowDialogInterest;
 import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.model.WindowPathingIntent;
+import com.bot.dhxy.window.model.WindowPathingIntentType;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import org.junit.jupiter.api.Test;
@@ -29,6 +33,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -245,15 +250,14 @@ class TiantingDialogProbeContractTest {
     }
 
     @Test
-    void noMovementRecoveryCarriesEveryKnownOptionAcrossTheRealSamplerSeam() {
+    void noMovementRecoveryCarriesEveryNonPostCombatOptionAcrossTheRealSamplerSeam() {
         for (String templatePath : List.of(
                 TiantingDialogLocalMechanics.KAIDA,
                 TiantingDialogLocalMechanics.DUOXIE,
                 TiantingDialogLocalMechanics.ZHUOYUE,
                 TiantingDialogLocalMechanics.YAOWANG,
                 TiantingDialogLocalMechanics.FENGYAO,
-                TiantingDialogLocalMechanics.ACCEPT,
-                TiantingDialogLocalMechanics.YINYAO)) {
+                TiantingDialogLocalMechanics.ACCEPT)) {
             Fixture fixture = new Fixture();
             fixture.armRecoveryInterest();
             fixture.showOption(templatePath);
@@ -270,6 +274,76 @@ class TiantingDialogProbeContractTest {
                                     && event.detail().contains("executed=true")),
                     templatePath + " must cross the retained-event seam with its real identity");
         }
+    }
+
+    @Test
+    void noMovementRecoveryDoesNotMatchPostCombatYinyao() {
+        Fixture fixture = new Fixture();
+        fixture.armRecoveryInterest();
+        fixture.showOption(TiantingDialogLocalMechanics.YINYAO);
+
+        List<ObservationKeyEvent> events = fixture.collectCycles(1);
+
+        assertTrue(fixture.inputSequences.clicks.isEmpty(),
+                "generic no-movement recovery must not click yinyao.png");
+        assertTrue(events.stream().noneMatch(event -> event.detail() != null
+                        && event.detail().startsWith(TiantingDialogLocalMechanics.ACTION_YINYAO + "|")),
+                "only the explicit Tracker-classified TIANTING_YINYAO interest may publish 引妖香");
+    }
+
+    @Test
+    void yinyaoInterestClicksOptionThenPreparedTrackerPointInOneQueueRequest() {
+        Fixture fixture = new Fixture();
+        fixture.armYinyaoInterest(100L, "intent-yinyao-chain");
+        fixture.showOption(TiantingDialogLocalMechanics.YINYAO);
+
+        List<ObservationKeyEvent> events = fixture.collectCycles(1);
+
+        assertEquals(1, fixture.inputSequences.submissions.size());
+        List<InputAction> actions = fixture.inputSequences.submissions.get(0);
+        assertEquals(6, actions.size());
+        assertEquals(2, actions.stream().filter(action -> action.getType() == InputActionType.CLICK_LEFT).count());
+        InputAction trackerClick = actions.get(5);
+        assertEquals(InputActionType.CLICK_LEFT, trackerClick.getType());
+        assertEquals(321, trackerClick.getX());
+        assertEquals(222, trackerClick.getY());
+        assertEquals("intent-yinyao-chain",
+                fixture.context.getPathingSnapshot().getIntent().getIntentId());
+        assertTrue(events.stream().anyMatch(event -> event.detail() != null
+                        && event.detail().startsWith(TiantingDialogLocalMechanics.ACTION_YINYAO + "|")
+                        && event.detail().contains("executed=true")
+                        && event.detail().contains("trackerChained=true")),
+                "the existing dialog event must report that its local probe also dispatched the Tracker click");
+    }
+
+    @Test
+    void matchedYinyaoStopsProbingUntilTheTrackerTaskInstallsANewInterest() {
+        Fixture fixture = new Fixture();
+        fixture.armYinyaoInterest(100L, "intent-yinyao-first");
+        fixture.showNothing();
+
+        fixture.collectCycles(2);
+        assertTrue(fixture.inputSequences.submissions.isEmpty(),
+                "a miss must remain retryable for the current Tracker task");
+
+        fixture.showOption(TiantingDialogLocalMechanics.YINYAO);
+        fixture.collectCycles(1);
+        assertEquals(1, fixture.inputSequences.submissions.size());
+
+        fixture.showNothing();
+        fixture.collectCycles(1);
+        fixture.showOption(TiantingDialogLocalMechanics.YINYAO);
+        fixture.collectCycles(2);
+        assertEquals(1, fixture.inputSequences.submissions.size(),
+                "a matched 引妖香 task must not resume matching when the old dialog pixels reappear");
+
+        fixture.armYinyaoInterest(200L, "intent-yinyao-next-task");
+        assertFalse(fixture.context.hasTiantingDialogOptionClaim(
+                        "100|" + TiantingDialogLocalMechanics.ACTION_YINYAO),
+                "replacing the Tracker task interest must clear the previous task's match claim");
+        fixture.collectCycles(1);
+        assertEquals(2, fixture.inputSequences.submissions.size(),
+                "a new Tracker task interest must re-arm 引妖香 matching");
     }
 
     @Test
@@ -380,6 +454,24 @@ class TiantingDialogProbeContractTest {
                     .build(), "test-recovery");
         }
 
+        void armYinyaoInterest(long createdAtMs, String intentId) {
+            context.updateDialogInterest(WindowDialogInterest.builder()
+                    .taskType(TaskType.TIANTING)
+                    .operations(List.of(DialogOperation.TIANTING_YINYAO))
+                    .source("test-yinyao-chain")
+                    .createdAtMs(createdAtMs)
+                    .localTemplateProbeOnly(true)
+                    .probeStartAtMs(1L)
+                    .followUpAbsoluteX(321)
+                    .followUpAbsoluteY(222)
+                    .followUpPathingIntent(WindowPathingIntent.builder()
+                            .source("test-yinyao-chain")
+                            .intentId(intentId)
+                            .type(WindowPathingIntentType.UNTARGETED_TRACKER)
+                            .build())
+                    .build(), "test-yinyao-chain");
+        }
+
         void showOption(String templatePath) {
             tracker.frame = canvasWith(templatePath);
         }
@@ -477,6 +569,7 @@ class TiantingDialogProbeContractTest {
 
     private static final class RecordingInputSequences extends InputSequences {
         final List<String> clicks = new CopyOnWriteArrayList<>();
+        final List<List<InputAction>> submissions = new CopyOnWriteArrayList<>();
         volatile boolean clickResult = true;
 
         RecordingInputSequences() {
@@ -486,6 +579,12 @@ class TiantingDialogProbeContractTest {
         @Override
         public boolean moveAndClickLeft(String source, int x, int y, int moveDelayMs, int clickDelayMs) {
             clicks.add(source + "@" + x + "," + y);
+            return clickResult;
+        }
+
+        @Override
+        public boolean submitAndWait(String description, List<InputAction> actions) {
+            submissions.add(List.copyOf(actions));
             return clickResult;
         }
     }

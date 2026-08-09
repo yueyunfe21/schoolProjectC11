@@ -54,7 +54,8 @@ public record TurnWholeTaskRuntimeArguments(
         TurnNpcArrivalFrameFifoSpec npcArrivalFifo,
         String recoveryTaskRunId,
         Integer recoveryRound,
-        String recoveryAttemptId) {
+        String recoveryAttemptId,
+        TurnDialogFollowUpClick dialogFollowUpClick) {
 
     /** Backward-compatible full constructor before exact recovery identity was added. */
     public TurnWholeTaskRuntimeArguments(
@@ -104,7 +105,7 @@ public record TurnWholeTaskRuntimeArguments(
                 probeStartAtMs, scheduleAttemptId, scheduleRound, scheduleTaskRunId, scheduleOpenedAtMs,
                 scheduleObservationRunId, replayObservationRunId, replayBusinessTaskRunId,
                 expectedCombatClaimId, expectedCombatObservationRunId, expectedCombatBusinessTaskRunId,
-                expectedCombatAttemptId, npcArrivalFifo, null, null, null);
+                expectedCombatAttemptId, npcArrivalFifo, null, null, null, null);
     }
 
     /**
@@ -244,7 +245,7 @@ public record TurnWholeTaskRuntimeArguments(
                 interestOperations, absentAllowedAtMs, probeOnly, completedRuns, totalRuns, dialogSnapshotMaxAgeMs,
                 transferChoice, routeOutcome, routeOutcomeReplacementReason, startupFlyingState,
                 null, null, null, null, null, null, null, null, null, null, null, null,
-                null, null, null, null);
+                null, null, null, null, null);
     }
 
     public TurnWholeTaskRuntimeArguments(
@@ -264,6 +265,6 @@ public record TurnWholeTaskRuntimeArguments(
                 transferChoice, routeOutcome, routeOutcomeReplacementReason, startupFlyingState,
                 probeStartAtMs, scheduleAttemptId, scheduleRound, scheduleTaskRunId, scheduleOpenedAtMs,
                 null, null, null, null, null, null, null,
-                null, null, null, null);
+                null, null, null, null, null);
     }
 }

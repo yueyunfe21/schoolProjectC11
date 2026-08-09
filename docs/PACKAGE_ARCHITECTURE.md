@@ -1,5 +1,247 @@
 # DHXY Package Architecture
 
+## G049 天庭引妖香按 Tracker 分支处理并在任务内去重（2026-08-09）
+
+- **状态：SOURCE + ISOLATED CONTRACT PASSED / FRESH REQUIRED。** Client/治理 worktree 为 `D:\mavenProject\DHXY-cr271`
+  （`thin-client-design@49cc45cec7ea9eaa48b0c6e014ea7a447c59e4ad`）；Cloud 实现仓为
+  `D:\mavenProject\dhxy-cloud-brain`
+  （`navigation-migration@3b004086276972e8d89aa85eb81510082ab0f436`）。保护基线
+  `D:\mavenProject\DHXY` 不修改；两仓现有 dirty/untracked 全部保留，不 reset/revert/clean/commit。
+- **问题与证据：** `yinyao.png` 曾同时出现在任意绿链未移动后的通用 recovery 与显式
+  `TIANTING_YINYAO` interest 中，导致普通恢复也可能扫描该模板；显式 interest 命中后，既有 claim 又在
+  模板匹配之后才检查，因此观察循环仍会反复做无意义匹配。
+- **最终用户裁决：** Tracker 已分类为 `YINYAO` 就足以证明当前是引妖香分支，不再增加 Runner 脱战事实或
+  时间 gate。显式模板未命中时允许后续帧继续重试；一旦当前任务匹配成功，后续周期必须在截图/匹配前停止。
+  Tracker 任务/interest 变化或被清除时必须清掉旧 claim，让新任务重新获得匹配资格，不能形成死循环。
+- **精确写集：** Cloud `TiantingTask.java` 与现有天庭定向合同；Client
+  `TiantingDialogLocalMechanics.java`、`WindowObservationSampler.java`、`WindowRuntimeContext.java`、
+  `TiantingDialogProbeContractTest.java`；治理仅本卡、`docs/ACTIVE_WORK.md` 与生成的
+  `docs/cr-dashboard-data.js`。不改模板、OCR 分类、绿链坐标、输入动作、封妖符、其他任务或 runtime。
+- **验收门：** 合同必须证明 `YINYAO` 直接安装显式 interest，并保留“先点击使用引妖香、再点击已准备绿链”的
+  原子链；通用 recovery 不命中 `yinyao.png`；同一 interest 未命中可重试、命中后不再重复、新 interest 能
+  重新匹配且旧 claim 已清除。仅运行适用 compile/隔离合同与 `git diff --check`，不启动 runtime。
+- **实现：** Cloud `clickTrackerLink(...)` 直接按 branch=`YINYAO` 安装现有原子 interest，不读取 Runner
+  脱战布尔或时间戳。Client 通用 `RECOVERY_OPTIONS` 移除 `YINYAO`。显式 interest 的 claim 检查前移至共享帧
+  裁剪与模板匹配之前：miss 不产生 claim，后续继续匹配；match 后当前 interest 立即安静。
+  `WindowRuntimeContext` 在 interest 身份替换或清除时显式清除旧 claim，新 Tracker 任务自然重新放行；点击前
+  fresh 校验同时确认 interest 仍是当前身份，避免替换瞬间的旧采样越权点击。
+- **验证：** Client/Cloud production `mvn -q -DskipTests=false compile` 均 PASS。两仓标准 named Maven
+  均在目标类执行前被既有卡外 aggregate `testCompile` 欠账阻断；按项目既有隔离方式执行 Cloud
+  `TiantingSubtaskLoopContractTest` `27/27 PASS`、Client `TiantingDialogProbeContractTest` `17/17 PASS`。
+  Client 合同同时证明显式 interest 对 `yinyao.png` 为 `score=1.0` 并执行两次原子点击，而通用 recovery
+  对同图零点击、零 `tianting.yinyao` 事件；同任务 miss 可重试，match 后即使旧像素再次出现也不重复，
+  新 interest 清除旧 claim 后重新执行。未启动 runtime/application/UI/capture/input；fresh 待验证。
+
+## G048 天庭 Tracker OCR 优先于日计数校准并输出端到端耗时（2026-08-09）
+
+- **状态：SOURCE + SAVED-FRAME REPLAY PASSED / FRESH REQUIRED。** Client/治理 worktree 为 `D:\mavenProject\DHXY-cr271`
+  （`thin-client-design@49cc45cec7ea9eaa48b0c6e014ea7a447c59e4ad`）；Cloud 实现仓为
+  `D:\mavenProject\dhxy-cloud-brain`
+  （`navigation-migration@3b004086276972e8d89aa85eb81510082ab0f436`）。保护基线
+  `D:\mavenProject\DHXY` 不修改；两仓现有 dirty/untracked 全部保留，不 reset/revert/clean/commit。
+- **fresh 证据：** `01:38:28.129` Client 已点击天庭 `accept.png`；G047 已加载，李靖 `TOOLTIP` 在
+  `01:38:27.041` 验证成功后同 NPC session 没有再消费后续候选。但 Tracker 本地暗雷模板连续为
+  `0.3008`，Cloud 等待 exact task-box OCR 时，同一任务又启动两次非关键 daily-count OCR：第一帧到
+  `01:38:39` 才落空文本，第二帧到 `01:38:46` 才返回完整文字；截至 `01:38:50.536` 停止仍无 Tracker
+  classification、无绿链点击。G047 生效，但只消除了 NPC producer 后续识别，没有处理 accept 后的校准竞争。
+- **用户批准边界：** 本卡暂时保留当前“Tracker OCR classification 返回后才点绿链”的诊断顺序，不落实最终
+  “先点绿链、移动途中分类”的业务顺序；不改模板、ROI、阈值、OCR `10s` HTTP 上限、分支分类或点击逻辑。
+  先让关键 task-box OCR 独占本任务 accept 后的识别机会：两帧 daily-count 校准必须等本次 Tracker 分类返回且
+  绿链提交后才异步启动。日志必须分别给出异步排队、OCR 调用、结果发布及端到端耗时和失败原因。
+- **精确写集：** Cloud `.gitignore` 精确测试白名单、`TiantingTask.java`、`CloudWholeTaskObserver.java`、`TaskTrackerPanelService.java`、
+  `TiantingDailyCompletionCalibrator.java`、`TiantingDailyCalibrationOffCriticalPathContractTest.java`；Client/治理仅本卡、`docs/ACTIVE_WORK.md` 与生成的
+  `docs/cr-dashboard-data.js`。不得扩大到 OCR sidecar、其他任务、NPC FIFO、Client 输入或 runtime。
+- **验收：** Cloud production compile；定向合同证明 accept 只登记待校准、Tracker classification 仍位于绿链提交前、
+  daily-count 只在绿链提交后异步启动；日志字段可直接计算 queue/HTTP/publish/total；`git diff --check`。
+  fresh 必须看到单次 task-box OCR 在 `10s` 内给出 `DARK_THUNDER/YINYAO/OTHER` 或带原因的 definitive=false，
+  再决定最终业务顺序，不能用延长 timeout 掩盖。
+- **实现：** accept 成功时从 exact observation lineage 复制同一 observerSeq 的 first/fresh PNG 到内存，不调用
+  OCR；`clickTrackerLink()` 仍先等待 exact classification，advance 提交成功后才异步 OCR 两张不可变快照。
+  因此既不让校准竞争关键 task-box OCR，也不会因延后读取 inbox 而把已关闭的 accept Dialog 换成后续游戏画面。
+  Tracker 日志现输出 `queueDelayMs`、classifier `elapsedMs/reason`、`ocrElapsedMs/totalElapsedMs` 及
+  `publishTotalElapsedMs`。
+- **静态与回放验收：** Cloud production `mvn -q -DskipTests=false compile` PASS；G048 隔离 JUnit `3/3 PASS`。
+  标准定向 Maven 在执行 G048 前被卡外旧 `DialogService` 构造器及
+  `classifyPostCombatTrackerFreshness(...)` 测试签名阻断，未越界修旧债。直接使用
+  `01:38:33` 保存的 `209x78` task-box
+  `images/temp/match-miss/tianting-darkthunder/01-anlei-score-0.3008.png` 调用正式
+  `TaskTrackerPanelService.classifyTiantingTrackerByOcr(...)`：classifier `2791ms`、调用端端到端 `2944ms`，
+  `definitive=true`、branch=`DARK_THUNDER`，OCR 文本包含“游荡的妖怪”。未启动 application/UI/capture/input；
+  只复用了已运行的 OCR sidecar 做保存帧回放。
+- **2026-08-09 02:04 fresh 时间证据：** `accept.png` 物理点击事务在 `02:04:10.117` 完成；新 Tracker
+  action 于 `02:04:11.894` 发布，task-box OCR 于 `02:04:11.897` 调度，异步排队仅 `3ms`，单次 OCR
+  `5515ms`，`02:04:17.423` 发布 `DARK_THUNDER definitive=true`，没有触发 `10s` transport retry。
+  Client 于 `02:04:17.567` 收到绿链动作、`02:04:17.826` 执行物理点击、`02:04:18.185` 完成动作；从
+  accept 事务完成到绿链动作完成为 `8068ms`，其中约 `1.78s` 是 Tracker 出现/action 准备，约 `5.53s`
+  是 OCR 与结果发布，约 `0.76s` 是 fresh raw-RGB `1.0` 校验及输入事务。关键路径行为正确，分类文字包含
+  “游荡的妖怪”，没有 fallback、UNKNOWN 或业务重试。
+- **fresh 新发现：** 绿链 advance 后启动的两帧 daily-count 校准耗时 `15863ms`；用户停止任务后，主任务已
+  `STOPPED`、observer 已关闭，该异步校准仍继续到完成。它没有拖慢本次绿链，但缺少 task-run
+  cancellation/fence，可能在停止后继续占用共享 OCR sidecar；本卡保持打开，待用户批准后单独修复，禁止把它
+  混入已验证的 Tracker 关键路径。
+- **daily-count 深挖：** 当前实现并未裁“次数小 ROI”；`readFrame(...)` 对 first/fresh 两张完整
+  `640x300`、约 `233KB` Dialog ROI 串行各执行一次 `LocalOcrClient.readJoinedText(...)`。本次第一张约
+  `9s`、第二张约 `7s`，合计 `15863ms`。两份 OCR 原文均包含完整对话并准确读出
+  `今日已完成次数：18`，正则也都能解析为 `18`；因此本次读取本身成功。没有出现
+  `daily count calibrated from 李靖`，是因为异步结果完成前任务已于 `02:04:23` 停止，结果只写进
+  `pendingDailyCalibration`，再无 phase dispatch 调用 `applyPendingDailyCalibration(...)`。保留日志中历史
+  `9` 次校准全部为 ignored、`0` 次 applied；历史证据多为 first/fresh 至少一张空文本，且
+  `readJoinedText(...)` 把 transport unavailable 与“正常空字”都折叠为空字符串，现有日志无法继续区分。
+- **保存帧离线验证：** 当前红字真实像素约位于完整 Dialog ROI 的 `(68,142)-(201,155)`；使用不落盘的
+  `(60,135,175x28)` raw crop 调现有 sidecar，`1x/2x/4x` 均读出
+  `今日已完成次数：|18`，分别耗时 `3366/3164/2593ms`。first/fresh 在该 crop 的 `4900` 个像素完全一致。
+  因而可行返修不是调大/缩小 timeout，而是先从 Dialog 内定位唯一红字行，比较两张小 crop 一致性，再只对
+  一张 raw crop OCR；同时给异步结果加 exact task-run fence。该方向尚待用户批准，当前未改生产代码。
+- **返修批准（2026-08-09）：** 用户批准上述方向。保持后台执行与两张 exact accept 帧；实现必须动态定位
+  红字横向文字带、比较两张小 crop 的红字掩码并只 OCR 一张 raw crop。结果携带并复核 exact
+  `businessTaskRunId + observationRunId + observerSeq`，通过专用 ready-event 唤醒当前任务应用；旧/已停止 run
+  的结果只能丢弃。精确新增写集为 Cloud `WindowReadyEventType.java`、`TiantingDailyCompletionCalibrator.java`、
+  `TiantingTask.java`、G048 定向合同/保存帧回放测试与 `.gitignore` 精确白名单；不得扩大到现有接任务、Tracker
+  分类、绿链、模板、OCR timeout、其他任务或 Client 输入。修完先做离线保存帧回放和编译/合同，不启动 runtime。
+- **返修实现：** `TiantingDailyCompletionCalibrator` 现在从完整 Dialog 内动态寻找满足红色阈值、文字带高度和
+  横向连续性的候选，不写死红字 `y`；允许标签与数字间真实约 `10px` 空隙，但会切断远处场景红色装饰。
+  first/fresh 只对该文字带的红字掩码做 `IoU >= 0.98` 一致性门；通过后把 first 的 tight crop 红色像素转黑、
+  其他转白，不膨胀，再最近邻放大 `4x`，执行一次 typed `LocalOcrClient.readWords(...)`；transport unavailable
+  与无字不再折叠。
+  结果携带 exact `businessTaskRunId + observationRunId + observerSeq`；OCR 前后及任务线程 apply 三处复核，
+  pending 按 task-run 隔离，并通过只负责软唤醒的 `TIANTING_DAILY_CALIBRATION_READY` 让当前任务及时应用。
+  事件不含坐标、operation 或输入授权，旧/停止 run 不能写进当前进度。
+- **离线证据与门：** 保存帧位于 Cloud
+  `src/test/resources/images/test-cases/g048/{first,fresh}-raw.png`；回放输出
+  `images/test-output/g048-daily-count/first-marked.png`、`first-crop.png`。动态框正确覆盖
+  `(68,142)-(201,155)` 的 `今日已完成次数：18`，没有选择上方/右侧场景红色；双帧红字掩码 `IoU=1.0`。
+  正式 crop 经 `4x` 后为 `616x112 / 7550 bytes`，现有 sidecar `3256ms` 返回
+  `今日已完成次数：|18`，解析为 `18`。Cloud production compile PASS；G048 隔离 JUnit `5/5 PASS`；
+  `git diff --check` PASS。标准定向 Maven 被卡外旧 `DialogService` 构造器和旧测试签名债阻断，未越界修复。
+  未启动 runtime/application/UI/capture/input；fresh 仍须验证实际耗时、当前 run ready-event/apply 以及停止后旧结果丢弃。
+- **二次返修裁决：** 用户复核红框后指出 OCR 输入仍保留 raw 面板背景。追加保存帧 A/B：`154x28` raw
+  为 `7550 bytes`；横向 padding `10px -> 3px` 后为 `140x28 / 6999 bytes`；真正将红色像素转黑、其余
+  转白后为 `140x28 / 973 bytes`，OCR 仍准确返回 `今日已完成次数：|18`。额外膨胀 `1px` 会误读为
+  `今日已完式次意...`，禁止膨胀。用户批准正式使用 tight 纯黑白洗图；纵向 `7px`、双帧 IoU、`4x`、
+  OCR timeout、任务顺序与 exact-run fence 保持不变。
+- **二次返修实现与验收：** `CROP_PADDING_X=3`，最终 crop `140x28`；`washRedText(...)` 输出纯黑白
+  `TYPE_BYTE_BINARY`，无 dilation，生产调用为 `scaleNearest(washedLine, 4)`。保存帧输出
+  `first-washed.png` 为 `278 bytes`，正式 `4x` OCR 输入 `560x112 / 973 bytes`，现有 sidecar `1612ms`
+  返回 `今日已完成次数：|18` 并解析为 `18`。production compile PASS，G048 隔离 JUnit `5/5 PASS`，
+  `git diff --check` PASS；未启动 runtime，fresh 仍待验证。
+
+## G047 NPC 点击成功后取消同 session 剩余识别（2026-08-09）
+
+- **状态：SOURCE + ISOLATED CONTRACT PASSED / FRESH REQUIRED。** Client/治理 worktree 为
+  `D:\mavenProject\DHXY-cr271`（`thin-client-design`，HEAD/最新 pushed
+  `49cc45cec7ea9eaa48b0c6e014ea7a447c59e4ad`）；Cloud 实现仓为
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration`，HEAD/最新 pushed
+  `3b004086276972e8d89aa85eb81510082ab0f436`）。保护基线 `D:\mavenProject\DHXY` 不修改；两仓已有
+  dirty/untracked 全部原样保护，不 reset/revert/clean/commit。
+- **现场证据：** `2026-08-08 23:55`，`hwnd-D8A1558` 的同一张李靖到达帧先由 `TOOLTIP` 在
+  `23:55:02.282` 找到并由 Client 点击、验证打开接任务 Dialog；Cloud producer 仍继续执行黄字 NPC OCR、整窗紫字
+  OCR、紫字黑白候选 crop OCR 和对应 raw crop OCR。它们与随后真正需要的天庭 task-box OCR 共形成五个被客户端
+  `10s` 超时中止的 sidecar socket，并被单个全局 `OCR_LOCK` 串行化，最终把接任务后的绿链推进拖到约 `30s`。
+- **根因：** `NpcClickSmartQueueStore.complete(...)` 对成功 outcome 只从 `sessions` Map 删除 session；异步 producer
+  已持有 `Session` 引用，`SmartClickRecognizer.produceQueueMessages(...)` 在每次 `push` 后也没有消费栅栏，因此仍按
+  `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES` 把后续昂贵识别全部算完。Map 删除只让
+  后续 poll 找不到 session，不能取消正在运行的 producer。
+- **用户批准边界：** 同一 NPC FIFO 中，Cloud 可以立即越过没有点击点的 miss；一旦 push 出真实可点击候选，必须在
+  该候选由 Client 处理前暂停生产。Client verifier 失败并再次 poll 才允许计算下一策略；Client verifier 成功、
+  Dialog 已打开、取消或其他 terminal outcome 时，必须终止 producer、丢弃剩余队列，后续黄字/紫字/Ctrl 识别不得
+  启动。保持既有候选顺序、截图、模板、OCR/profile、点击坐标和 verifier 不变。
+- **精确写集：** Cloud `.gitignore` 测试白名单、`NpcClickSmartQueueStore.java` 与 G047 FIFO 顺序合同；Client/治理仅本卡、
+  `docs/ACTIVE_WORK.md`、`docs/业务逻辑.md`、`docs/云端迁移常见错误清单.md`、`docs/business-rules.json`、
+  `docs/rule-traceability/G047.json`、生成的 `docs/cr-dashboard-data.js`。不修改 G046 的
+  `SmartClickRecognizer.java`/`CloudOcrTextMatcher.java`，不启动 runtime/application/UI/capture/input。
+- **验收门：** 业务规则门；Cloud production compile；定向合同证明可点击 `TOOLTIP` push 后，在 Client 下一次 poll
+  前后续 producer 不运行，`VERIFIED` 后永久不运行且 session 清除，`VERIFICATION_FAILED + next poll` 才放行下一
+  策略；`git diff --check`。fresh 需看到 tooltip 已验证时没有同 session 的黄字/紫字 OCR trace，天庭 Tracker OCR
+  不再被这些请求堵住。
+- **实现：** `Session.push(...)` 对真实点击点或 Ctrl 候选建立 outcome 栅栏；候选入队后 producer 停止，只有 Client
+  已取走该候选并再次 poll 才释放下一策略。terminal REPORT 与 prepared-session cancel 会设置 session 终止态、
+  清空队列、唤醒并以内部控制异常退出仍持有 `Session` 引用的 producer；控制取消不会被误包装成 `INVALID`。
+  无点击点的 miss 仍连续生产，候选顺序和 Client verifier 均未改变。
+- **静态验收：** Cloud `mvn -q compile` PASS；G047 隔离 JUnit `3/3 PASS`，覆盖成功后永久取消、失败后仅由下一次
+  poll 放行，以及“前置 miss + 后置 tooltip”不会误放行。标准 `mvn -q -Dtest=G047... test` 在执行 G047 前被
+  卡外旧测试对 `DialogService` 构造器和 `TiantingTask.classifyPostCombatTrackerFreshness(...)` 旧签名的编译错误
+  阻断，未越界修复。业务规则门与两仓 `git diff --check` PASS；未启动 runtime/application/UI/capture/input。
+- **2026-08-09 01:38 fresh：** Cloud listener 于 `01:36:22` 启动，晚于 G047 class `01:14:19`，确认已加载新类。
+  李靖 session 在 `TOOLTIP` 于 `01:38:27.041` 返回 `VERIFIED` 后没有再出现同 session 的黄字、紫字或 Ctrl
+  candidate；G047 的成功终止链已生效。接任务后的剩余延迟来自 G048 所处理的 daily-count 与 Tracker OCR 竞争，
+  不是 G047 未加载。
+
+## G046 黄字 NPC 黑白候选逐项目标名匹配（2026-08-08）
+
+- **状态：SOURCE + ISOLATED REPLAY PASSED / FRESH REQUIRED。** Client/治理 worktree 为
+  `D:\mavenProject\DHXY-cr271`（`thin-client-design`，HEAD/最新 pushed
+  `49cc45cec7ea9eaa48b0c6e014ea7a447c59e4ad`）；Cloud 实现仓为
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration`，HEAD/最新 pushed
+  `3b004086276972e8d89aa85eb81510082ab0f436`）。保护基线 `D:\mavenProject\DHXY` 不修改；两仓已有
+  dirty/untracked 全部原样保护，不 reset/revert/clean/commit。
+- **现场证据：** `hwnd-D8A1558` 在天宫 `(155,108)` 点击目标 `李靖`。当前 profile 黑白 mask 已形成候选
+  `(290,313,37,23)`，单独对该候选 OCR 得到 `李靖 score=0.98524`；但生产链把所有候选的原始彩色像素按
+  原坐标贴回 `1024x768` 白底图，只 OCR 出底部 `物理攻击/冥烟销骨`，最终 `YELLOW_NAME point=null`。
+  同图中的 `超级巫医` 也已形成候选 `(733,553,70,23)`，却未进入 OCR 结果。
+- **根因：** `SmartClickRecognizer.yellowCandidateOcrImage(...)` 丢弃已经正确洗出的黑白字形，改用稀疏原彩色
+  大图做一次 OCR。该路径在迁移提交中被误注释为“与本地业务基线一致”，但 `696a12b0` 真实实现是从 mask
+  逐候选生成紧凑放大黑白图、OCR、与 `expectedTarget` 匹配并在强命中时停止。G046 仅将当前 Cloud 链改为
+  用户批准的新实现，不恢复旧类或整套基线。
+- **批准边界（用户修正）：** 保留当前全部 NPC 黄字 profile、mask、候选几何和点击换算。按候选顺序逐个从当前
+  黑白 mask 生成紧凑放大 OCR 图；OCR 文本与目标名一个共同字都没有就丢弃；至少命中一个字便按归一化名字
+  相似度进入排名；相似度 `>=0.90` 立即结束，否则扫描完后选择相似度最高者。禁止回退原彩色 composite，
+  禁止要求完全匹配，禁止让零共同字候选靠 OCR 字数进入排名，也禁止新增 hover/Ctrl/记忆 fallback 或修改策略顺序。
+  用户进一步裁决：本卡不改变五倍专用 `降魔侍卫` 的严格识别；该目标继续使用原 composite OCR、强命中门和 score
+  排序，待五倍专项再处理。
+- **精确写集：** Cloud `SmartClickRecognizer.java`、`CloudOcrTextMatcher.java`、G046 定向测试与必要测试夹具；Client 本卡、
+  `docs/ACTIVE_WORK.md`、生成的 `docs/cr-dashboard-data.js`。验收必须使用 21:13:47 exact frame 回放，输出黑白
+  候选与最终目标/点击标记图；通过 Cloud production compile、定向合同与 `git diff --check`。不启动
+  runtime/application/UI/capture/input。
+- **实现：** `SmartClickRecognizer` 对非严格黄字目标逐个打包已经洗出的黑白候选并 OCR；零共同字立即淘汰，
+  其余候选以 `CloudOcrTextMatcher.nameSimilarity(...)` 为第一排序键，`0.90` 及以上早停。`降魔侍卫` 在共享入口
+  被显式隔离并完整保留旧链。删除了普通目标原来把原彩色候选贴回整窗白底图的一次性 OCR。
+- **离线验收：** Cloud production `mvn -q compile` PASS；G046 隔离 JUnit `2/2 PASS`。21:13:47 exact frame
+  回放得到 `李靖 -> text=李靖, box=(290,313)-(327,335)`、`超级巫医 -> text=超级巫医,
+  box=(733,552)-(803,576)`；标记图位于
+  `images/test-output/g046-yellow-npc/李靖-result-marked.png` 与
+  `images/test-output/g046-yellow-npc/超级巫医-result-marked.png`。标准 Maven 定向测试尚未执行到 G046，先被卡外
+  多个旧合同对已变化构造器/枚举的编译错误阻断；未越界修复。fresh 仅需验证正式 NPC 点击链采用正确候选，
+  本卡未启动 runtime/application/UI/capture/input。
+- **2026-08-08 用户复核发现 P1 / 已返修：** 原 `nameSimilarity(...)` 对“候选文本包含完整目标名”直接返回
+  `1.0`，`bestEditDistance(...)` 还会从较长文本中选最佳短窗口，因此目标 `李靖` 面对 OCR 文本 `李靖甲`
+  仍得 `1.0`，额外字符没有任何代价。用户裁决字数必须影响分数，三字候选不能与准确二字候选同分。建议只对
+  用户已批准并实现：G046 非严格目标改为完整候选文本的归一化编辑距离：
+  `1 - editDistance(text,target) / max(textLen,targetLen)`；
+  继续保留零共同字淘汰、至少一字参选、`>=0.90` 早停和最高分胜出。候选 OCR 若被拆成多个 word，也必须合并
+  候选框内全部文字后评分，不能先截出最佳目标子串。按此公式：`李靖=1.0`、`李靖甲≈0.667`、`李静=0.5`、
+  `李静甲≈0.333`。隔离合同与 exact-frame 回放 `2/2 PASS`，李靖/超级巫医框和点击点保持正确；五倍严格目标
+  仍不在本次返修范围内。
+
+## G045 截图证据异步落盘与天庭脱战后绿链延迟（2026-08-08）
+
+- **状态：SOURCE + ISOLATED CONTRACT PASSED / FRESH REQUIRED。** 目标实现与治理均位于
+  `D:\mavenProject\DHXY-cr271`（`thin-client-design`，HEAD/最新 pushed
+  `49cc45cec7ea9eaa48b0c6e014ea7a447c59e4ad`）；保护基线 `D:\mavenProject\DHXY` 与 Cloud
+  `D:\mavenProject\dhxy-cloud-brain` 不修改，全部既有 dirty/untracked 原样保护。
+- **现场时间线：** 队长 `hwnd-D8A1558` 在 `21:09:03.506` 已收到 Runner `COMBAT_EXITED`；脱战恢复检查到
+  `21:09:15.367`，Tracker `209x78` CAPTURE 从 `21:09:15.736` 到 `21:09:21.046`，Dialog interest 在
+  `21:09:23.347` 完成，但绿链点击 action 到 `21:09:38.113` 才到 Client，物理点击为 `21:09:38.590`。
+  总延迟约 `35.08s`，其中 Tracker 截图 `5.31s`、interest 后命令交接空洞 `14.77s`。
+- **角色边界：** 本轮 `209x78` 天庭 Tracker 截图只出现在队长窗口。队员窗口的 ROI 是本窗口自动战斗面板、
+  血量/状态和脱战恢复机械；队员不执行天庭 Tracker OCR 或绿链决策，但每个号仍必须独立维护自动战斗与本地
+  进/脱战状态，不能删除这些必要采样。用户进一步裁决：这些 `MEMBER` 采样只供实时机械使用，不保存证据。
+- **根因：** `WindowCaptureEvidenceStore.persist(...)` 当前在截图调用线程同步 PNG 编码和写盘；ROI 截图还同步
+  保存一张完整 HWND 原图、ROI PNG 与两份 meta。当日证据约 `13,932` 张 PNG、`13,930` 个 meta、`10.16GB`。
+  五窗同时截图时，大量 PNG 压缩和磁盘 IO 占住 Turn/Runner 实时线程；文件名创建时间与最终写完时间也证明单张
+  完整帧可拖数秒。
+- **批准修复：** `persist` 先检查当前绑定角色，`MEMBER` 立即返回，不复制像素、不排队、不写 PNG/meta；
+  队长与单人窗口才复制不可变像素快照并冻结 window/task/role/status/binding 元数据。PNG 编码、目录和 meta
+  写入交给专用低优先级后台 writer；writer 固定小并发，关闭时有界排空。业务任务、实时截图、模板、ROI、
+  Cloud/Client 协议和输入路径全部不改。
+- **验收门：** 定向合同证明 `persist` 不在调用线程执行 PNG 写入、冻结后的图片不受调用方 flush/复用影响、关闭
+  可排空；Client production compile 与 `git diff --check` 通过。fresh 后必须同时看到 Turn CAPTURE 快速完成、
+  当天 raw PNG/meta 继续产生，且队长脱战到绿链不再出现同步证据落盘造成的数秒阻塞。
+- **静态结果：** Client production `mvn -q compile` PASS；隔离 JUnit
+  `WindowCaptureEvidenceStoreTest` `2/2 PASS`，其中成员合同锁定 `MEMBER` 零 PNG/零 meta。标准 Maven
+  定向测试在执行本卡测试前被卡外旧
+  `LocalTurnActionExecutorContractTest` 对已删除 `LocalPathingStartProofMechanics` 的引用阻断，未越界修改。
+  本卡未修改 Cloud、天庭业务、Tracker/绿链识别、战斗判断或输入路径。
+
 ## G044 五环旧 Tracker negative 复用与普通 Story 阻塞（2026-08-06）
 
 - **状态：APPROVED IMPLEMENTATION / FIX IN PROGRESS。** `G043` 已在 fresh runtime 证明 NPC 点击后的
@@ -113,20 +355,23 @@
 
 ## G041 FakerInput 驱动级键鼠本地接入（2026-08-06）
 
-- **状态：SOURCE+CONTRACT PASSED / DRIVER INSTALL+FRESH REQUIRED。** 目标 worktree 为
+- **状态：DONE / DRIVER READY / FRESH INPUT PASSED。** 目标 worktree 为
   `D:\mavenProject\DHXY-cr271`（`thin-client-design`）；受保护基线
   `D:\mavenProject\DHXY` 和 Cloud `D:\mavenProject\dhxy-cloud-brain` 均不修改。
 - **用户批准边界：** 采用第三方 `Ryochan7/FakerInput v0.1.1` 虚拟 HID 驱动。`Alt+5`、`Alt+6`、
-  `Alt+8` 是唯一保留 exact-HWND `PostMessage` 的后台快捷键；其余键盘和全部鼠标必须经过现有全局
+  `Alt+8` 原始三项是保留 exact-HWND `PostMessage` 的后台快捷键；2026-08-08 补充为：队长执行非单人任务时
+  `Alt+5/6` 也必须经过 FakerInput，只有队员窗口或单人任务可继续 exact-HWND，`Alt+8` 始终保持 exact-HWND。
+  其余键盘和全部鼠标必须经过现有全局
   `InputActionQueue`、聚焦目标窗口后由 FakerInput 前台发送。含鼠标的动作序列不得拆分为后台键盘和前台鼠标。
 - **第一阶段：** Client 已增加本机 FakerInput 设备探测、API/驱动版本读取、虚拟 HID
-  键盘/相对鼠标/滚轮报告适配，以及默认关闭的后端配置。调用方的屏幕绝对坐标通过“当前光标回读 + 相对 HID
-  位移 + 最终位置复核”实现，不假设固定桌面尺寸。探测过程不得发送键鼠报告；驱动缺失、版本不支持、
+  键盘、absolute mouse、鼠标按钮及滚轮报告适配。调用方的主屏绝对坐标映射到官方 `0..32767` absolute HID
+  坐标并做最终位置复核；主屏外目标 fail-closed，禁止夹点误操作。探测过程不得发送键鼠报告；驱动缺失、版本不支持、
   DLL/设备不可用时必须给出明确状态和日志，禁止静默退回 `SendInput`。不自动安装驱动，不在应用启动时点击或按键。
 - **第二阶段：** `InputActionWorker` 的生产路由已收敛为
   `Alt+5/6/8 -> BoundWindowKeyboardService`，其余 Turn 键盘、文本和鼠标
   `-> InputActionQueue -> focus -> FakerInputProvider`。旧的背包 `Alt+E`、任务面板 `Alt+Q`、新手 `Alt+B`、
-  像素探针 Ctrl 也已在 Faker 模式改走当前前台事务；默认 `WIN_API` 模式保持原行为。未改修罗、五环、天庭、
+  像素探针 Ctrl 也已在 Faker 模式改走当前前台事务；旧 `WIN_API` 仅保留为显式配置，不是默认或 fallback。
+  未改修罗、五环、天庭、
   新手的业务判断和动作顺序。
 - **发行边界：** 每台 Windows 10/11 x64 机器安装一次官方签名的 FakerInput x64 MSI；正式客户端启动时检测
   `DRIVER_MISSING / DRIVER_VERSION_UNSUPPORTED / DRIVER_UNAVAILABLE / DRIVER_READY`。安装引导与 MSI 打包属于
@@ -138,16 +383,25 @@
 - **实现写集：** 新增 `InputBackendProperties`、`FakerInputDevice`、`FakerInputProvider` 和设备状态模型；复用现有
   JNA 直接实现官方 HID 协议，没有引入来源不明的 wrapper DLL。`InputProvider`、`InputActionWorker`、Turn 输入/截图
   执行器及四个旧键盘调用点只增加后端路由，不改任务业务语义。
-- **静态验收：** Client `mvn -q -DskipTests compile` PASS；隔离执行
+- **静态验收：** Client `mvn -q -DskipTests compile` PASS；最终隔离执行
   `FakerInputDeviceTest`、`G041FakerInputRoutingContractTest`、
-  `InputActionWorkerAltFallbackContractTest`、`TurnInputStepExecutorContractTest`，合计 `22/22 PASS`；
+  `FakerInputProviderCoordinateTest`、`InputActionWorkerAltFallbackContractTest`、
+  `TurnInputStepExecutorContractTest`，合计 `25/25 PASS`；
   `git diff --check` PASS。标准 Maven 定向测试在本卡测试运行前被本卡外旧
   `LocalTurnActionExecutorContractTest` 对已删除 `LocalPathingStartProofMechanics` 的引用阻断，未越界修复。
 - **修饰键安全门：** FakerInput 是系统级物理输入；独立 `KEY_DOWN` 不允许把 Ctrl 留到下一个队列请求，必须在
   同一请求内有对应 `KEY_UP`，否则 fail-closed。失败/停止路径会执行 release-all，避免 Ctrl 或鼠标按钮跨窗口残留。
-- **当前机器与 fresh 门：** 无输入 `probe()` 返回 `DRIVER_MISSING`，与“尚未安装”一致；当前默认仍是
-  `bot.input.backend=WIN_API`。下一步必须先由用户明确批准安装官方 MSI，再单独启用 `FAKER_INPUT` 做显式鼠标、
-  普通键盘和 `Alt+5/6/8` 后台白名单 fresh 验收；本卡目前没有发送任何真实输入。
+- **2026-08-08 驱动安装与启用：** 用户明确要求完成 G041 并停止使用旧鼠标键盘输入。官方签名 x64 MSI 的
+  SHA-256 复核为 `4C0AEFB7340051A91D606776243298B5CD1143EF5508BBAE6800C474F9ED0840`，Authenticode
+  `Valid`；`msiexec` 安装 exit `0`。PnP 显示 `FakerInput Device`、驱动 `0.1.1.0`、状态 `Started`；生产
+  `FakerInputDevice.probe()` 返回 `DRIVER_READY, apiVersion=1, driverVersion=2`。默认配置已切换为
+  `bot.input.backend=FAKER_INPUT`。Fresh 首次暴露 relative HID 被 Windows 指针加速放大的真实缺陷，现已按官方
+  report `0x04` 改为 absolute mouse；显式 smoke 得到 `MOUSE_TARGET=660,381 ACTUAL=660,381`、
+  `TEXT_RESULT=a`、`G041_FRESH=PASS`，正式 Client 启动日志确认连接驱动且未自动启动任务。
+- **队长任务路由补充：** `InputActionWorker` 的后台白名单现按 request 的窗口角色和 `selectedTaskType` 决定：
+  `leader && !singlePlayer` 的 `Alt+5/6` 会让整个请求走聚焦事务并调用 `FakerInputProvider.pressAlt5/6()`；
+  队员、单人任务仍走 exact-HWND，`Alt+8` 不变。合同覆盖队长天庭、队长五环单人模式、队员天庭三类路由；
+  production compile PASS，完整 G041 隔离组 `27/27 PASS`。
 - **Fresh 启动返修：** `2026-08-06 19:42:14`、`19:45:47` 两次默认 `WIN_API` 启动均因
   `FakerInputDevice` 同时存在生产/测试构造器且生产构造器未显式标注注入，触发 Spring
   `No default constructor found`。生产构造器已改为显式 `@Autowired`；不增加无参构造器，不改变设备连接时机，
@@ -1579,7 +1833,7 @@
 
 ## G014 天庭绿链未移动后的 Dialog 恢复（2026-08-04）
 
-- 状态：`REAL MOVEMENT PROOF SOURCE+ISOLATED CONTRACT PASSED / FRESH RUNTIME STARTING`。
+- 状态：`RUNNER-SOLE PATHING TERMINAL SOURCE+ISOLATED CONTRACT PASSED / FRESH REQUIRED`。
 - 目标：天庭脱战或普通小任务拿到 fresh Tracker 绿链后先点击；如果 Client Runner 证明本次点击已经
   启动移动，则维持现有 pathing park，不做额外 Dialog 判断。只有该 exact 绿链点击在有界等待内没有
   启动移动，才进入本卡恢复链。
@@ -1625,6 +1879,75 @@
   `TiantingSubtaskLoopContractTest` `20/20 PASS`，覆盖 exact intent 仅登记但无 movement proof 时不得返回 started。
   标准 Maven 定向 test 被本卡外 aggregate `testCompile` 欠账阻断，未扩卡。下一步 fresh 必须观察引妖香腿安装
   `TIANTING_RECOVERY_OPTION` 并消费准确 actionKey。
+- **2026-08-07 引妖香顺序返修：** 现场证明 Tracker task-box OCR 已读出“引妖香”，但旧流程仍先把绿链当普通
+  导航点击，再依赖 no-movement 恢复；这不是用户批准的顺序。现改为复用既有 Tracker 上传/OCR 与
+  `WHOLE_TASK_DIALOG_INTEREST_UPDATE`：Cloud 在 exact prepared action 上分类
+  `DARK_THUNDER/YINYAO/OTHER`；`YINYAO` 不先点绿链，只安装既有 `TIANTING_YINYAO` interest，并携带该
+  prepared action 已算好的绿链屏幕绝对点与 exact pathing intent。Client 现有 sampler fresh 命中
+  `yinyao.png` 后，用单个 input-queue request 先点“使用引妖香”、再立即点绿链。本次未新增任何
+  `TurnLocalOperation`，Cloud 不执行鼠标点击。
+- **失败与后继约束：** 首次物理点击失败时，重装同一个引妖香 interest 必须保留 follow-up 绿链点，禁止退回
+  普通机械；成功回执后只通过原 interest-update 切回普通天庭战斗选项，以承接绿链导航后的下一 Dialog，禁止
+  重复选项或绿链点击。暗雷及普通 Tracker 分支保持原点击顺序。
+- **2026-08-07 静态门：** Client/Cloud production compile 均 PASS；Client 隔离
+  `TiantingDialogProbeContractTest` `15/15 PASS`，其中新增合同锁定“一个队列请求、选项在前、prepared 绿链在后、
+  exact intent 已登记”；Cloud 隔离 OCR 分类合同 `2/2 PASS`，覆盖引妖香、暗雷与普通文本。共享
+  `TurnDialogFollowUpClick`、`TurnWholeTaskRuntimeArguments`、`TurnProtocolValidator` 两仓 SHA-256 分别为
+  `33F9ED5910F12735C6BBE1E7A86F5CF718257F9236F08415AC013FFC8B149856`、
+  `59327967C46DF913084F1B6CD4D425C6E8E16E25309AD3F49D80AF3E2CD2DFF8`、
+  `2E572F4ED18A0DC40A3FB0C00C5A22BE1E720120D5AF6BA5BD4AC60F94543233`，逐文件一致；标准 Maven
+  `testCompile` 被卡外旧测试债阻断。按用户要求未启动实机，fresh 门保持停止。
+- **2026-08-08 fresh 失败与边界纠正：** `20:29:14` 普通天庭 Tracker 绿链已经点击并登记 exact intent，
+  Cloud 随即通过 `TiantingTask.legStarted()` 的短窗口读取延迟镜像，误判“未起步”并提前武装 G017。
+  Client Runner 后续在 `20:29:39.969` 对该窗口发布真实 `STOPPED_AWAY map=蟠桃园 coord=(13,28)`，Cloud
+  也收到对应 `PATHING_TERMINAL`，但旧 recovery 已抢占正常终态消费。这里证明 G014 原先让 Cloud 再裁决
+  “是否起步”的边界错误；Runner 才是移动、停下和终态的唯一权威。
+- **2026-08-08 用户批准返修：** 天庭普通/暗雷绿链点击现在只登记 exact pathing intent，清除上一腿
+  `legStopped` 后立即 PARK；`clickTrackerLink()` 不再调用 `legStarted()`，不再生成
+  `EXACT_TRACKER_CLICK_NO_MOVEMENT`，也不再由该短窗口触发 G017。后续只消费 Client Runner 的
+  `PATHING_TERMINAL`/`COMBAT_STATE_CHANGED` 决定暗雷巡逻或普通 Dialog 处理。引妖香本地原子链及风妖符
+  专属坐标流程保持不变。
+- **2026-08-08 静态门：** Cloud production `mvn -q -DskipTests=false compile` PASS；隔离
+  `TiantingSubtaskLoopContractTest` `27/27 PASS`。标准 Maven 定向测试仍被本卡外旧 `DialogService`、
+  `FiveRingTaskV2` 构造器及已删除协议枚举夹具阻断，未扩写集修旧债。fresh 验收必须看到绿链点击后 Cloud
+  直接等待，且在 Runner exact terminal 到达前不得出现 `EXACT_TRACKER_CLICK_NO_MOVEMENT` 或 G017 抢占。
+- **2026-08-08 23:55 fresh 性能失败（待用户批准修复）：** 队长 `hwnd-D8A1558` 在
+  `23:55:05.903` 已点击接任务；新 Tracker 绿链 action `a20e1c66-...` 于 `23:55:08.530` 完成预计算，
+  但 `TiantingTask.clickTrackerLink()` 在 exact task-box OCR 分类尚未返回时直接 `LinkClick.NONE` 并 PARK。
+  首次 OCR transport 不可用，现有策略先经历请求失败、再固定冷却 `10s`、再重试；底层证据进一步确认该次
+  不是“图片没有字”或 OCR 返回空文本：Java `LocalOcrClient` 的 HTTP 请求固定 `10s` 超时，OCR sidecar
+  同时段在完成处理并回写 `/ocr/words` 响应时连续报 `ConnectionAbortedError: [WinError 10053]`，说明 Java
+  已因超时先关闭连接。同一日志区间实际记录 5 个被中止的 client socket（`7916/7917/7918/7920/7921`），
+  每个 socket 的“回原响应失败”和“再回 500 失败”是同一请求的两段异常，不能重复计数。sidecar 的
+  `ThreadingHTTPServer` 虽可并发接收请求，但所有 RapidOCR 调用共用单个全局 `OCR_LOCK`；然而当前 stdout
+  因缓冲仍为 0 字节，接收日志中的 `traceId` 未落盘，Java 分类日志又丢弃 `OcrResult.reason` 和 sidecar
+  `elapsedMs`。因此只能确认同一时段存在多个超过客户端等待上限的请求，不能把 5 个 socket 逐一归属业务，
+  也不能证明它们全部排在本 action 前面；本 action 的锁等待与模型执行耗时同样无法再精确拆分。分类直到
+  `23:55:38.287` 才以 `DARK_THUNDER` 发布，绿链于 `23:55:38.418` 才开始点击，action 年龄
+  `30591ms`。实际鼠标事务仅 `666ms`，故约 `30s` 空等来自“所有分支先等 exact OCR”与 OCR
+  transport 失败/冷却组合，不是 Tracker、输入队列或窗口切换慢。源码复核确认这里并非只识别
+  “引妖香”三个字：Tracker 分析已经用 `findTiantingTrackerLinkBands(...)` 找到了精确绿色链接字带，但该字带
+  没有保留给分类器；observer 反而复制整个 `209x78` 原始 task-box，PNG/Base64 后经 HTTP 送入 RapidOCR，
+  sidecar 在全局 `OCR_LOCK` 内对标题、坐标和整段任务说明执行完整检测与识别，最后才对拼接全文做
+  `contains("游荡的妖怪")/contains("引妖香")`。这条链原是 G038 暗雷模板 miss 后的异步兜底，源码注释明确
+  要求慢 OCR 不得挡住导航；G014 却在 `clickTrackerLink()` 中新增“分类为空就禁止点击”的硬门，把允许慢、
+  允许 transport failure、带 `10s` 冷却的后台兜底变成了所有非模板暗雷 Tracker 的前台必过门。该行为与
+  G038 所写“慢 OCR 不阻塞
+  navigation”的原约束发生冲突；修复必须保留已批准的引妖香“先分类、先点选项、再点绿链”顺序，同时
+  消除普通/暗雷 action 被一次 OCR transport failure 卡住约 `30s` 的路径，不得仅缩短 magic timeout。
+- **2026-08-09 00:13 fresh 复发（无限 park，待用户批准修复）：** Client 于 `00:13:05.616` 已确认
+  `accept.png` 点击成功；Cloud 发布 exact Tracker action `424260e6-...` 与
+  `PREPARED_ACTION_READY sequence=135`，任务事实持续为 `trackerLinkReady=true` 并选择
+  `CLICK_TRACKER_LINK`。该 action 的首次 OCR 与 `10s` 后唯一重试均为
+  `branch=OTHER definitive=false text=`；之后没有 classification publish。源码中
+  `clickTrackerLink()` 在 classification 为空时直接 `LinkClick.NONE`，而
+  `runTiantingDarkThunderOcrAttempt(..., retryAllowed=false)` 对第二次 transport failure 不发布终局、不再
+  重试，也不转换 prepared action。结果是任务每约 `25s` timeout 后重新作出同一
+  `CLICK_TRACKER_LINK` 决策，却始终不消费、不点击 action；观察面仍持续工作并把同一 action 判为
+  `UNCHANGED`。本次证明旧问题不仅会产生约 `30s` 延迟，还会在 OCR 连续两次不可用时永久 park；
+  FakerInput、输入队列、Tracker 坐标与 Client/Cloud 进程均不是根因。修复边界仍为：引妖香必须等 exact
+  分类并保持“选项 -> 绿链”原子顺序；普通/暗雷不得以 OCR availability 作为绿链点击前硬门；不得用缩短
+  timeout、盲目发布 `OTHER` 或无限 OCR 重试替代明确分流。
 
 ## G013 天庭脱战维护中止与 Tracker 新鲜度栅栏（2026-08-04）
 
@@ -7591,10 +7914,15 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 
 | Card | Owner | Status | Files | Goal |
 | --- | --- | --- | --- | --- |
+| G049 | Codex | 最终源码与隔离合同通过，待 fresh | 天庭引妖香 Tracker 分支、本地去重与 claim 生命周期 | `YINYAO` 直接匹配；miss 可重试，match 后同任务停止，新任务清除旧 claim 后重开。 |
+| G048 | Codex | 源码与保存帧回放通过，待 fresh | 天庭 Tracker OCR 调度、日计数校准、端到端计时 | 日计数改为 `140x28` 纯黑白红字单次 OCR，并加 exact-run fence 与 ready-event；保存帧 OCR 1.612 秒，待 fresh。 |
+| G047 | Codex | 静态通过，01:38 fresh 已证明成功终止，待长跑 | Cloud NPC FIFO outcome 栅栏、取消语义、顺序合同 | `TOOLTIP VERIFIED` 后同 session 无后续候选；失败后下一次 poll 才继续的合同 3/3 通过。 |
+| G046 | Codex | P1 返修与离线回放通过，待实机 | Cloud 黄字 NPC 黑白候选 OCR、名字相似度、李靖/超级巫医回放 | 完整候选文本归一化编辑距离已生效，额外字符扣分；严格目标保留旧逻辑。 |
+| G045 | Codex | 源码与隔离合同通过，待 Client fresh | `WindowCaptureEvidenceStore`、证据落盘合同、运行时延迟证据 | 队员截图不保存；队长/单人证据异步落盘，消除五窗同步写盘阻塞。 |
 | G044 | Codex | 修复进行中，待编译、合同与后台 fresh | 五环 ready-event 新旧顺序、普通 Story 显式动作、后台连续测试 | 禁止旧 `TASK_NOT_FOUND` 压过更新事实；非战斗普通 Story 立即关闭并恢复 tracker。 |
 | G043 | Codex | 源码、编译、合同及接任务 fresh 链通过；后续转 G044 | 五环接任务 presence 武装、跨边界顺序合同、后台连续测试 | NPC Dialog 后的 observation producer 与 PreparedAction 点击链已恢复。 |
 | G042 | Codex | 双项源码、编译与隔离合同通过，待 fresh | 修罗接任务后出村预寻路临时开关、纯右键禁停避让 | 临时关闭灵兽村出口预寻路；纯右键巡逻跳过 Dialog sweep，左键与 Dialog callback 保持避让。 |
-| G041 | Codex | 源码与合同通过，待安装驱动并 fresh | FakerInput 设备桥、输入后端配置、队列路由合同 | 本地虚拟 HID 适配与队列路由已通过静态门；仅 `Alt+5/6/8` 保留后台 HWND，默认后端未切换。 |
+| G041 | Codex | 完成：驱动、静态门与真实输入 fresh 通过 | FakerInput 设备桥、absolute HID、角色感知输入路由 | 普通键鼠默认走 FakerInput；队长非单人任务的 `Alt+5/6` 也走驱动，队员/单人任务保留 HWND，`Alt+8` 始终 HWND。 |
 | G040 | Codex | 源码与合同通过，fresh 进行中 | 天庭 Tracker 整图比较、原子 action 替换、定向合同 | 不按时间猜任务新旧；同图保留，异图按 expected action ID 原子替换，避免普通任务继承旧暗雷巡逻。 |
 | G039 | Codex | 源码与隔离合同通过，待 fresh | 自动面板拖拽标记、双仓协议与 Client 战斗门合同 | 仅允许显式自动面板拖拽在战斗内执行，保持其他鼠标输入 fail-closed。 |
 | G038 | Codex | fresh 分支通过，G033 继续 | 天庭 OCR 文案、原 action 延迟重试、定向合同 | 识别新版“游荡的妖怪”暗雷文案，并让首次 OCR 传输失败仍能修正已点击的 exact action。 |
@@ -7602,7 +7930,7 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | G036 | Codex | 隔离静态门通过，待高权限 fresh | G033 脚本、后台控制合同 | 用显式 UAC `RunAs` 启动与游戏同级的无 UI 宿主，不改业务或输入安全证明。 |
 | G035 | Codex | 源码与合同通过，待 fresh 重试 | `WinApiMouseController`、输入重试合同 | 同一输入事务内有限重试鼠标移动，保留最终 read-back fail-closed。 |
 | G034 | Codex | 源码与真实图 replay 通过，待 fresh 重试 | 队伍角色预检、既有 dialog/generic 清理、真实 replay | 角色预检前清除 exact-window 阻挡 UI，再保持原 `Alt+T` 队长模板链。 |
-| G033 | Codex | F11 源码与隔离合同通过，待 Client 重启 fresh | 后台测试控制服务、逐小任务语义审计、五环/天庭入口、快捷暂停热恢复 | F11 已复用 UI 暂停/热恢复入口；新 run 继续验证战后 retained 绿链、迟到引妖香回执及快捷键暂停/恢复。 |
+| G033 | Codex | 引妖香返修静态门通过，实机保持停止 | 后台测试控制服务、逐小任务语义审计、五环/天庭入口、快捷暂停热恢复 | 引妖香改为 Tracker 先分类、本地模板命中后同队列点选项和绿链；待用户明确允许后 fresh 验证。 |
 | G032 | Codex | 完成：整栈启动恢复并通过真实启动验收 | `restart-local-dhxy-stack.ps1`、启动日志、进程登记 | Cloud/OCR 就绪后父启动器继续创建 JavaFX Client，且保留启动日志。 |
 | G031 | Codex | 源码与定向合同通过，待 fresh runtime | `TiantingTask`, `NpcClickService`, 天庭接任务合同、dashboard 生成器 | exact `ARRIVED` 后禁止再次同步坐标或重新导航；复用现有 Client FIFO 消费器，并让 ready 事件携带当前任务类型。 |
 | G027 | Codex | Done：内存诊断 fresh 通过 | `ImagePreprocessor`、内存诊断不落盘合同、G033 fresh 证据 | `cloud-memory:` 不再误落盘；Dialog 与五环业务未改。 |
@@ -47566,6 +47894,22 @@ RETEST REQUIRED`：已关闭五环 cooldown STORY 未识别、五环小地图高
   `1/1` 通过，证明 exact negative 方法不再含墙钟年龄门且六项身份/类型门仍在；精确源码/test
   `git diff --check` 通过，仅有既有 LF/CRLF 提示。当前仍有 Java 进程，未运行会重建 `target/classes` 的 Maven
   compile/test。状态：`P1 SOURCE REPAIRED / ISOLATED CONTRACT PASS / COMPILE DEFERRED / FRESH RUNTIME REQUIRED`。
+- **P1 / 2026-08-08 F11 暂停与热恢复重复冷启动准备**：`23:14:46.784`、`23:14:49.918` 两次
+  F11 均收到系统热键并打印 request sent，但未出现 immediate pause；直到 `23:14:52.062` 点击 UI 才暂停。
+  热键错误使用 `WindowTaskSnapshot.isRunning()` 的遗留本地 worker 布尔值；远程任务虽
+  `WindowRuntimeStatus.RUNNING`，该布尔值为 false，所以暂停被排入繁忙 JavaFX 队列。已改为直接按生命周期
+  `RUNNING` 收集窗口并在热键线程调用 `pauseWindows(...)`。
+- **暂停热恢复边界补全**：`23:14:32.950` Client 已正确选择 `PAUSE_RESUME` 并复用保留角色，没有重跑
+  窗口扫描/Alt+T/包裹校准；但它把 Cloud `startupMode` 重新编码为 `NORMAL`，导致 Cloud 再次执行
+  `ALT_1 x2`、`ALT_U x2`、`ALT_5 x2`、`ALT_6 x3`。两仓协议枚举现新增 `PAUSE_RESUME`，Client 的单任务和
+  batch 热恢复都传该值；Cloud 收到后跳过地图、飞行器、显示状态和左上状态等一次性 startup preparation，
+  同时跳过 startup 补血/摄妖香。`post-combat` 等正常战后维护仍走原路径，任务继续从当前
+  Tracker/Dialog/战斗画面恢复，不继承旧 phase。
+- **静态验收**：Client production compile PASS；Cloud production compile PASS。Client 标准 Maven 定向测试
+  被写集外旧 `LocalTurnActionExecutorContractTest` 对已删除 `LocalPathingStartProofMechanics` 的引用阻断；
+  隔离运行 F11 + 生命周期合同 `2/2 PASS`。Cloud 隔离运行“热恢复零启动输入”和“只跳 startup 补给、保留
+  战后维护”合同 `2/2 PASS`。未启动 runtime/application/UI/capture/input。状态：
+  `P1 SOURCE REPAIRED / P0-P1-P2=0 / FRESH RUNTIME REQUIRED`。
 ## G021 导航黄字记忆一次性迁入云端 scoped store（2026-08-05）
 
 Status: `IMPLEMENTED / SOURCE REVIEW PASS / FRESH RUNTIME REQUIRED`

@@ -1,11 +1,20 @@
 package com.bot.dhxy.input;
 
+import org.junit.jupiter.api.Test;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** Connectivity guard from the Windows hotkey dispatch to the shared UI lifecycle callback. */
 public final class GlobalEmergencyStopHotkeyServiceConnectivityTest {
 
-    public static void main(String[] args) {
+    @Test
+    void f11UsesImmediateLifecyclePauseAndOnlyResumesWhenNothingIsRunning() throws Exception {
+        main(new String[0]);
+    }
+
+    public static void main(String[] args) throws Exception {
         AtomicInteger pauseCalls = new AtomicInteger();
         AtomicInteger resumeCalls = new AtomicInteger();
         AtomicInteger stopCalls = new AtomicInteger();
@@ -36,6 +45,13 @@ public final class GlobalEmergencyStopHotkeyServiceConnectivityTest {
         pausedService.triggerPauseAll();
         require(pauseCalls.get() == 2, "F11 must inspect the immediate pause path before deciding to resume");
         require(resumeCalls.get() == 1, "F11 must dispatch resume when there are no running windows to pause");
+
+        String source = Files.readString(Path.of(
+                "src/main/java/com/bot/dhxy/input/GlobalEmergencyStopHotkeyService.java"));
+        require(source.contains("snapshot.getStatus() == WindowRuntimeStatus.RUNNING"),
+                "F11 must use the remote lifecycle RUNNING status for immediate pause");
+        require(!source.contains(".filter(snapshot -> snapshot.isRunning())"),
+                "F11 must not use the legacy local-worker running boolean");
     }
 
     private static void require(boolean condition, String message) {

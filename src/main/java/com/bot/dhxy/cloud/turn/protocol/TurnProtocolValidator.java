@@ -862,6 +862,21 @@ public final class TurnProtocolValidator {
                     require(a.scheduleOpenedAtMs() != null && a.scheduleOpenedAtMs() > 0L,
                             "WHOLE_TASK_DIALOG_INTEREST_UPDATE.scheduleOpenedAtMs must be present and positive");
                 }
+                if (a.dialogFollowUpClick() != null) {
+                    require(a.interestOperations().size() == 1
+                                    && "TIANTING_YINYAO".equals(a.interestOperations().get(0)),
+                            "WHOLE_TASK_DIALOG_INTEREST_UPDATE follow-up click is only valid for TIANTING_YINYAO");
+                    require(a.dialogFollowUpClick().pathingIntent() != null,
+                            "WHOLE_TASK_DIALOG_INTEREST_UPDATE follow-up click requires pathingIntent");
+                    requireText(a.dialogFollowUpClick().pathingIntent().source(),
+                            "WHOLE_TASK_DIALOG_INTEREST_UPDATE.dialogFollowUpClick.pathingIntent.source");
+                    requireText(a.dialogFollowUpClick().pathingIntent().intentId(),
+                            "WHOLE_TASK_DIALOG_INTEREST_UPDATE.dialogFollowUpClick.pathingIntent.intentId");
+                    requireText(a.dialogFollowUpClick().pathingIntent().type(),
+                            "WHOLE_TASK_DIALOG_INTEREST_UPDATE.dialogFollowUpClick.pathingIntent.type");
+                    require(a.dialogFollowUpClick().pathingIntent().tolerance() >= 0,
+                            "WHOLE_TASK_DIALOG_INTEREST_UPDATE follow-up pathing tolerance must be nonnegative");
+                }
             }
             case WHOLE_TASK_PROGRESS_UPDATE -> require(
                     a.completedRuns() != null && a.completedRuns() >= 0 && a.totalRuns() != null,
@@ -991,7 +1006,7 @@ public final class TurnProtocolValidator {
         REPLAY_OBSERVATION_RUN, REPLAY_BUSINESS_TASK_RUN, EXPECTED_CLAIM_ID,
         EXPECTED_OBSERVATION_RUN, EXPECTED_BUSINESS_TASK_RUN, EXPECTED_ATTEMPT_ID,
         RECOVERY_TASK_RUN, RECOVERY_ROUND, RECOVERY_ATTEMPT,
-        NPC_ARRIVAL_FIFO
+        NPC_ARRIVAL_FIFO, DIALOG_FOLLOW_UP_CLICK
     }
 
     private static EnumSet<WtField> presentFields(TurnWholeTaskRuntimeArguments a) {
@@ -1037,6 +1052,7 @@ public final class TurnProtocolValidator {
         if (a.recoveryRound() != null) present.add(WtField.RECOVERY_ROUND);
         if (a.recoveryAttemptId() != null) present.add(WtField.RECOVERY_ATTEMPT);
         if (a.npcArrivalFifo() != null) present.add(WtField.NPC_ARRIVAL_FIFO);
+        if (a.dialogFollowUpClick() != null) present.add(WtField.DIALOG_FOLLOW_UP_CLICK);
         return present;
     }
 
@@ -1054,9 +1070,10 @@ public final class TurnProtocolValidator {
             case WHOLE_TASK_PRE_BATTLE_TIMER_START -> EnumSet.of(WtField.TASK_CODE, WtField.TARGET_KEYWORD);
             case WHOLE_TASK_PRE_BATTLE_TIMER_PAUSE -> EnumSet.of(WtField.BLOCKED_MS);
             case WHOLE_TASK_DIALOG_INTEREST_UPDATE -> EnumSet.of(WtField.TASK_CODE, WtField.INTEREST_OPS,
-                    WtField.ABSENT_ALLOWED, WtField.PROBE_ONLY, WtField.PROBE_START_AT,
-                    WtField.SCHEDULE_ATTEMPT, WtField.SCHEDULE_ROUND, WtField.SCHEDULE_TASK_RUN,
-                    WtField.SCHEDULE_OPENED_AT, WtField.SCHEDULE_OBSERVATION_RUN);
+                     WtField.ABSENT_ALLOWED, WtField.PROBE_ONLY, WtField.PROBE_START_AT,
+                     WtField.SCHEDULE_ATTEMPT, WtField.SCHEDULE_ROUND, WtField.SCHEDULE_TASK_RUN,
+                     WtField.SCHEDULE_OPENED_AT, WtField.SCHEDULE_OBSERVATION_RUN,
+                     WtField.DIALOG_FOLLOW_UP_CLICK);
             case WHOLE_TASK_PROGRESS_UPDATE -> EnumSet.of(WtField.COMPLETED_RUNS, WtField.TOTAL_RUNS);
             case WHOLE_TASK_STARTUP_FLYING_STATE_UPDATE -> EnumSet.of(WtField.STARTUP_FLYING_STATE);
             case WHOLE_TASK_DIALOG_RUNTIME_READ -> EnumSet.of(WtField.DIALOG_MAX_AGE);

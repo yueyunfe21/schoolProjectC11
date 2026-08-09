@@ -19,6 +19,7 @@ import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.dialog.DialogOperation;
 import com.bot.dhxy.model.job.XiuluoGreenChainSchedule;
 import com.bot.dhxy.service.DialogService;
@@ -2286,6 +2287,16 @@ public final class WindowObservationSampler {
             return;
         }
         /*
+         * 引妖香 is owned by one prepared Tracker task. A miss leaves no claim and is retried on later
+         * frames; once that option has matched and claimed this interest, stop before capture/matching.
+         * The next Tracker task installs a new interest with a new creation identity and re-arms naturally.
+         */
+        if (optionSet == TiantingOptionSet.YINYAO
+                && context.hasTiantingDialogOptionClaim(
+                        interest.getCreatedAtMs() + "|" + TiantingDialogLocalMechanics.ACTION_YINYAO)) {
+            return;
+        }
+        /*
          * The interest carries no run id, so the run fence available here is the window binding plus
          * the player-identity epoch: a sampler whose window was rebound or whose character changed
          * under it must not click for whatever now owns that window.
@@ -2395,10 +2406,11 @@ public final class WindowObservationSampler {
         }
         if (validated == null || !validated.actionKey().equals(hit.actionKey())
                 || !validated.templatePath().equals(hit.templatePath())
+                || !interest.equals(context.getDialogInterest().orElse(null))
                 || context.getPlayerIdentityEpoch() != epochBefore
                 || !binding.equals(context.getNativeBinding())) {
-            // The dialog changed — or the window did — between the shared frame and now. Report
-            // nothing and let the next cycle decide on a frame that is actually current.
+            // The dialog, owning interest, or window changed between the shared frame and now. Report
+            // nothing and let the current interest decide on a frame that still belongs to it.
             log.info("Tianting dialog option abandoned before click: windowId={} shared={} fresh={}",
                     context.getWindowId(), templateName(hit.templatePath()),
                     validated == null ? "-" : templateName(validated.templatePath()));
@@ -2413,13 +2425,35 @@ public final class WindowObservationSampler {
         if (!context.tryClaimTiantingDialogOption(optionKey)) {
             return;
         }
+        boolean trackerChained = TiantingDialogLocalMechanics.YINYAO.equals(validated.templatePath())
+                && interest.hasFollowUpClick();
         boolean clicked;
         try {
-            clicked = inputSequences.moveAndClickLeft(
-                    "tianting:dialog-option",
-                    rect[0] + validated.roiOffsetX(),
-                    rect[1] + validated.roiOffsetY(),
-                    80, 150);
+            int optionX = rect[0] + validated.roiOffsetX();
+            int optionY = rect[1] + validated.roiOffsetY();
+            if (trackerChained) {
+                /*
+                 * The Tracker point was prepared from the same task box before Cloud armed this existing
+                 * interest. Keep both physical clicks in one queue request: once 使用引妖香 succeeds there
+                 * is no second Cloud decision or another sampling round between it and the green link.
+                 */
+                clicked = inputSequences.submitAndWait("tianting:yinyao-then-tracker", List.of(
+                        InputAction.moveMouse(optionX, optionY),
+                        InputAction.sleep(80),
+                        InputAction.clickLeft(optionX, optionY, 150),
+                        InputAction.moveMouse(interest.getFollowUpAbsoluteX(), interest.getFollowUpAbsoluteY()),
+                        InputAction.sleep(80),
+                        InputAction.clickLeft(
+                                interest.getFollowUpAbsoluteX(), interest.getFollowUpAbsoluteY(), 300)));
+                if (clicked) {
+                    context.markPathingStarted(interest.getFollowUpPathingIntent().toBuilder()
+                            .createdAtMs(System.currentTimeMillis())
+                            .build());
+                }
+            } else {
+                clicked = inputSequences.moveAndClickLeft(
+                        "tianting:dialog-option", optionX, optionY, 80, 150);
+            }
         } catch (RuntimeException inputFailure) {
             clicked = false;
         }
@@ -2488,7 +2522,8 @@ public final class WindowObservationSampler {
                 "tianting-dialog-option",
                 validated.actionKey()
                         + "|score=" + validated.score()
-                        + "|executed=" + clicked));
+                        + "|executed=" + clicked
+                        + "|trackerChained=" + trackerChained));
     }
 
     /** Encodes an already-captured observation ROI without requesting another window capture. */

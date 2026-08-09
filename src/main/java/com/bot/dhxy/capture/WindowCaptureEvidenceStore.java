@@ -1,6 +1,7 @@
 package com.bot.dhxy.capture;
 
 import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.extern.slf4j.Slf4j;
@@ -8,8 +9,10 @@ import jakarta.annotation.PreDestroy;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.stereotype.Component;
 import org.springframework.context.event.EventListener;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import javax.imageio.ImageIO;
+import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,30 +21,41 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Synchronously preserves every successful local raw capture for later incident replay.
+ * Preserves leader and solo raw captures for later incident replay without blocking the capture caller on PNG IO.
  *
- * <p>The store is deliberately mechanical: it neither filters screenshots nor changes the capture result when
- * evidence persistence fails. The caller still owns capture success/failure semantics; a failed evidence write is
- * logged because it leaves a diagnostic gap that must be visible.</p>
+ * <p>The caller freezes the pixels and capture metadata, then a small low-priority writer pool performs PNG encoding
+ * and disk IO. The store never changes the capture result when evidence persistence fails. A failed evidence write is
+ * logged because it leaves a diagnostic gap that must be
+ * visible. Member captures are intentionally excluded because those windows only run local combat maintenance and
+ * their high-frequency evidence must not compete with the leader's task workflow.</p>
  */
 @Slf4j
 @Component
 public class WindowCaptureEvidenceStore {
 
-    private static final Path ROOT = Path.of("images", "captures");
+    private static final Path DEFAULT_ROOT = Path.of("images", "captures");
+    private static final int WRITER_THREADS = 2;
+    private static final long SHUTDOWN_DRAIN_SECONDS = 30L;
+    private static final long BACKLOG_WARNING_STEP = 100L;
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS");
 
     private final WindowTaskContextHolder contextHolder;
+    private final Path root;
     private final AtomicLong sequence = new AtomicLong();
+    private final AtomicLong pendingWrites = new AtomicLong();
+    private final AtomicLong lastWarnedBacklog = new AtomicLong();
     private final AtomicBoolean retentionSweepScheduled = new AtomicBoolean();
+    private final ExecutorService evidenceWriteExecutor;
     private final ExecutorService retentionSweepExecutor = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "dhxy-capture-retention");
         thread.setDaemon(true);
@@ -49,12 +63,21 @@ public class WindowCaptureEvidenceStore {
     });
     private volatile LocalDate lastRetentionSweepDay;
 
+    @Autowired
     public WindowCaptureEvidenceStore(WindowTaskContextHolder contextHolder) {
-        this.contextHolder = contextHolder;
+        this(contextHolder, DEFAULT_ROOT, createEvidenceWriteExecutor());
+    }
+
+    WindowCaptureEvidenceStore(WindowTaskContextHolder contextHolder,
+                               Path root,
+                               ExecutorService evidenceWriteExecutor) {
+        this.contextHolder = Objects.requireNonNull(contextHolder, "contextHolder");
+        this.root = Objects.requireNonNull(root, "root");
+        this.evidenceWriteExecutor = Objects.requireNonNull(evidenceWriteExecutor, "evidenceWriteExecutor");
     }
 
     /**
-     * Persist one unmodified raw capture before its caller returns it to a task or HTTPS turn.
+     * Freeze one unmodified leader/solo raw capture and enqueue its PNG/meta persistence before returning to the caller.
      *
      * @param image captured pixels; null is ignored because no successful capture exists.
      * @param binding exact HWND binding used for the capture when available.
@@ -74,6 +97,12 @@ public class WindowCaptureEvidenceStore {
         if (image == null) {
             return;
         }
+        if (contextHolder.rawCurrent()
+                .map(WindowRuntimeContext::getRole)
+                .filter(WindowRole.MEMBER::equals)
+                .isPresent()) {
+            return;
+        }
         LocalDateTime now = LocalDateTime.now();
         scheduleRetentionSweep(now.toLocalDate());
         String windowId = currentWindowId(binding);
@@ -81,22 +110,43 @@ public class WindowCaptureEvidenceStore {
         long captureSequence = sequence.incrementAndGet();
         int width = Math.max(0, x2 - x1);
         int height = Math.max(0, y2 - y1);
-        Path output = ROOT.resolve(DAY.format(now)).resolve(windowId).resolve(
+        Path output = root.resolve(DAY.format(now)).resolve(windowId).resolve(
                 STAMP.format(now) + "_" + captureSequence + "_" + safeProvider
                         + "_" + x1 + "_" + y1 + "_" + width + "x" + height + ".png");
+        BufferedImage frozenImage = copyImage(image);
+        EvidenceMetadata metadata = currentMetadata(now, windowId, binding, safeProvider, x1, y1, x2, y2,
+                frozenImage.getWidth(), frozenImage.getHeight());
+        long queued = pendingWrites.incrementAndGet();
+        warnOnBacklog(queued);
+        try {
+            evidenceWriteExecutor.execute(() -> writeEvidence(output, frozenImage, metadata));
+        } catch (RuntimeException schedulingFailure) {
+            pendingWrites.decrementAndGet();
+            frozenImage.flush();
+            log.warn("[capture-evidence] save scheduling failed: path={} provider={} windowId={} reason={}",
+                    output, safeProvider, windowId, schedulingFailure.getMessage(), schedulingFailure);
+        }
+    }
+
+    private void writeEvidence(Path output, BufferedImage image, EvidenceMetadata metadata) {
+        long startedAt = System.nanoTime();
         try {
             Files.createDirectories(output.getParent());
             if (!ImageIO.write(image, "png", output.toFile())) {
                 log.warn("[capture-evidence] PNG writer unavailable: path={} provider={} windowId={}",
-                        output, safeProvider, windowId);
+                        output, metadata.provider(), metadata.windowId());
                 return;
             }
-            writeMetadata(output, now, windowId, binding, safeProvider, x1, y1, x2, y2, image);
-            log.debug("[capture-evidence] saved: path={} provider={} windowId={} rect=[{},{},{},{}]",
-                    output, safeProvider, windowId, x1, y1, x2, y2);
+            writeMetadata(output, metadata);
+            log.debug("[capture-evidence] saved: path={} provider={} windowId={} rect=[{},{},{},{}] elapsedMs={}",
+                    output, metadata.provider(), metadata.windowId(), metadata.x1(), metadata.y1(),
+                    metadata.x2(), metadata.y2(), TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt));
         } catch (Exception e) {
             log.warn("[capture-evidence] save failed: path={} provider={} windowId={} reason={}",
-                    output, safeProvider, windowId, e.getMessage(), e);
+                    output, metadata.provider(), metadata.windowId(), e.getMessage(), e);
+        } finally {
+            image.flush();
+            pendingWrites.decrementAndGet();
         }
     }
 
@@ -125,7 +175,7 @@ public class WindowCaptureEvidenceStore {
             });
         } catch (RuntimeException e) {
             retentionSweepScheduled.set(false);
-            log.warn("[capture-evidence] retention sweep scheduling failed: root={} reason={}", ROOT, e.getMessage(), e);
+            log.warn("[capture-evidence] retention sweep scheduling failed: root={} reason={}", root, e.getMessage(), e);
         }
     }
 
@@ -138,18 +188,18 @@ public class WindowCaptureEvidenceStore {
             return;
         }
         try {
-            if (!Files.isDirectory(ROOT)) {
+            if (!Files.isDirectory(root)) {
                 lastRetentionSweepDay = today;
                 return;
             }
-            try (var days = Files.list(ROOT)) {
+            try (var days = Files.list(root)) {
                 days.filter(Files::isDirectory)
                         .filter(day -> isOlderEvidenceDay(day, today))
                         .forEach(this::deleteEvidenceDay);
             }
             lastRetentionSweepDay = today;
         } catch (Exception e) {
-            log.warn("[capture-evidence] previous-day cleanup failed: root={} reason={}", ROOT, e.getMessage(), e);
+            log.warn("[capture-evidence] previous-day cleanup failed: root={} reason={}", root, e.getMessage(), e);
         }
     }
 
@@ -181,30 +231,18 @@ public class WindowCaptureEvidenceStore {
     }
 
     /** Writes one sidecar per raw PNG so a screenshot remains independently inspectable after a long run. */
-    private void writeMetadata(Path imagePath,
-                               LocalDateTime capturedAt,
-                               String windowId,
-                               WindowNativeBinding binding,
-                               String provider,
-                               int x1,
-                               int y1,
-                               int x2,
-                               int y2,
-                               BufferedImage image) {
-        Optional<WindowRuntimeContext> current = contextHolder.rawCurrent();
-        String task = current.map(context -> String.valueOf(context.getSelectedTaskType())).orElse("UNKNOWN");
-        String role = current.map(context -> String.valueOf(context.getRole())).orElse("UNKNOWN");
-        String status = current.map(context -> String.valueOf(context.getStatus())).orElse("UNKNOWN");
-        String metadata = "capturedAt=" + capturedAt + System.lineSeparator()
-                + "windowId=" + windowId + System.lineSeparator()
-                + "task=" + task + System.lineSeparator()
-                + "role=" + role + System.lineSeparator()
-                + "status=" + status + System.lineSeparator()
-                + "provider=" + provider + System.lineSeparator()
-                + "hwnd=" + (binding == null ? "" : binding.getNativeHandle()) + System.lineSeparator()
-                + "title=" + (binding == null ? "" : binding.getTitle()) + System.lineSeparator()
-                + "rect=" + x1 + "," + y1 + "," + x2 + "," + y2 + System.lineSeparator()
-                + "image=" + image.getWidth() + "x" + image.getHeight() + System.lineSeparator();
+    private void writeMetadata(Path imagePath, EvidenceMetadata evidence) {
+        String metadata = "capturedAt=" + evidence.capturedAt() + System.lineSeparator()
+                + "windowId=" + evidence.windowId() + System.lineSeparator()
+                + "task=" + evidence.task() + System.lineSeparator()
+                + "role=" + evidence.role() + System.lineSeparator()
+                + "status=" + evidence.status() + System.lineSeparator()
+                + "provider=" + evidence.provider() + System.lineSeparator()
+                + "hwnd=" + evidence.hwnd() + System.lineSeparator()
+                + "title=" + evidence.title() + System.lineSeparator()
+                + "rect=" + evidence.x1() + "," + evidence.y1() + "," + evidence.x2() + "," + evidence.y2()
+                + System.lineSeparator()
+                + "image=" + evidence.imageWidth() + "x" + evidence.imageHeight() + System.lineSeparator();
         Path sidecar = imagePath.resolveSibling(imagePath.getFileName().toString().replaceFirst("\\.png$", ".meta"));
         try {
             Files.writeString(sidecar, metadata, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
@@ -230,8 +268,100 @@ public class WindowCaptureEvidenceStore {
     }
 
     @PreDestroy
-    public void shutdownRetentionSweepExecutor() {
+    public void shutdownExecutors() {
+        evidenceWriteExecutor.shutdown();
+        boolean interrupted = false;
+        try {
+            if (!evidenceWriteExecutor.awaitTermination(SHUTDOWN_DRAIN_SECONDS, TimeUnit.SECONDS)) {
+                log.warn("[capture-evidence] writer did not drain before shutdown: pending={}", pendingWrites.get());
+                evidenceWriteExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            interrupted = true;
+            evidenceWriteExecutor.shutdownNow();
+        }
         retentionSweepExecutor.shutdownNow();
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private EvidenceMetadata currentMetadata(LocalDateTime capturedAt,
+                                             String windowId,
+                                             WindowNativeBinding binding,
+                                             String provider,
+                                             int x1,
+                                             int y1,
+                                             int x2,
+                                             int y2,
+                                             int imageWidth,
+                                             int imageHeight) {
+        Optional<WindowRuntimeContext> current = contextHolder.rawCurrent();
+        return new EvidenceMetadata(
+                capturedAt,
+                windowId,
+                current.map(context -> String.valueOf(context.getSelectedTaskType())).orElse("UNKNOWN"),
+                current.map(context -> String.valueOf(context.getRole())).orElse("UNKNOWN"),
+                current.map(context -> String.valueOf(context.getStatus())).orElse("UNKNOWN"),
+                provider,
+                binding == null || binding.getNativeHandle() == null ? "" : binding.getNativeHandle(),
+                binding == null ? "" : binding.getTitle(),
+                x1,
+                y1,
+                x2,
+                y2,
+                imageWidth,
+                imageHeight);
+    }
+
+    private void warnOnBacklog(long pending) {
+        if (pending < BACKLOG_WARNING_STEP) {
+            return;
+        }
+        long bucket = pending / BACKLOG_WARNING_STEP;
+        long previous = lastWarnedBacklog.get();
+        if (bucket > previous && lastWarnedBacklog.compareAndSet(previous, bucket)) {
+            log.warn("[capture-evidence] writer backlog growing: pending={}", pending);
+        }
+    }
+
+    private static BufferedImage copyImage(BufferedImage source) {
+        BufferedImage copy = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = copy.createGraphics();
+        try {
+            graphics.drawImage(source, 0, 0, null);
+        } finally {
+            graphics.dispose();
+        }
+        return copy;
+    }
+
+    private static ExecutorService createEvidenceWriteExecutor() {
+        AtomicLong threadSequence = new AtomicLong();
+        return Executors.newFixedThreadPool(WRITER_THREADS, runnable -> {
+            Thread thread = new Thread(runnable,
+                    "dhxy-capture-evidence-" + threadSequence.incrementAndGet());
+            thread.setDaemon(true);
+            thread.setPriority(Thread.MIN_PRIORITY);
+            return thread;
+        });
+    }
+
+    private record EvidenceMetadata(
+            LocalDateTime capturedAt,
+            String windowId,
+            String task,
+            String role,
+            String status,
+            String provider,
+            String hwnd,
+            String title,
+            int x1,
+            int y1,
+            int x2,
+            int y2,
+            int imageWidth,
+            int imageHeight) {
     }
 
     private static final class EvidenceCleanupException extends RuntimeException {

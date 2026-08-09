@@ -35,10 +35,12 @@ public class FakerInputDevice {
 
     static final int REPORT_ID_KEYBOARD = 0x01;
     static final int REPORT_ID_RELATIVE_MOUSE = 0x03;
+    static final int REPORT_ID_ABSOLUTE_MOUSE = 0x04;
     static final int REPORT_ID_CONTROL = 0x40;
     static final int CONTROL_REPORT_SIZE = 0x41;
     static final int KEYBOARD_REPORT_SIZE = 9;
     static final int RELATIVE_MOUSE_REPORT_SIZE = 8;
+    static final int ABSOLUTE_MOUSE_REPORT_SIZE = 7;
 
     private final int requiredApiVersion;
     private final NativeConnectionFactory connectionFactory;
@@ -143,6 +145,19 @@ public class FakerInputDevice {
                 encodeRelativeMouseReport(buttonFlags, deltaX, deltaY, wheel, horizontalWheel));
     }
 
+    /**
+     * Publish one absolute mouse HID report using FakerInput's normalized screen coordinates.
+     *
+     * @param buttonFlags HID button bitmap
+     * @param absoluteX normalized horizontal coordinate in {@code [0, 32767]}
+     * @param absoluteY normalized vertical coordinate in {@code [0, 32767]}
+     * @param wheel vertical wheel delta in signed 8-bit HID units
+     */
+    public synchronized void updateAbsoluteMouse(int buttonFlags, int absoluteX, int absoluteY, int wheel) {
+        requireConnected().writeControlReport(
+                encodeAbsoluteMouseReport(buttonFlags, absoluteX, absoluteY, wheel));
+    }
+
     /** Release all keyboard modifiers/keys and mouse buttons before disconnecting or aborting input. */
     public synchronized void releaseAll() {
         if (connection == null) {
@@ -206,6 +221,23 @@ public class FakerInputDevice {
         putLittleEndianShort(report, 6, deltaY);
         report[8] = (byte) wheel;
         report[9] = (byte) horizontalWheel;
+        return report;
+    }
+
+    static byte[] encodeAbsoluteMouseReport(int buttonFlags, int absoluteX, int absoluteY, int wheel) {
+        requireByte("buttonFlags", buttonFlags, 0, 0xFF);
+        requireByte("absoluteX", absoluteX, 0, Short.MAX_VALUE);
+        requireByte("absoluteY", absoluteY, 0, Short.MAX_VALUE);
+        requireByte("wheel", wheel, Byte.MIN_VALUE, Byte.MAX_VALUE);
+
+        byte[] report = new byte[CONTROL_REPORT_SIZE];
+        report[0] = (byte) REPORT_ID_CONTROL;
+        report[1] = (byte) ABSOLUTE_MOUSE_REPORT_SIZE;
+        report[2] = (byte) REPORT_ID_ABSOLUTE_MOUSE;
+        report[3] = (byte) buttonFlags;
+        putLittleEndianShort(report, 4, absoluteX);
+        putLittleEndianShort(report, 6, absoluteY);
+        report[8] = (byte) wheel;
         return report;
     }
 
