@@ -3,11 +3,11 @@ window.CR_DASHBOARD_DATA = [
     "id": "G049",
     "number": 49,
     "owner": "Codex",
-    "status": "最终源码与隔离合同通过，待 fresh",
+    "status": "源码返修完成，按要求暂未验证，待 fresh",
     "kind": "open",
     "domain": "通用",
-    "files": "天庭引妖香 Tracker 分支、本地去重与 claim 生命周期",
-    "summary": "`YINYAO` 直接匹配；miss 可重试，match 后同任务停止，新任务清除旧 claim 后重开。",
+    "files": "天庭引妖香 Tracker 分支、本地去重与刷新后绿链",
+    "summary": "点引妖香后丢弃旧绿链 action，只消费刷新后的新 action；已有新绿链时等待不超过剩余 grace。",
     "verification": "需复核"
   },
   {
@@ -179,11 +179,11 @@ window.CR_DASHBOARD_DATA = [
     "id": "G033",
     "number": 33,
     "owner": "Codex",
-    "status": "引妖香返修静态门通过，实机保持停止",
+    "status": "封妖符/V3隔离静态门通过，待 Client 重启与 fresh",
     "kind": "open",
     "domain": "通用",
-    "files": "后台测试控制服务、逐小任务语义审计、五环/天庭入口、快捷暂停热恢复",
-    "summary": "引妖香改为 Tracker 先分类、本地模板命中后同队列点选项和绿链；待用户明确允许后 fresh 验证。",
+    "files": "后台控制、逐小任务审计、快捷暂停、V3 scene guard",
+    "summary": "清除旧快捷键 owner；V3 清场不再作用于天庭，当前 UI 下次正常重启后注册 F11。",
     "verification": "需复核"
   },
   {
@@ -206,6 +206,17 @@ window.CR_DASHBOARD_DATA = [
     "domain": "导航",
     "files": "`TiantingTask`, `NpcClickService`, 天庭接任务合同、dashboard 生成器",
     "summary": "exact `ARRIVED` 后禁止再次同步坐标或重新导航；复用现有 Client FIFO 消费器，并让 ready 事件携带当前任务类型。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G029",
+    "number": 29,
+    "owner": "Codex",
+    "status": "封妖符只读 task-box 返修通过，待 fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "`TiantingTask`、封妖符任务框比较、隔离合同",
+    "summary": "旧绿链仍禁止点击，但 `UNCHANGED` 的任务框可读并立即继续下一坐标，不再误等 100 秒。",
     "verification": "需复核"
   },
   {

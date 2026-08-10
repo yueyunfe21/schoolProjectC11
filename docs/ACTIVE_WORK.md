@@ -1,5 +1,126 @@
 # DHXY Active Work
 
+## Codex - 2026-08-09 / G029、G033 封妖符停顿与跨任务清场返修
+
+- **目标工作树：** Client/治理仅 `D:\mavenProject\DHXY-cr271`（分支 `dev`，
+  HEAD/`origin/dev`=`8e165332`）；Cloud 仅 `D:\mavenProject\dhxy-cloud-brain`（分支 `dev`，
+  HEAD/`origin/dev`=`e15554ff`）。保护基线 `D:\mavenProject\DHXY` 不修改。
+- **开始状态：** 两仓均已有未提交 G017/G049 等增量；全部原样保护，不回滚、不覆盖、不提交。
+- **批准边界：** G029 将封妖符只读 task-box fingerprint 与旧绿链点击授权分离；G033 将
+  `a0f5ba85` 引入的 terminal-frame scene guard 严格限制为 `WUHUAN_V3`；另精确清理占用
+  `Ctrl+Shift+F11` 的旧 Java 宿主，不终止当前 Cloud/UI/游戏窗口。本轮不启动实机任务。
+- **精确写集：** Cloud `TiantingTask.java`、`TiantingSubtaskLoopContractTest.java`；Client
+  `SpringObservationRunnerFactory.java` 及对应定向合同；治理为 G029/G033、本记录和 dashboard 数据。
+- **实现结果：** Cloud 封妖符快照读取直接 peek prepared action 的 immutable task-box fingerprint，物理绿链点击仍走
+  原 `preparedTrackerLink()` 的 post-combat freshness gate。Client scene guard 只在 exact `WUHUAN_V3` taskCode
+  接线，不再让天庭到达帧清理封妖符窗口。
+- **快捷键环境修复：** 日志证明旧 `AutoBot PID 49360` 是 `pause=true stop=true` 的 owner；已只关闭该旧进程。
+  Win32 同修饰符/键位注册探针 PASS，`Ctrl+Shift+F11` 已释放；当前 Cloud `53048`、UI `58940`、未知 Java
+  `56340` 均未终止。当前 UI 的失败注册线程已退出，需下次正常 Client 重启后取得热键，本轮未重启。
+- **验证：** 双仓 production compile PASS。两仓 aggregate Maven testCompile 分别被卡外旧
+  `LocalPathingStartProofMechanics` 与旧 Cloud 构造器/协议测试欠账阻断；按已登记隔离方式运行 Cloud
+  `TiantingSubtaskLoopContractTest` `31/31 PASS`、Client `WuhuanV3SceneGuardScopeContractTest` `1/1 PASS`。
+  `git diff --check` 待 dashboard 同步后终检；未启动 runtime/application/UI/capture/input 或实机任务。
+
+## Codex - 2026-08-09 / G049 13:42 引妖香到达后绿链重点击延迟
+
+- **目标与边界：** 仅审计 `D:\mavenProject\DHXY-cr271` Client 日志、
+  `D:\mavenProject\dhxy-cloud-brain` Cloud 日志和天庭 `AWAIT_DIALOG` 调用链；保护基线
+  `D:\mavenProject\DHXY` 不修改。本轮只记录 fresh 结论，未修改生产代码、未运行 runtime/编译/测试。
+- **精确时间线：** 点选项前 action `c7865bef...` 为 `(232,671)`；`hwnd-D8A1558` 在
+  `13:42:33.494` 点击引妖香后，`13:42:34.026` 仍在同一输入链点击该旧坐标。面板刷新后的 action
+  `ec1720ef...` 已变为 `(241,655)`。`13:42:45.409` 旧点击对应 intent 被判 `STOPPED_AWAY`；约
+  `13:42:49.864` 新绿链已 prepared，任务读取到
+  `trackerLinkReady=true`、`awaitingDialogSinceMs=3202`，仍进入 `AWAIT_DIALOG`；`13:43:14.932` 才从 park
+  返回，`13:43:16.261` 重点击绿链。
+- **主因与放大器：** 当前引妖香专用链错误假设 option 点击不会刷新 Tracker，因而把 option 与点选项前旧坐标
+  合并为原子输入，并为旧坐标登记 intent；这是第一次点击无效的主因。随后
+  `TiantingSubtaskDecision.DIALOG_GRACE_MS=5000` 只在每轮决策检查，而 `AWAIT_DIALOG` 使用
+  `PARK_SLICE_MS=25000`；在 grace 尚余约 `1.8s` 时睡入 25 秒 park，把错误放大到约 30 秒。
+- **用户批准方案：** option 点击后丢弃旧 action，等待并消费刷新后的 Tracker prepared action，再点击新坐标；
+  同时只对“`AWAIT_DIALOG` + prepared link + grace 未到期”使用剩余 grace 作为 park 上限。其余 fallback、
+  原图校验和业务顺序不变。
+- **实现：** Cloud 不再构造/下发引妖香 follow-up click；旧 action 只用于安装显式 option interest，且不建立
+  pathing/recovery episode。Client 对该 interest 始终只点击 option，即使 payload 中带旧 follow-up 也忽略；option
+  outcome 后 Cloud 清除 interest，等待刷新后的 prepared action。`AWAIT_DIALOG` 在已有新 action 时按剩余 grace
+  park，不再进入完整 25 秒切片。
+- **分支核对：** 13:42 的刷新后 action `ec1720ef...` 在真实日志中 branch=`DARK_THUNDER`，并由既有普通路径点击
+  新坐标 `(241,655)`；不会再次进入 `YINYAO`，因此拆链不会形成重复 option probe。
+- **精确写集：** Cloud `TiantingTask.java`、`TiantingSubtaskLoopContractTest.java`；Client
+  `WindowObservationSampler.java`、`TiantingDialogProbeContractTest.java`；治理本卡、本记录及生成的 dashboard 数据。
+  其余现有 dirty 原样保护，基线 `D:\mavenProject\DHXY` 未修改。
+- **验证：** 两仓 `git diff --check` PASS；静态检查确认 Cloud 旧 chain 方法/follow-up update 为 `0`、Client 旧
+  `tianting:yinyao-then-tracker`/follow-up 读取为 `0`，grace bound 只在 `AWAIT_DIALOG` 出现一次。按用户此前“修完先
+  不要跑”的要求，未运行 Maven、隔离合同或任何 runtime/application/UI/capture/input。
+
+## Codex - 2026-08-09 / G017 09:49 暗雷绿链移动误判返修
+
+- **目标与基线：** Client/治理 `D:\mavenProject\DHXY-cr271`，分支 `dev`，
+  HEAD/`origin/dev`=`8e165332e3832975f05b79130b37d46e6a36059c`；Cloud
+  `D:\mavenProject\dhxy-cloud-brain`，分支 `dev`，HEAD/`origin/dev`=
+  `e15554ff652e6d0cde4a3411dc8cb00494ac9d10`。两仓均已有未提交 G017 增量，全部原样保护并在其上精确追加；
+  保护基线 `D:\mavenProject\DHXY` 不修改。
+- **fresh 证据：** `2026-08-09 09:44:57`，`hwnd-D8A1558` 在 `御马监 (183,94)` 点击天庭暗雷绿链，
+  建立唯一 intent `044b67ee-fd17-4bf7-9bf1-c7bbd8bb6b06`；角色实际到达 `瑶池 (94,83)`。
+  Runner 到 `09:46:00` 才第一次请求坐标识别，把终点 `(94,83)` 当成该 intent 的首个基线；`09:46:06`
+  第二次仍为 `(94,83)`，遂错误发布 `STOPPED_AWAY` 且无 movement proof，G017 随后长期收到
+  `title=present, dialog=unknown`。点击前/后 exact frame 分别为
+  `images/captures/20260809/hwnd-D8A1558/20260809_094457_442_4328_HWND_PRINTWINDOW_866_280_1024x768.png`
+  与 `images/captures/20260809/hwnd-D8A1558/20260809_094608_403_4696_HWND_PRINTWINDOW_866_280_1024x768.png`。
+- **根因与批准结论：** 业务 intent 没有中途更换；Client sampler 首次见到该 intent 时清空自己的坐标状态，
+  而 intent 注册没有携带点击完成时已有的窗口位置记忆，导致第一份“抵达后坐标”被误当起点。修复为 intent
+  注册时保存该窗口点击完成时已有的逻辑 `x/y` 作为同 intent 起点，后续仍只比较 `x/y`。对 Dialog 边界的
+  定向真实语料测试发现 Client `probeOptionDialogPresent` 会把 P09 OPTION 判为 STORY，因此没有把语义迁到
+  Client；保留现有的同 envelope `640x300` ROI，并继续直接询问 Cloud 既有
+  `DialogService.classifySuppliedDialogFrame(...)`，P09/P08/N05 分别稳定得到 OPTION/STORY/NONE。
+- **精确写集：** Client `WindowRuntimeContext.java`、`WindowObservationSampler.java`、
+  `WindowObservationRunnerContractTest.java`；治理 `docs/PACKAGE_ARCHITECTURE.md`、本记录、生成的
+  `docs/cr-dashboard-data.js`。Cloud Dialog 路径及 Client `UnknownPhasePresenceLocalMechanics` 经验证无需改动；
+  不启动 runtime/application/UI/capture/input。
+- **实现：** `WindowRuntimeContext.markPathingStarted(...)` 从该绑定窗口的 `PlayerCharacter` 位置记忆给新 intent
+  写入 click-time `map/x/y`；sampler 首次接管该 intent 时继承此基线。后续 coordinate OCR 若 X/Y 改变，才写
+  `movementObservedAtMs`，并把 ACTIVE 时的新坐标与 movement proof 同步回 `WindowPathingSnapshot`；地图 OCR 与
+  pixel diff 仍不能伪造移动。
+- **静态验证：** Client `mvn -q -DskipTests compile`、Cloud
+  `mvn -q -DskipTests=false compile` 均 PASS。Client 隔离执行
+  `G017UnknownPhaseConnectivityContractTest + WindowObservationRunnerContractTest` 为 `23/23 PASS`，其中固定复现
+  `御马监 (183,94) -> 瑶池 (94,83)`，第一份终点 OCR 即形成 movement proof、状态保持 ACTIVE。Cloud 隔离
+  `G017UnknownPhaseRecoveryPolicyContractTest + G017UnknownPhaseDialogReplayTest` 为 `8/8 PASS`，真实 P09/P08/N05
+  分别为 OPTION/STORY/NONE。标准 Client named Maven test 在目标测试执行前被卡外旧
+  `LocalPathingStartProofMechanics` 引用阻断；未扩大范围修复。fresh runtime 尚未执行。
+
+## Codex - 2026-08-09 / G017 绿链无移动统一 OPTION 恢复闭环
+
+- **目标与基线：** Client/治理 `D:\mavenProject\DHXY-cr271`，分支 `dev`，
+  HEAD/`origin/dev`=`8e165332`；Cloud `D:\mavenProject\dhxy-cloud-brain`，分支 `dev`，
+  HEAD/`origin/dev`=`e15554f`。两仓编辑前均 clean；保护基线 `D:\mavenProject\DHXY` 不修改。
+- **现状证据：** 天庭已有 G017/G029 的已知 OPTION 模板、unknown-phase paired observation 和 generic
+  fallback，但 exact 绿链 no-movement 入口已经没有生产调用；旧实现还要求新 prepared action、把 STORY 当阻塞，
+  generic fallback 点击第一绿项并受固定 terminal deadline 约束，无法形成可复用的同坐标闭环。
+- **用户批准合同：** 只有“任务明确以 Tracker 绿链发起移动 intent，Runner 对同 intent 发布终态，并证明前后
+  `x/y` 完全相同”才进入恢复；地图名不参与比较。Runner 未给权威结果时只能等待。已知 OPTION 由本地模板点击并
+  返回稳定 `actionKey`；未知 OPTION 使用 `DialogService` 的 force-close 语义；STORY 不阻挡绿链。每次重试前必须
+  等 Runner 新事实证明 OPTION 已消失。Tracker 原图仍一致时复用原坐标；只累计清屏后仍无移动的重试，最多五次。
+  五次后 fresh 校验：Tracker 已变则丢弃旧 action，未变则返回 `RETRY_EXHAUSTED`；具体回到哪个 phase 由任务决定，
+  不 crash。天庭本卡接入并回 `RETURN_HOME`，其他任务后续可选择接入同一结果合同。
+- **精确写集：** Client `WindowObservationSampler.java`、`WindowPathingSnapshot.java`、
+  `WindowObservationRunnerContractTest.java`；Cloud `WindowPathingSnapshot.java`、
+  `G017UnknownPhaseRecoveryPolicy.java`、`TiantingTask.java`、
+  `G017UnknownPhaseRecoveryPolicyContractTest.java`、`TiantingSubtaskLoopContractTest.java`；治理
+  `docs/PACKAGE_ARCHITECTURE.md`、本记录、生成的 `docs/cr-dashboard-data.js`。不启动
+  runtime/application/UI/capture/input。
+- **实现：** Client 的坐标条像素变化只负责调度下一次坐标识别，不再伪造 movement proof；只有同 intent 的两次
+  有效逻辑坐标中 X 或 Y 变化才写 `movementObservedAtMs`，地图 OCR 不参与。Cloud 保存原绿链 action 与 exact
+  intent，消费 Runner 的 `ARRIVED/STOPPED_AWAY` 终态：有 movement proof 走原路径，无 proof 进入统一恢复。已知
+  OPTION 保留天庭稳定 `actionKey`；未知 OPTION 只调用现有 force-close；STORY 直接允许复点。每次复点前重新验证
+  Tracker 原图，复用原坐标并登记新 intent；只在成功提交清屏复点时累计，五次耗尽后回 `RETURN_HOME` 重新接任务。
+- **验证：** Client/Cloud production `mvn -q -DskipTests=false compile` 均 PASS；Client 隔离
+  `WindowObservationRunnerContractTest` `18/18 PASS`，覆盖地图名变化但 `(155,108)` 不变仍为 no-movement；Cloud
+  隔离 `G017UnknownPhaseRecoveryPolicyContractTest` + `TiantingSubtaskLoopContractTest` `35/35 PASS`，覆盖 exact
+  intent、`ARRIVED/STOPPED_AWAY`、STORY、未知 OPTION、同坐标五次预算及耗尽回任务层。标准 named Maven 测试仍被
+  卡外旧 aggregate test fixture/旧构造器签名阻断在 `testCompile`。两仓 `diff --check` PASS；未启动
+  runtime/application/UI/capture/input，fresh runtime 仍待用户另行允许。
+
 ## Codex - 2026-08-09 / G049 天庭引妖香按 Tracker 分支处理并在任务内去重
 
 - **目标与基线：** Client/治理 `D:\mavenProject\DHXY-cr271`，分支 `thin-client-design`，
@@ -91507,3 +91628,25 @@ Cloud helper。`SummonSkillTailBoundaryScanner` 则不是局部 OCR/上云桥接
   asserts both branches: RUNNING invokes immediate pause without UI resume; no RUNNING window delegates exactly once
   to the existing resume callback. Fresh still requires a Client restart because PID `41808` loaded the pre-repair
   class at `08:13:40`.
+
+## Codex - 2026-08-09 / G029 封妖符真实移动被误判 no-movement
+
+- **目标与基线：** Client/治理 `D:\mavenProject\DHXY-cr271`，分支 `dev`，
+  HEAD/`origin/dev`=`8e165332e3832975f05b79130b37d46e6a36059c`；Cloud
+  `D:\mavenProject\dhxy-cloud-brain`，分支 `dev`，
+  HEAD/`origin/dev`=`e15554ff652e6d0cde4a3411dc8cb00494ac9d10`。两仓已有 dirty/untracked 全部保留；
+  保护基线 `D:\mavenProject\DHXY` 未修改。
+- **纠正后的 fresh 事实：** 角色不是原本就在 `(83,72)`。第一个坐标点击前保存帧为蟠桃园 `(25,190)`；
+  `15:12:47.833` coordinate `0` 点击并登记 intent `03eee408-...` 后，画面依次到 `(26,188)`、`(37,165)`、
+  `(45,149)`，同时显示自动寻路目标 `(83,72)`。坐标点击和移动均真实成功。
+- **根因：** `WindowObservationSampler` 在连续移动时仅用坐标条 pixel diff 更新调度时间，逻辑坐标 OCR 要等
+  坐标条稳定后才产生 `movementObservedAtMs`。Cloud `TiantingTask.clickFengyaofuCoordinate(...)` 却立即调用
+  G014 的短时 `legStarted(...)`；`15:12:54.625` 在角色仍行走时将 ACTIVE intent 按 `no-movement` 清除，随后
+  反复创建新 intent 并点击同一坐标。问题是 G029 坐标腿与 G014 短时绿链恢复合同错配，不是点错坐标。
+- **批准边界与实现：** 封妖符坐标点击后保留同一 exact intent，等待 Runner 权威终态；终态携带 X/Y 变化证明才
+  消费坐标并进入现有 tooltip-only 阶段，终态无移动证明才清 STORY/重试同坐标。Cloud `TiantingTask` 已删除该路径
+  对短时 `legStarted(...)` 的调用和 ACTIVE intent 早清，改为 `PATHING_TERMINAL` exact-ID latch 跨 turn 消费。
+  pixel diff 仍只作调度，不作移动真值；坐标、模板、ROI、阈值、四坐标顺序和后半段规则均未改。
+- **验证：** `BR-TIANTING-003` 与 G029 trace 已登记，业务规则门 PASS；Cloud production compile PASS；隔离
+  `TiantingSubtaskLoopContractTest` `30/30 PASS`。标准 named Maven test 被卡外既有 aggregate `testCompile` 欠账
+  阻断。未启动 runtime/application/UI/capture/input，fresh 仍待真实封妖符长距离移动验证。

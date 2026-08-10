@@ -105,7 +105,9 @@ public class SpringObservationRunnerFactory implements WindowObservationRunnerFa
                 kandaDialogService, inputSequences, taskRunId, localKandaEnabled,
                 new LocalCombatSignalMechanics(tracker, coordinateHelper),
                 returnHomeReplayCoordinator, xinshouAutoCombatState);
-        if (sampler != null) {
+        // a0f5ba85 added this pre-terminal cleanup for 五环 V3. Other tasks own their visible
+        // windows and dialogs; binding it globally lets arrival sampling close business UI such as 封妖符.
+        if (sampler != null && "WUHUAN_V3".equalsIgnoreCase(taskCode)) {
             sampler.bindUiCleanerService(uiCleanerService);
         }
         if (sampler == null) {

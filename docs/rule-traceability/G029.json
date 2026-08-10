@@ -4,20 +4,21 @@
   "changeType": "business",
   "status": "APPROVED_IMPLEMENTATION",
   "baseline": {
-    "clientBranch": "thin-client-design",
-    "clientCommit": "2f083c14152106ba6ad418a0c29e3e0e2148e14a",
-    "pushedReference": "origin/thin-client-design",
-    "cloudBranch": "navigation-migration",
-    "cloudCommit": "363d0e3fae73c0c55f4920f6f1c61338a0458d73",
-    "cloudPushedReference": "origin/navigation-migration"
+    "clientBranch": "dev",
+    "clientCommit": "8e165332e3832975f05b79130b37d46e6a36059c",
+    "pushedReference": "origin/dev",
+    "cloudBranch": "dev",
+    "cloudCommit": "e15554ff652e6d0cde4a3411dc8cb00494ac9d10",
+    "cloudPushedReference": "origin/dev"
   },
   "repositories": {
     "cloud": "../dhxy-cloud-brain"
   },
-  "rules": ["BR-DIALOG-001", "BR-TIANTING-001"],
+  "rules": ["BR-DIALOG-001", "BR-TIANTING-001", "BR-TIANTING-003"],
   "affectedPaths": [
     "docs/ACTIVE_WORK.md",
     "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/business-rules.json",
     "docs/业务逻辑.md",
     "docs/天庭任务流程大MD.md",
     "docs/云端迁移常见错误清单.md",
@@ -82,6 +83,26 @@
           ]
         }
       ]
+    },
+    {
+      "rule": "BR-TIANTING-003",
+      "producer": "Client WindowObservationSampler 为封妖符坐标点击登记 exact pathing intent，并只在同 intent 的逻辑 X/Y 变化后写 movementObservedAtMs；pixel diff 只调度坐标识别。",
+      "transport": "WindowPathingSnapshot 持续保留同一 ACTIVE intent，直到 Runner 发布 ARRIVED/STOPPED_AWAY 权威终态；Cloud 不用短时等待到期替代该终态，也不提前清 ACTIVE intent。",
+      "consumer": "TiantingTask 仅在同 intent 终态携带真实 movementObservedAtMs 时消费当前坐标并进入既有 tooltip-only 妖王幻影阶段；终态无移动证明时才清 STORY 并重试同一坐标。",
+      "ordering": "coordinate click -> exact intent remains pending across turns -> Runner exact terminal -> movement proof consumes coordinate OR no-movement STORY fallback retries same coordinate",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/task/tianting/TiantingSubtaskLoopContractTest.java",
+          "command": "focused G029 coordinate lifecycle contract",
+          "proves": [
+            "long continuous movement does not clear or re-click an ACTIVE exact intent",
+            "terminal with exact X/Y movement proof consumes the coordinate and enters the target phase",
+            "terminal without movement proof clears only STORY and retries the same coordinate",
+            "a short leg already terminal before the next Cloud pass still advances correctly"
+          ]
+        }
+      ]
     }
   ],
   "verification": [
@@ -91,6 +112,9 @@
     {"name": "Cloud production compile", "result": "PASS", "evidence": "mvn -q -DskipTests=false compile"},
     {"name": "Cloud G029 connectivity contract", "result": "PASS", "evidence": "isolated javac + JUnit Console TiantingSubtaskLoopContractTest: 16/16, including recovery A -> B stale-correlation rejection"},
     {"name": "shared key-event protocol", "result": "PASS", "evidence": "ObservationKeyEventType.java SHA-256 both repos 794AE5229005785867D4DF00417B8AC91E353602CCA80BE8E844A779E3C7A83B"},
-    {"name": "fresh runtime", "result": "PENDING"}
+    {"name": "G029 coordinate lifecycle gate", "result": "PASS", "evidence": "BR-TIANTING-003 registered; node scripts/check-business-rule-gate.js --card G029"},
+    {"name": "G029 coordinate lifecycle production compile", "result": "PASS", "evidence": "Cloud mvn -q -DskipTests=false compile"},
+    {"name": "G029 coordinate lifecycle isolated contract", "result": "PASS", "evidence": "TiantingSubtaskLoopContractTest 30/30 via javac -proc:none + JUnit ConsoleLauncher"},
+    {"name": "fresh runtime", "result": "PENDING", "evidence": "requires a real long-distance 封妖符 coordinate leg; runtime not started in this repair"}
   ]
 }

@@ -2795,12 +2795,22 @@ public class WindowRuntimeContext {
             clearPathingSignal("null intent");
             return;
         }
-        pathingSnapshot.set(WindowPathingSnapshot.builder()
+        PlayerCharacter me = gameState.getMe();
+        boolean hasKnownLocation = me != null
+                && me.getCurrentMapName() != null
+                && !me.getCurrentMapName().isBlank();
+        WindowPathingSnapshot snapshot = WindowPathingSnapshot.builder()
                 .state(WindowPathingState.ACTIVE)
                 .intent(intent)
+                .currentMapName(hasKnownLocation ? me.getCurrentMapName() : null)
+                .currentX(hasKnownLocation ? me.getX() : null)
+                .currentY(hasKnownLocation ? me.getY() : null)
                 .locationChangedAtMs(intent.getCreatedAtMs())
                 .message("pathing intent registered")
-                .build());
+                .build();
+        pathingSnapshot.set(snapshot);
+        log.info("window pathing intent registered with coordinate baseline: windowId={} intentId={} source={} baseline=({}, {})",
+                windowId, intent.getIntentId(), intent.getSource(), snapshot.getCurrentX(), snapshot.getCurrentY());
     }
 
     /**

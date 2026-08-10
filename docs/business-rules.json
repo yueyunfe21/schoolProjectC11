@@ -47,6 +47,15 @@
       "status": "active"
     },
     {
+      "id": "BR-TIANTING-003",
+      "title": "天庭封妖符坐标 exact intent 与终态消费",
+      "source": "docs/天庭任务流程大MD.md",
+      "heading": "[BR-TIANTING-003] 封妖符坐标分支",
+      "domains": ["tianting", "pathing", "dialog", "combat", "state-lifecycle", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
       "id": "BR-WUHAN-001",
       "title": "五环接任务 Title 确认与暂不可用 Story 重试",
       "source": "docs/业务逻辑.md",

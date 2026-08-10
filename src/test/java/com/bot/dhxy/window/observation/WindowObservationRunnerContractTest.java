@@ -17,6 +17,7 @@ import com.bot.dhxy.config.WindowIsolationProperties;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.model.dialog.DialogOperation;
 import com.bot.dhxy.model.job.XiuluoGreenChainSchedule;
 import com.bot.dhxy.service.DialogService;
@@ -62,6 +63,99 @@ class WindowObservationRunnerContractTest {
     private static final String HWND = "12345";
     private static final String TASK_CODE = "XIULUO_V2";
     private static final String TASK_RUN = "start-req-1";
+
+    @Test
+    void runnerMovementComparisonUsesOnlyExactXY() {
+        assertFalse(WindowObservationSampler.hasRecognizedPathingCoordinateChanged(
+                        155, 108, 155, 108),
+                "unchanged X/Y must remain no-movement regardless of map OCR");
+        assertTrue(WindowObservationSampler.hasRecognizedPathingCoordinateChanged(
+                155, 108, 156, 108));
+        assertTrue(WindowObservationSampler.hasRecognizedPathingCoordinateChanged(
+                155, 108, 155, 109));
+        assertTrue(WindowObservationSampler.hasRecognizedPathingCoordinateChanged(
+                null, null, 155, 108), "the first coordinate only establishes a baseline");
+    }
+
+    @Test
+    void changedMapTextWithSameXYTerminatesAsNoMovement() throws Exception {
+        WindowRuntimeContext context = new WindowRuntimeContext(WINDOW, new GameContext());
+        context.setNativeBinding(new WindowNativeBinding(HWND, "title", "class", 7L, 0, 0, 1024, 768));
+        long now = System.currentTimeMillis();
+        WindowPathingIntent intent = WindowPathingIntent.builder()
+                .intentId("intent-same-xy")
+                .source("tracker:test")
+                .type(WindowPathingIntentType.UNTARGETED_TRACKER)
+                .createdAtMs(now - 5_000L)
+                .build();
+        context.updatePathingSnapshot(WindowPathingSnapshot.builder()
+                .state(WindowPathingState.ACTIVE)
+                .intent(intent)
+                .locationChangedAtMs(now - 3_000L)
+                .movementObservedAtMs(0L)
+                .updatedAtMs(now)
+                .build());
+        WindowObservationSampler sampler = sampler(context);
+        setSamplerField(sampler, "localPathingCoordinatePending", true);
+        setSamplerField(sampler, "localPathingLastChangedAtMs", 1L);
+        setSamplerField(sampler, "localPathingCoordinateRequestedChangedAtMs", 1L);
+        setSamplerField(sampler, "localPathingCoordinateRequestedAtMs", now);
+        setSamplerField(sampler, "localPathingCoordinateRequestedStableMs", 3_000L);
+        setSamplerField(sampler, "localPathingCoordinateRequestedIntentAgeMs", 5_000L);
+        setSamplerField(sampler, "localPathingRecognizedMapName", "old-map-ocr");
+        setSamplerField(sampler, "localPathingRecognizedX", 155);
+        setSamplerField(sampler, "localPathingRecognizedY", 108);
+        setSamplerField(sampler, "localPathingRecognizedChangedAtMs", now - 3_000L);
+
+        sampler.acceptAnalysisResults(List.of(new ObservationAnalysisResult(
+                "analysis-same-xy", "PATHING_COORDINATE_RESOLVED", "coordinate-strip",
+                intent.getIntentId(), null, null, null, "different-map-ocr", 155, 108, null)));
+
+        assertEquals(WindowPathingState.STOPPED_AWAY, context.getPathingSnapshot().getState());
+        assertEquals(0L, context.getPathingSnapshot().getMovementObservedAtMs(),
+                "map OCR changes and pixel differences must not become logical movement proof");
+    }
+
+    @Test
+    void clickTimeCoordinateSeedsTheIntentAndFirstResolvedDestinationProvesMovement() throws Exception {
+        WindowRuntimeContext context = new WindowRuntimeContext(WINDOW, new GameContext());
+        context.setNativeBinding(new WindowNativeBinding(HWND, "title", "class", 7L, 0, 0, 1024, 768));
+        PlayerCharacter me = new PlayerCharacter("队长", "leader", "server");
+        me.setCurrentMapName("御马监");
+        me.setX(183);
+        me.setY(94);
+        context.getGameState().setMe(me);
+        long now = System.currentTimeMillis();
+        WindowPathingIntent intent = WindowPathingIntent.builder()
+                .intentId("intent-dark-thunder")
+                .source("tianting:tracker-green-click:advance")
+                .type(WindowPathingIntentType.UNTARGETED_TRACKER)
+                .createdAtMs(now - 5_000L)
+                .build();
+
+        context.markPathingStarted(intent);
+        assertEquals(183, context.getPathingSnapshot().getCurrentX());
+        assertEquals(94, context.getPathingSnapshot().getCurrentY());
+
+        WindowObservationSampler sampler = sampler(context);
+        sampler.collect(List.of());
+        assertEquals(183, getSamplerField(sampler, "localPathingRecognizedX"));
+        assertEquals(94, getSamplerField(sampler, "localPathingRecognizedY"));
+
+        setSamplerField(sampler, "localPathingCoordinatePending", true);
+        setSamplerField(sampler, "localPathingCoordinateRequestedChangedAtMs",
+                getSamplerField(sampler, "localPathingLastChangedAtMs"));
+        setSamplerField(sampler, "localPathingCoordinateRequestedAtMs", now);
+        setSamplerField(sampler, "localPathingCoordinateRequestedStableMs", 3_000L);
+        setSamplerField(sampler, "localPathingCoordinateRequestedIntentAgeMs", 5_000L);
+        sampler.acceptAnalysisResults(List.of(new ObservationAnalysisResult(
+                "analysis-dark-thunder", "PATHING_COORDINATE_RESOLVED", "coordinate-strip",
+                intent.getIntentId(), null, null, null, "瑶池", 94, 83, null)));
+
+        assertEquals(WindowPathingState.ACTIVE, context.getPathingSnapshot().getState());
+        assertTrue(context.getPathingSnapshot().getMovementObservedAtMs() > 0L,
+                "the first destination coordinate must compare with the click-time baseline");
+    }
 
     @Test
     void exactFrameDemandDoesNotExpireAndResendsUntilCloudClearsIt() throws Exception {
@@ -706,6 +800,13 @@ class WindowObservationRunnerContractTest {
         Field field = WindowObservationSampler.class.getDeclaredField(fieldName);
         field.setAccessible(true);
         field.set(sampler, value);
+    }
+
+    private static Object getSamplerField(WindowObservationSampler sampler,
+                                          String fieldName) throws ReflectiveOperationException {
+        Field field = WindowObservationSampler.class.getDeclaredField(fieldName);
+        field.setAccessible(true);
+        return field.get(sampler);
     }
 
     private static void stopAndAssertStopped(WindowObservationRunner runner) throws InterruptedException {

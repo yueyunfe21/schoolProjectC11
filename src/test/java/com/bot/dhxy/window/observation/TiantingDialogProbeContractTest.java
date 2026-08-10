@@ -9,7 +9,6 @@ import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
-import com.bot.dhxy.input.action.InputActionType;
 import com.bot.dhxy.model.dialog.DialogOperation;
 import com.bot.dhxy.service.DialogService;
 import com.bot.dhxy.task.model.TaskType;
@@ -292,28 +291,26 @@ class TiantingDialogProbeContractTest {
     }
 
     @Test
-    void yinyaoInterestClicksOptionThenPreparedTrackerPointInOneQueueRequest() {
+    void yinyaoInterestClicksOnlyTheOptionAndIgnoresThePreOptionTrackerPoint() {
         Fixture fixture = new Fixture();
         fixture.armYinyaoInterest(100L, "intent-yinyao-chain");
         fixture.showOption(TiantingDialogLocalMechanics.YINYAO);
 
         List<ObservationKeyEvent> events = fixture.collectCycles(1);
 
-        assertEquals(1, fixture.inputSequences.submissions.size());
-        List<InputAction> actions = fixture.inputSequences.submissions.get(0);
-        assertEquals(6, actions.size());
-        assertEquals(2, actions.stream().filter(action -> action.getType() == InputActionType.CLICK_LEFT).count());
-        InputAction trackerClick = actions.get(5);
-        assertEquals(InputActionType.CLICK_LEFT, trackerClick.getType());
-        assertEquals(321, trackerClick.getX());
-        assertEquals(222, trackerClick.getY());
-        assertEquals("intent-yinyao-chain",
-                fixture.context.getPathingSnapshot().getIntent().getIntentId());
+        assertEquals(1, fixture.inputSequences.clicks.size(),
+                "the local probe must click only the 引妖香 option");
+        assertTrue(fixture.inputSequences.submissions.isEmpty(),
+                "the pre-option Tracker point must not be submitted as a follow-up input chain");
+        assertFalse(fixture.inputSequences.clicks.get(0).endsWith("@321,222"),
+                "the stale prepared Tracker coordinate must never be clicked");
+        assertNull(fixture.context.getPathingSnapshot().getIntent(),
+                "an option-only click must not register a Tracker pathing intent");
         assertTrue(events.stream().anyMatch(event -> event.detail() != null
                         && event.detail().startsWith(TiantingDialogLocalMechanics.ACTION_YINYAO + "|")
                         && event.detail().contains("executed=true")
-                        && event.detail().contains("trackerChained=true")),
-                "the existing dialog event must report that its local probe also dispatched the Tracker click");
+                        && event.detail().contains("trackerChained=false")),
+                "the retained event must state that only the option was clicked");
     }
 
     @Test
@@ -323,18 +320,18 @@ class TiantingDialogProbeContractTest {
         fixture.showNothing();
 
         fixture.collectCycles(2);
-        assertTrue(fixture.inputSequences.submissions.isEmpty(),
+        assertTrue(fixture.inputSequences.clicks.isEmpty(),
                 "a miss must remain retryable for the current Tracker task");
 
         fixture.showOption(TiantingDialogLocalMechanics.YINYAO);
         fixture.collectCycles(1);
-        assertEquals(1, fixture.inputSequences.submissions.size());
+        assertEquals(1, fixture.inputSequences.clicks.size());
 
         fixture.showNothing();
         fixture.collectCycles(1);
         fixture.showOption(TiantingDialogLocalMechanics.YINYAO);
         fixture.collectCycles(2);
-        assertEquals(1, fixture.inputSequences.submissions.size(),
+        assertEquals(1, fixture.inputSequences.clicks.size(),
                 "a matched 引妖香 task must not resume matching when the old dialog pixels reappear");
 
         fixture.armYinyaoInterest(200L, "intent-yinyao-next-task");
@@ -342,7 +339,7 @@ class TiantingDialogProbeContractTest {
                         "100|" + TiantingDialogLocalMechanics.ACTION_YINYAO),
                 "replacing the Tracker task interest must clear the previous task's match claim");
         fixture.collectCycles(1);
-        assertEquals(2, fixture.inputSequences.submissions.size(),
+        assertEquals(2, fixture.inputSequences.clicks.size(),
                 "a new Tracker task interest must re-arm 引妖香 matching");
     }
 

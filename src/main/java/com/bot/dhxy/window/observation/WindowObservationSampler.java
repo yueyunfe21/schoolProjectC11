@@ -19,7 +19,6 @@ import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.input.InputSequences;
-import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.dialog.DialogOperation;
 import com.bot.dhxy.model.job.XiuluoGreenChainSchedule;
 import com.bot.dhxy.service.DialogService;
@@ -1032,9 +1031,10 @@ public final class WindowObservationSampler {
     /**
      * Restores the baseline local runner's stopped-pathing authority without moving map/OCR business
      * recognition back to the Client. The small coordinate strip is captured from the exact bound HWND;
-     * pixel changes prove continued movement. CR142 permits a targeted coordinate intent to request
-     * recognition after 600ms of stable pixels. The narrowed 45x12 digit ROI remains the cheap movement
-     * trigger, but STOPPED_AWAY follows the baseline recognized-location contract: the first coordinate
+     * pixel changes only decide when another coordinate recognition is useful. CR142 permits a
+     * targeted coordinate intent to request recognition after 600ms of stable pixels. The narrowed
+     * 45x12 digit ROI remains the cheap sampling
+     * trigger, but movement and STOPPED_AWAY follow the recognized-coordinate contract: the first coordinate
      * establishes a baseline, changes remain ACTIVE, and only a later unchanged coordinate may satisfy
      * the separate 2.2-second boundary.
      */
@@ -1062,6 +1062,12 @@ public final class WindowObservationSampler {
         if (newIntent) {
             resetLocalPathingObservation();
             localPathingIntentId = intent.getIntentId();
+            localPathingRecognizedMapName = snapshot.getCurrentMapName();
+            localPathingRecognizedX = snapshot.getCurrentX();
+            localPathingRecognizedY = snapshot.getCurrentY();
+            if (localPathingRecognizedX != null && localPathingRecognizedY != null) {
+                localPathingRecognizedChangedAtMs = intent.getCreatedAtMs();
+            }
             advanceLocalPathingGeneration();
             localPathingLastSampleAtMs = observedAtMs;
             localPathingLastChangedAtMs = observedAtMs;
@@ -1079,7 +1085,6 @@ public final class WindowObservationSampler {
         if (changed) {
             advanceLocalPathingGeneration();
             localPathingLastChangedAtMs = observedAtMs;
-            localPathingMovementObservedAtMs = observedAtMs;
             localPathingCoordinatePending = false;
             localPathingCoordinateRequestedChangedAtMs = 0L;
             localPathingCoordinateRequestedAtMs = 0L;
@@ -1124,7 +1129,7 @@ public final class WindowObservationSampler {
                 .state(WindowPathingState.ACTIVE)
                 .message(coordinateVerdictNewlyPending
                         ? "local runner stable; awaiting coordinate verdict"
-                        : changed ? "local runner movement observed" : "local runner pathing active")
+                        : changed ? "local runner coordinate strip changed" : "local runner pathing active")
                 .locationChangedAtMs(localPathingLastChangedAtMs)
                 .movementObservedAtMs(localPathingMovementObservedAtMs)
                 .updatedAtMs(observedAtMs)
@@ -1457,9 +1462,15 @@ public final class WindowObservationSampler {
             long responseLatencyMs = localPathingCoordinateRequestedAtMs <= 0L
                     ? 0L
                     : Math.max(0L, resolvedAtMs - localPathingCoordinateRequestedAtMs);
-            boolean recognizedLocationChanged = hasRecognizedPathingLocationChanged(
-                    result.mapName(), result.coordinateX(), result.coordinateY());
+            boolean hadRecognizedCoordinate = localPathingRecognizedX != null
+                    && localPathingRecognizedY != null;
+            boolean recognizedLocationChanged = hasRecognizedPathingCoordinateChanged(
+                    localPathingRecognizedX, localPathingRecognizedY,
+                    result.coordinateX(), result.coordinateY());
             if (recognizedLocationChanged) {
+                if (hadRecognizedCoordinate) {
+                    localPathingMovementObservedAtMs = resolvedAtMs;
+                }
                 localPathingRecognizedMapName = result.mapName();
                 localPathingRecognizedX = result.coordinateX();
                 localPathingRecognizedY = result.coordinateY();
@@ -1473,6 +1484,18 @@ public final class WindowObservationSampler {
                     intent, result.mapName(), result.coordinateX(), result.coordinateY(),
                     stableMs, intentAgeMs, recognizedLocationChanged, recognizedStationaryMs);
             if (terminal == WindowPathingState.ACTIVE) {
+                context.updatePathingSnapshot(snapshot.toBuilder()
+                        .state(WindowPathingState.ACTIVE)
+                        .currentMapName(result.mapName())
+                        .currentX(result.coordinateX())
+                        .currentY(result.coordinateY())
+                        .message("local runner recognized coordinate changed; pathing remains active")
+                        .locationChangedAtMs(localPathingRecognizedChangedAtMs)
+                        .movementObservedAtMs(localPathingMovementObservedAtMs)
+                        .updatedAtMs(resolvedAtMs)
+                        .probeFinishedAtMs(resolvedAtMs)
+                        .probeInProgress(false)
+                        .build());
                 localPathingArrivalCheckedChangedAtMs = localPathingLastChangedAtMs;
                 localPathingCoordinatePending = false;
                 localPathingCoordinateRequestedChangedAtMs = 0L;
@@ -1497,6 +1520,7 @@ public final class WindowObservationSampler {
                     .message(terminal == WindowPathingState.ARRIVED
                             ? "local runner confirmed arrival from recognized coordinate"
                             : "local runner confirmed stopped away from recognized coordinate")
+                    .movementObservedAtMs(localPathingMovementObservedAtMs)
                     .updatedAtMs(resolvedAtMs)
                     .probeFinishedAtMs(resolvedAtMs)
                     .probeInProgress(false)
@@ -1593,13 +1617,16 @@ public final class WindowObservationSampler {
         return WindowPathingState.ACTIVE;
     }
 
-    private boolean hasRecognizedPathingLocationChanged(String currentMapName, int currentX, int currentY) {
-        return localPathingRecognizedMapName == null
-                || localPathingRecognizedX == null
-                || localPathingRecognizedY == null
-                || !Objects.equals(localPathingRecognizedMapName, currentMapName)
-                || localPathingRecognizedX != currentX
-                || localPathingRecognizedY != currentY;
+    /**
+     * Runner movement proof is coordinate-only. A noisy map OCR result must not turn unchanged
+     * logical coordinates into movement, and a real map transition cannot preserve both X and Y.
+     */
+    static boolean hasRecognizedPathingCoordinateChanged(
+            Integer previousX, Integer previousY, int currentX, int currentY) {
+        return previousX == null
+                || previousY == null
+                || previousX != currentX
+                || previousY != currentY;
     }
 
     private static boolean hasArrived(WindowPathingIntent intent,
@@ -2425,35 +2452,17 @@ public final class WindowObservationSampler {
         if (!context.tryClaimTiantingDialogOption(optionKey)) {
             return;
         }
-        boolean trackerChained = TiantingDialogLocalMechanics.YINYAO.equals(validated.templatePath())
-                && interest.hasFollowUpClick();
         boolean clicked;
         try {
             int optionX = rect[0] + validated.roiOffsetX();
             int optionY = rect[1] + validated.roiOffsetY();
-            if (trackerChained) {
-                /*
-                 * The Tracker point was prepared from the same task box before Cloud armed this existing
-                 * interest. Keep both physical clicks in one queue request: once 使用引妖香 succeeds there
-                 * is no second Cloud decision or another sampling round between it and the green link.
-                 */
-                clicked = inputSequences.submitAndWait("tianting:yinyao-then-tracker", List.of(
-                        InputAction.moveMouse(optionX, optionY),
-                        InputAction.sleep(80),
-                        InputAction.clickLeft(optionX, optionY, 150),
-                        InputAction.moveMouse(interest.getFollowUpAbsoluteX(), interest.getFollowUpAbsoluteY()),
-                        InputAction.sleep(80),
-                        InputAction.clickLeft(
-                                interest.getFollowUpAbsoluteX(), interest.getFollowUpAbsoluteY(), 300)));
-                if (clicked) {
-                    context.markPathingStarted(interest.getFollowUpPathingIntent().toBuilder()
-                            .createdAtMs(System.currentTimeMillis())
-                            .build());
-                }
-            } else {
-                clicked = inputSequences.moveAndClickLeft(
-                        "tianting:dialog-option", optionX, optionY, 80, 150);
-            }
+            /*
+             * Clicking 引妖香 redraws the Tracker panel. A point prepared before this option therefore
+             * belongs to the old panel and must never be chained here, even if an older Cloud still sends
+             * a follow-up payload. Cloud will consume the refreshed prepared action on its next turn.
+             */
+            clicked = inputSequences.moveAndClickLeft(
+                    "tianting:dialog-option", optionX, optionY, 80, 150);
         } catch (RuntimeException inputFailure) {
             clicked = false;
         }
@@ -2523,7 +2532,7 @@ public final class WindowObservationSampler {
                 validated.actionKey()
                         + "|score=" + validated.score()
                         + "|executed=" + clicked
-                        + "|trackerChained=" + trackerChained));
+                        + "|trackerChained=false"));
     }
 
     /** Encodes an already-captured observation ROI without requesting another window capture. */

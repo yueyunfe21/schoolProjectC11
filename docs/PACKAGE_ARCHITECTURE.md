@@ -2,10 +2,10 @@
 
 ## G049 天庭引妖香按 Tracker 分支处理并在任务内去重（2026-08-09）
 
-- **状态：SOURCE + ISOLATED CONTRACT PASSED / FRESH REQUIRED。** Client/治理 worktree 为 `D:\mavenProject\DHXY-cr271`
-  （`thin-client-design@49cc45cec7ea9eaa48b0c6e014ea7a447c59e4ad`）；Cloud 实现仓为
+- **状态：SOURCE REPAIRED / 用户要求暂不验证，待 fresh。** Client/治理 worktree 为 `D:\mavenProject\DHXY-cr271`
+  （`dev@8e165332e3832975f05b79130b37d46e6a36059c`）；Cloud 实现仓为
   `D:\mavenProject\dhxy-cloud-brain`
-  （`navigation-migration@3b004086276972e8d89aa85eb81510082ab0f436`）。保护基线
+  （`dev@e15554ff652e6d0cde4a3411dc8cb00494ac9d10`）。保护基线
   `D:\mavenProject\DHXY` 不修改；两仓现有 dirty/untracked 全部保留，不 reset/revert/clean/commit。
 - **问题与证据：** `yinyao.png` 曾同时出现在任意绿链未移动后的通用 recovery 与显式
   `TIANTING_YINYAO` interest 中，导致普通恢复也可能扫描该模板；显式 interest 命中后，既有 claim 又在
@@ -17,20 +17,49 @@
   `TiantingDialogLocalMechanics.java`、`WindowObservationSampler.java`、`WindowRuntimeContext.java`、
   `TiantingDialogProbeContractTest.java`；治理仅本卡、`docs/ACTIVE_WORK.md` 与生成的
   `docs/cr-dashboard-data.js`。不改模板、OCR 分类、绿链坐标、输入动作、封妖符、其他任务或 runtime。
-- **验收门：** 合同必须证明 `YINYAO` 直接安装显式 interest，并保留“先点击使用引妖香、再点击已准备绿链”的
-  原子链；通用 recovery 不命中 `yinyao.png`；同一 interest 未命中可重试、命中后不再重复、新 interest 能
-  重新匹配且旧 claim 已清除。仅运行适用 compile/隔离合同与 `git diff --check`，不启动 runtime。
-- **实现：** Cloud `clickTrackerLink(...)` 直接按 branch=`YINYAO` 安装现有原子 interest，不读取 Runner
+- **当前验收门：** 合同必须证明 `YINYAO` 直接安装显式 interest，但 Client 只点击 option，并忽略任何点选项前
+  follow-up 坐标；Cloud 不为该旧 action 登记 pathing/recovery episode，option 成功后等待刷新后的 prepared
+  action。通用 recovery 不命中 `yinyao.png`；同一 interest 未命中可重试、命中后不再重复、新 interest 能
+  重新匹配且旧 claim 已清除；已有新绿链时 `AWAIT_DIALOG` 不得睡过剩余 grace。仅运行适用 compile/隔离合同与
+  `git diff --check`，不启动 runtime。
+- **初版实现（已被 13:42 fresh 否定）：** Cloud `clickTrackerLink(...)` 直接按 branch=`YINYAO` 安装原子 interest，不读取 Runner
   脱战布尔或时间戳。Client 通用 `RECOVERY_OPTIONS` 移除 `YINYAO`。显式 interest 的 claim 检查前移至共享帧
   裁剪与模板匹配之前：miss 不产生 claim，后续继续匹配；match 后当前 interest 立即安静。
   `WindowRuntimeContext` 在 interest 身份替换或清除时显式清除旧 claim，新 Tracker 任务自然重新放行；点击前
   fresh 校验同时确认 interest 仍是当前身份，避免替换瞬间的旧采样越权点击。
-- **验证：** Client/Cloud production `mvn -q -DskipTests=false compile` 均 PASS。两仓标准 named Maven
+- **初版验证：** Client/Cloud production `mvn -q -DskipTests=false compile` 均 PASS。两仓标准 named Maven
   均在目标类执行前被既有卡外 aggregate `testCompile` 欠账阻断；按项目既有隔离方式执行 Cloud
   `TiantingSubtaskLoopContractTest` `27/27 PASS`、Client `TiantingDialogProbeContractTest` `17/17 PASS`。
   Client 合同同时证明显式 interest 对 `yinyao.png` 为 `score=1.0` 并执行两次原子点击，而通用 recovery
   对同图零点击、零 `tianting.yinyao` 事件；同任务 miss 可重试，match 后即使旧像素再次出现也不重复，
   新 interest 清除旧 claim 后重新执行。未启动 runtime/application/UI/capture/input；fresh 待验证。
+- **2026-08-09 13:42 fresh P1：** 队长 `hwnd-D8A1558` 的点选项前 Tracker action
+  `c7865bef-33a5-41d0-ab81-e3ea6a711c67` 坐标为 `(232,671)`。Client 于 `13:42:33.494` 点击
+  `yinyao.png` 后，仍在现有 `tianting:yinyao-then-tracker` 原子链中于 `13:42:34.026` 点击这份旧坐标。
+  但点选项会刷新左侧 Tracker；刷新后的 action `ec1720ef-ccb6-470a-a006-f13c7d928f42` 已变为
+  `(241,655)`，约 `13:42:49.864` 已准备完成。旧坐标点击不能代表新绿链已提交，却被错误登记为 pathing intent。
+- **延迟放大器：** Runner 于 `13:42:45.409` 将旧点击对应 intent 判为 `STOPPED_AWAY`；任务看到新 action 时
+  `awaitingDialogSinceMs=3202`，按 `DIALOG_GRACE_MS=5000` 仍选择 `AWAIT_DIALOG`，随后却调用通用
+  `awaitSubtaskFact()` 进入最长 `PARK_SLICE_MS=25000` 的等待。没有事件在 5 秒门到期时唤醒，直到
+  `13:43:14.932` 才结束 park，最终 `13:43:16.261` 才消费新 action 点击正确的 `(241,655)`。因此主因是
+  引妖香后复用了点选项前的旧 Tracker action，25 秒 park 是第二层延迟放大器。
+- **用户批准的精确返修：** 引妖香 option 点击后不再携带或点击旧 Tracker 坐标，也不为旧 action 登记 pathing
+  intent；等待刷新后的 Tracker prepared action，再按既有原图校验消费新 action 并点击新绿链。另将
+  `AWAIT_DIALOG` 在“已有 prepared link、grace 尚未到期”时的 park 上限收紧为剩余 grace，避免任何一次旧点击或
+  无动作再次被 25 秒放大。模板、OCR、绿链算法/坐标、G017、封妖符、暗雷及其他任务均不改。
+- **返修实现：** Cloud `clickTrackerLink(...)` 对 `YINYAO` 只消费点选项前 action、安装现有
+  `TIANTING_YINYAO` interest，并设置“等待 Tracker 刷新”锁存；不下发 `TurnDialogFollowUpClick`、不打开
+  pathing/first-aid，也不创建 G017 recovery episode。Client 即使收到旧 follow-up payload，也只执行 option
+  的一次 `moveAndClickLeft(...)`，事件明确回报 `trackerChained=false`。Cloud 消费该 option outcome 后清除 interest，
+  下一轮只由刷新后的 prepared action 走既有原图校验与绿链点击。`AWAIT_DIALOG` 已有 prepared link 时只 park
+  `min(PARK_SLICE_MS, remainingGraceMs)`，不会再睡过 5 秒 grace 边界。
+- **刷新后分支核对：** 同一次 13:42 真实日志中，新 action `ec1720ef...` 最终 branch=`DARK_THUNDER`，旧代码已按
+  普通绿链路径点击其新坐标 `(241,655)`；它不会再次分类为 `YINYAO`。拆链后因此不会重复武装引妖香，而是确定地
+  回到既有 Tracker 点击路径。
+- **返修合同与当前验证状态：** Client 合同改为携带故意构造的旧 `(321,222)` follow-up，断言只点击 option、
+  旧坐标零点击、零 pathing intent、事件为 `trackerChained=false`；Cloud 合同断言不再下发 follow-up、不为旧 action
+  创建 recovery episode、option 后等待刷新 action，并断言 grace park 上限。两仓 `git diff --check` PASS；按用户
+  “修完先不要跑”的要求，本轮未运行 Maven、隔离合同、runtime/application/UI/capture/input，fresh 仍待另行允许。
 
 ## G048 天庭 Tracker OCR 优先于日计数校准并输出端到端耗时（2026-08-09）
 
@@ -790,6 +819,21 @@
   `08:10:24 EDT` 正式 `start-tianting -MaxRuns 100` 启动 `5/5`。新队长 runId 为
   `remote-turn-c85b4a76-7ce7-4641-9854-f866231e0e7d`，启动阶段无新 `ERROR/FAILED`。继续逐小任务验证战后绿链
   不再额外等待 `25s`，以及 G017 迟到引妖香 outcome 不再被 `4s` 截止终止。
+- **2026-08-09 快捷键 owner 冲突仍未关闭：** 当前 JavaFX Client `PID 58940` 于 `15:49:25.891` 明确记录
+  `Ctrl+Shift+F11 pause hotkey registration failed`；宿主同时仍有 `2026-08-06 22:47` 启动的旧 Java
+  `PID 49360` 及 `2026-08-09 01:11` 启动的 Java `PID 56340`。`15:56:17/21` 的 F11 事件因此不是当前 UI
+  注册链的证明，随后当前五窗收到的是 `remote turn stopped`。fresh 验收前必须先确认并移除旧 hotkey owner，
+  再让唯一当前 Client 成功注册；不得把“共享日志里看见 triggered”误报为当前 UI 快捷键可用。
+- **2026-08-09 快捷键 owner 已精确清理：** 日志证明旧 `AutoBot PID 49360` 在
+  `2026-08-06 22:47:32.303` 成功注册 `pause=true stop=true`，它才是占用者；当前 UI 为 `PID 58940`，当前 Cloud
+  为 `PID 53048`。本轮只终止旧 `49360`，两者及未知但未证明占用的 `56340` 均保持存活。随后用同一 Win32
+  `MOD_CONTROL|MOD_SHIFT|MOD_NOREPEAT + VK_F11` 做注册/注销探针，返回成功、`GetLastError=0`，证明组合键已经释放。
+  当前 UI 的注册线程此前已在双注册失败后退出，因此仍需下次正常重启 Client 才会取得热键；本轮不为此启动 UI/任务。
+- **五环 V3 scene guard 越界已返修：** `a0f5ba85` 引入的 terminal-frame scene guard 原先对每个 sampler
+  无条件绑定 `UICleanerService`，导致天庭到达坐标时把封妖符窗口的 `x2.png` 当 generic UI 关闭。Factory 现只在
+  exact `taskCode=WUHUAN_V3` 时绑定；五环 V3 原功能保留，天庭/修罗/五倍等 sampler 保持 observation-only。
+  Client production compile PASS；隔离 `WuhuanV3SceneGuardScopeContractTest` `1/1 PASS`。标准 Maven test 仍被卡外
+  `LocalPathingStartProofMechanics` 旧夹具阻断，未扩大写集。
 
 ## G032 本地整栈启动器被 Cloud 日志重定向永久阻塞（2026-08-05）
 
@@ -867,7 +911,7 @@
 
 ## G029 天庭封妖符已知 Dialog 语义恢复（2026-08-05）
 
-- **状态：SOURCE+ISOLATED CONTRACT PASSED / FRESH RUNTIME STARTING。** `15:11:40` 队长出现 `多谢`，`15:11:45` 出现并持续显示
+- **状态：SOURCE REPAIRED + ISOLATED CONTRACT PASSED / FRESH REQUIRED。** `15:11:40` 队长出现 `多谢`，`15:11:45` 出现并持续显示
   `使用封妖符`，随后封妖符坐标卷轴已打开，但 Cloud 仍反复点击 Tracker 绿链。
 - **根因：** G017 的 exact 绿链 no-movement 入口清除了 G014 的 `TIANTING_RECOVERY_OPTION`，直接使用通用
   Cloud fallback。fallback 只返回“第一项已点击”，丢失 `ACTION_DUOXIE/ACTION_FENGYAO`；G006 又在第一步后
@@ -940,6 +984,48 @@
   `TiantingSubtaskLoopContractTest` `20/20 PASS`。标准 Maven 定向 test 在 aggregate `testCompile` 被本卡外旧构造器
   夹具、已删除协议枚举及旧天庭合同阻断，未扩大写集。现在进入 G033 fresh；只有同轮不再越权点击旧 Tracker、
   坐标未移动重试同坐标、tooltip 点击等待真实战斗或 STORY 结果，且任务完成数增长，才能关闭本卡。
+
+- **2026-08-09 15:12 fresh P1，坐标点击后真实移动却被判为 no-movement：** 第一个坐标点击前角色在蟠桃园
+  `(25,190)`；`15:12:47.833` Client 为 coordinate `0` 登记 exact intent `03eee408-...`，点击点为窗口相对
+  `(454,383)`。随后保存帧依次显示 `(26,188)`、`(37,165)`、`(45,149)`，并出现“前往蟠桃园(83,72)”提示，
+  证明角色确实从原位置向 `(83,72)` 自动寻路，不是原地点击。可是连续移动期间 Client 的坐标条像素变化只更新
+  `localPathingLastChangedAtMs`，没有写 `movementObservedAtMs`；逻辑坐标 OCR 又只在坐标条稳定后触发。因此 Cloud
+  `legStarted(...)` 在角色仍移动时拿不到 exact movement proof，于 `15:12:54.625` 把该 ACTIVE intent 以
+  `tianting:fengyao-coord:0:no-movement` 清除，并从 `15:12:56.504` 起反复登记新 intent、重点击同一坐标。
+- **当前准确根因：** G029 的坐标消费门要求 exact movement proof 是对的，但它错误复用了 G014 面向“绿链点后原地
+  Dialog”的短时 `legStarted(...)` 判定。G017 又明确规定 pixel diff 只能调度坐标识别、不能直接充当移动真值；
+  长距离连续移动时坐标条长期不稳定，两个合同组合后会在真实行走尚未结束时反复删除自己的 exact intent。
+  这不是坐标、模板、ROI、点击点或 G049 引妖香返修导致的。
+- **用户批准并已实施的最小修复边界：** 仅把封妖符“坐标点击后”的生命周期改为保留同一 exact intent，等待 Runner 对
+  该 intent 给出权威终态/逻辑坐标结果；不得在短 `legStarted` 窗口后清 ACTIVE intent。终态带真实 X/Y 变化证明时
+  才消费当前坐标并进入既有 tooltip-only 阶段；终态仍无移动证明时，才检查/清除 STORY 并重试同一坐标。保留现有
+  四坐标顺序、模板、ROI、阈值、分支 ownership、tooltip-only、战斗/STORY 结果门和 task-box 比较，不把 pixel diff
+  升格为业务移动真值。
+- **2026-08-09 G029 返修实现：** Cloud `TiantingTask` 在坐标点击成功后保存 exact intent ID，不再调用短时
+  `legStarted(...)`，也不再以等待到期清 ACTIVE intent。`PATHING_TERMINAL` 到达时先按 exact intent 锁存终态及
+  `movementObservedAtMs`，再由后续 task turn 消费：有真实 X/Y 移动证明才写入 visited coordinate 并进入原
+  tooltip-only 阶段；无证明才清 STORY、保持坐标未消费并重试同一点。分支退出、轮次重置会清除全部 pending latch。
+- **静态验证：** `BR-TIANTING-003` 已登记，`node scripts/check-business-rule-gate.js --card G029` PASS；Cloud
+  `mvn -q -DskipTests=false compile` PASS；隔离 `javac -proc:none + JUnit ConsoleLauncher` 执行
+  `TiantingSubtaskLoopContractTest` 为 `30/30 PASS`。标准 `mvn -Dtest=TiantingSubtaskLoopContractTest test` 在目标类
+  执行前被卡外既有 `DialogService` 构造器、旧协议枚举和旧测试签名阻断，未扩大写集修复。未启动 runtime、任务、
+  UI、capture 或 input；fresh 仍需下一轮真实封妖符验证。
+- **2026-08-09 15:54 fresh P1，脱战后任务框明明可读却停等 `100s`：** coordinate `2` 已真实入战并于
+  `15:54:16.815` 脱战。Observer 持有的 post-combat prepared action 明确携带 `209x78` 当前任务框，且与战前图
+  比较为 `UNCHANGED`（约 `0.915`）；按封妖符规则应继续下一个坐标。可是
+  `captureTaskBoxSnapshot()` 通过 `preparedTrackerLink()` 取图，而后者为了禁止点击战后旧绿链，会在
+  `UNCHANGED` 时把整个 action 返回为 `null`。于是只读任务框也被点击资格过滤器一并隐藏，分支连续得到
+  `current=unavailable / INDETERMINATE`，按 `0/25/50/75/100s` 等待后错误执行
+  `fengyaofu-box-unreadable -> 返回李靖`。`INDETERMINATE` 不表示任务框变化，只表示比较输入缺失。
+  修复必须拆开“读取 action 的任务框证据”和“授权点击该 action”两个入口：旧绿链仍禁止点击，但其 fresh
+  task-box fingerprint 必须可供封妖符比较；`UNCHANGED` 继续下一坐标，`CHANGED` 才退出分支，不得用固定等待掩盖。
+- **2026-08-09 只读证据返修已交付：** `captureTaskBoxSnapshot()` 直接以 exact window/task/run 约束
+  `preparedActions.peek(TASK_TRACKER_PATHING)` 并只读取 immutable task-box fingerprint，不再调用
+  `preparedTrackerLink()`。后者的 post-combat `FRESH` 点击授权完全保留，旧绿链仍不能被点；只有只读比较不再被
+  `UNCHANGED` 人为变成 `current=unavailable`。既有分支因此会在 `UNCHANGED` 后立即清除 compare gate 并选择下一坐标，
+  `CHANGED` 仍退出封妖符，真正缺图才保留 fail-closed。Cloud production compile PASS；aggregate Maven testCompile
+  被卡外旧构造器/协议测试欠账阻断，隔离执行 `TiantingSubtaskLoopContractTest` 为 `31/31 PASS`。未启动 runtime、
+  application、UI、capture 或 input；fresh 需验证脱战后不再出现 `0/25/50/75/100s` unreadable 等待。
 
 ## G028 五环买鞋后长安地图标签直达云游大师（2026-08-05）
 
@@ -1301,6 +1387,34 @@
 
 ## G017 通用任务启动/绿链无移动 Dialog 仲裁与本地动作语义同步（2026-08-04）
 
+- **2026-08-09 09:49 fresh P1 与返修交付：** `hwnd-D8A1558` 在 `御马监 (183,94)` 点击暗雷绿链并建立
+  唯一 intent `044b67ee-fd17-4bf7-9bf1-c7bbd8bb6b06`，实际移动至 `瑶池 (94,83)`；Runner 直到抵达后才做
+  第一轮坐标 OCR，把 `(94,83)` 错当 intent 基线，第二轮同坐标遂发布无 movement proof 的
+  `STOPPED_AWAY`，错误进入 G017 并停在 `title=present, dialog=unknown`。没有第二个 intent；问题是注册时没有
+  保存点击完成时已有的窗口逻辑坐标。现已让 `markPathingStarted(...)` 把绑定窗口已有 `map/x/y` 写为 click-time
+  基线，sampler 首次接管同 intent 时继承；后续只以 X/Y 变化形成 movement proof，并在 ACTIVE 分支把新坐标和
+  proof 写回 snapshot。地图 OCR 与 pixel diff 不参与移动真值。Dialog 方案经真实 P09 回放纠偏：Client 现有
+  `probeOptionDialogPresent` 会误判该 OPTION，故不迁移语义；仍由同 envelope ROI 直接交给 Cloud 既有
+  `DialogService.classifySuppliedDialogFrame(...)`。Client compile PASS、隔离 `23/23 PASS`；Cloud compile PASS、
+  G017 policy/replay `8/8 PASS`，P09/P08/N05 分别为 OPTION/STORY/NONE。标准 Client named test 被卡外旧
+  `LocalPathingStartProofMechanics` testCompile 欠账阻断；fresh runtime 待后续验证。
+- **2026-08-09 统一闭环返修已批准：** exact Tracker 绿链必须先产生任务明确的移动 intent；只有 Runner 对同
+  intent 发布终态，且前后逻辑坐标 `x/y` 完全相同，才属于 no-movement。地图名不参与；Runner 尚无结果时 Cloud
+  只能等待。已知 OPTION 继续由本地模板点击并返回稳定 `actionKey`，任务层据此决定下一业务动作；全部已知模板
+  miss 且 Runner 确认 OPTION 时，复用 `DialogService` force-close，STORY 不阻挡绿链。每次重试前必须等更新后的
+  Runner Dialog 事实证明 OPTION 已消失；Tracker 原图仍一致时复用原 action/坐标。只累计“清屏后重点绿链仍未
+  移动”，最多五次；清 Dialog 本身不计数。第五次后 fresh 校验，Tracker 已变化则丢弃旧 action，未变化则返回
+  `RETRY_EXHAUSTED`，由任务选择 re-accept phase，禁止 crash。首个接入任务为天庭，耗尽后回 `RETURN_HOME`；
+  其他任务可选择接入同一结果合同，不在本次强制改写。
+- **2026-08-09 统一闭环源码交付：** Client 已把坐标条 pixel diff 降为“请求坐标识别”的调度信号，只有同 intent
+  两次有效坐标的 X/Y 发生变化才写 movement proof；地图 OCR 完全不参与。Cloud 天庭保存原绿链 action 与 exact
+  intent，Runner 对该 intent 发布 `ARRIVED/STOPPED_AWAY` 后，有 movement proof 走原流程，无 proof 才进入 G017。
+  已知 OPTION 继续消费稳定 `actionKey`；未知 OPTION 调现有 `DialogService.closeObservedDialog(OPTION, false, ...)`；
+  STORY 不阻挡绿链。复点前按原图 `0.80` 门重新验证 retained action，复用原坐标并创建新 intent；只有物理复点成功
+  提交才累计，恰好五次后 fresh 校验，未变化返回 `RETRY_EXHAUSTED` 并由天庭回 `RETURN_HOME`，不终止整轮。
+  Client/Cloud production compile 均 PASS；隔离合同分别 `18/18`、`35/35` PASS，两仓 `diff --check` PASS。
+  标准 named Maven 仍被卡外 aggregate test fixture/旧构造器签名阻断；未启动 runtime/application/UI/capture/input，
+  G017 保持未关闭，待 fresh runtime 验证。
 - 状态：天庭 startup `OPTION` 切片 `PARENT APPROVED，P0/P1/P2=0/0/0`；2026-08-05 taskCode
   lineage P1 的 fresh runtime 已证明通过；同轮暴露的 Tracker prepared action `10s` 年龄死锁已按 G026
   原图内容门完成源码返修和定向合同。2026-08-06 fresh 又暴露 no-movement paired observation 的固定 `4s`
@@ -7914,7 +8028,7 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 
 | Card | Owner | Status | Files | Goal |
 | --- | --- | --- | --- | --- |
-| G049 | Codex | 最终源码与隔离合同通过，待 fresh | 天庭引妖香 Tracker 分支、本地去重与 claim 生命周期 | `YINYAO` 直接匹配；miss 可重试，match 后同任务停止，新任务清除旧 claim 后重开。 |
+| G049 | Codex | 源码返修完成，按要求暂未验证，待 fresh | 天庭引妖香 Tracker 分支、本地去重与刷新后绿链 | 点引妖香后丢弃旧绿链 action，只消费刷新后的新 action；已有新绿链时等待不超过剩余 grace。 |
 | G048 | Codex | 源码与保存帧回放通过，待 fresh | 天庭 Tracker OCR 调度、日计数校准、端到端计时 | 日计数改为 `140x28` 纯黑白红字单次 OCR，并加 exact-run fence 与 ready-event；保存帧 OCR 1.612 秒，待 fresh。 |
 | G047 | Codex | 静态通过，01:38 fresh 已证明成功终止，待长跑 | Cloud NPC FIFO outcome 栅栏、取消语义、顺序合同 | `TOOLTIP VERIFIED` 后同 session 无后续候选；失败后下一次 poll 才继续的合同 3/3 通过。 |
 | G046 | Codex | P1 返修与离线回放通过，待实机 | Cloud 黄字 NPC 黑白候选 OCR、名字相似度、李靖/超级巫医回放 | 完整候选文本归一化编辑距离已生效，额外字符扣分；严格目标保留旧逻辑。 |
@@ -7930,9 +8044,10 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | G036 | Codex | 隔离静态门通过，待高权限 fresh | G033 脚本、后台控制合同 | 用显式 UAC `RunAs` 启动与游戏同级的无 UI 宿主，不改业务或输入安全证明。 |
 | G035 | Codex | 源码与合同通过，待 fresh 重试 | `WinApiMouseController`、输入重试合同 | 同一输入事务内有限重试鼠标移动，保留最终 read-back fail-closed。 |
 | G034 | Codex | 源码与真实图 replay 通过，待 fresh 重试 | 队伍角色预检、既有 dialog/generic 清理、真实 replay | 角色预检前清除 exact-window 阻挡 UI，再保持原 `Alt+T` 队长模板链。 |
-| G033 | Codex | 引妖香返修静态门通过，实机保持停止 | 后台测试控制服务、逐小任务语义审计、五环/天庭入口、快捷暂停热恢复 | 引妖香改为 Tracker 先分类、本地模板命中后同队列点选项和绿链；待用户明确允许后 fresh 验证。 |
+| G033 | Codex | 封妖符/V3隔离静态门通过，待 Client 重启与 fresh | 后台控制、逐小任务审计、快捷暂停、V3 scene guard | 清除旧快捷键 owner；V3 清场不再作用于天庭，当前 UI 下次正常重启后注册 F11。 |
 | G032 | Codex | 完成：整栈启动恢复并通过真实启动验收 | `restart-local-dhxy-stack.ps1`、启动日志、进程登记 | Cloud/OCR 就绪后父启动器继续创建 JavaFX Client，且保留启动日志。 |
 | G031 | Codex | 源码与定向合同通过，待 fresh runtime | `TiantingTask`, `NpcClickService`, 天庭接任务合同、dashboard 生成器 | exact `ARRIVED` 后禁止再次同步坐标或重新导航；复用现有 Client FIFO 消费器，并让 ready 事件携带当前任务类型。 |
+| G029 | Codex | 封妖符只读 task-box 返修通过，待 fresh | `TiantingTask`、封妖符任务框比较、隔离合同 | 旧绿链仍禁止点击，但 `UNCHANGED` 的任务框可读并立即继续下一坐标，不再误等 100 秒。 |
 | G027 | Codex | Done：内存诊断 fresh 通过 | `ImagePreprocessor`、内存诊断不落盘合同、G033 fresh 证据 | `cloud-memory:` 不再误落盘；Dialog 与五环业务未改。 |
 | A1 | 何黎 | Done | `WindowReadyEventBus`, `WindowReadyEventType` | Add the minimal event sequence API and wait diagnostics. |
 | A2 | 何黎 | Done | `WindowTaskRunner`, `WindowRuntimeContext` if needed | Make observer/ready/prepared timing visible without changing business behavior. |
