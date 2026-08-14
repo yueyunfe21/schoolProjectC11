@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "card": "G069",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "pushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-START-002"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/业务逻辑.md",
+    "docs/business-rules.json",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G069.json",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/tianting/TiantingPhase.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java"},
+    {"repo": "cloud", "path": "scripts/contracts/G069ReturnItemHotStartContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "天庭新 run 已明确进入 ACCEPT_TASK，却未在李靖接取前检查身上的回程道具；五倍 NORMAL Hot Start 也被 after-combat-only 条件挡住。",
+    "userDecision": "所有实际拥有专属回程道具的任务统一执行 Tracker miss -> 回程道具 -> 落地验证/归队 -> 接任务；补齐天庭和五倍，保持 stop 全清。",
+    "decisionRecordedAt": "2026-08-12",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G069"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-START-002",
+      "producer": "Cloud 任务首轮 Hot Start 在当前任务 Tracker miss 后选择专属回程道具分支",
+      "transport": "CloudWholeTaskRuntimeLocalServiceClient 通过 typed BAG_RETURN_ITEM(FIND_AND_USE_TASK_PAGE) 调用 Client 本地 BagService 宏，并以位置/归队事实回传结果",
+      "consumer": "天庭 WAIT_TEAM_RETURN_BEFORE_ACCEPT 与五倍 TEAM_RETURN_BEFORE_ACCEPT_SOURCE 只在落地及归队完成后恢复接任务入口",
+      "ordering": "current-task Tracker -> task return item -> landing verification -> team return -> accept task；CLEAN_QUEUE_TRANSITION 跳过旧屏 Hot Start",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "scripts/contracts/G069ReturnItemHotStartContractTest.java",
+          "command": "javac -encoding UTF-8 -d target/g069-contract scripts/contracts/G069ReturnItemHotStartContractTest.java && java -cp target/g069-contract com.bot.dhxy.task.startup.G069ReturnItemHotStartContractTest",
+          "proves": [
+            "修罗、江湖历练、鬼王保留既有 NORMAL Hot Start 回程检查",
+            "天庭在非 clean queue 的 ACCEPT_TASK 前使用回程道具并在归队后恢复 ACCEPT_TASK",
+            "五倍普通 Hot Start 不再受 after-combat-only 条件阻挡"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "business rule gate", "result": "PASS", "command": "node scripts/check-business-rule-gate.js --card G069", "evidence": "BUSINESS RULE GATE PASSED (G069)"},
+    {"name": "cloud changed-source isolated compile", "result": "PASS", "command": "javac -encoding UTF-8 -cp target/classes;<dependency-classpath> -d target/g069-isolated-classes-20260812191417 <three changed production files>", "evidence": "JAVAC_EXIT=0; active runtime target/classes was not overwritten"},
+    {"name": "cloud isolated-output Maven production compile", "result": "PASS", "command": "mvn -q -DskipTests=false -Dproject.build.directory=target/g069-maven-20260812191848 compile", "evidence": "G069_MAVEN_EXIT=0; active runtime target/classes was not overwritten"},
+    {"name": "focused startup return-item contract", "result": "PASS", "command": "isolated javac + java com.bot.dhxy.task.startup.G069ReturnItemHotStartContractTest", "evidence": "G069_CONTRACT_EXIT=0"},
+    {"name": "touched-file diff check", "result": "PASS", "command": "git diff --check -- <G069 touched files in both repositories>", "evidence": "exit 0; line-ending warnings only"},
+    {"name": "fresh runtime", "result": "PENDING"}
+  ]
+}

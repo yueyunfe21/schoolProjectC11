@@ -4,6 +4,7 @@ import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
+import com.bot.dhxy.window.model.WindowTaskRunProgress;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 
@@ -78,7 +79,7 @@ public final class WindowTaskRunner {
         windowContext.clearTaskExecutionState("remote fresh start: " + reason);
     }
 
-    public void markRemoteStarted(WindowTaskQueue queue) {
+    public void markRemoteStarted(WindowTaskQueue queue, WindowTaskRunProgress initialProgress) {
         WindowTaskQueue safeQueue = queue == null ? WindowTaskQueue.empty() : queue;
         // prepareRemoteFreshStart() already cleared the task-owned context before the start ACK could create this
         // run's observation runner. Clearing here would erase fresh first-frame state after that runner begins.
@@ -87,7 +88,7 @@ public final class WindowTaskRunner {
         remotePaused = false;
         remoteStartedAt = LocalDateTime.now();
         remoteTaskHandle = new RemoteTaskHandle();
-        windowContext.markStarted(safeQueue.firstTaskType());
+        windowContext.markStarted(safeQueue.firstTaskType(), initialProgress);
     }
 
     public void markRemotePaused() {
@@ -136,6 +137,11 @@ public final class WindowTaskRunner {
         }
         // Clear ownership before context state so old terminal callbacks fail the handle-identity fence.
         boolean pauseBoundary = terminalStatus == WindowRuntimeStatus.PAUSED;
+        if (pauseBoundary) {
+            windowContext.retainTaskRunProgressForPause();
+        } else {
+            windowContext.clearPausedTaskRunProgress("remote run terminal: " + message);
+        }
         remoteRunning = false;
         remotePaused = pauseBoundary;
         remoteQueue = WindowTaskQueue.empty();

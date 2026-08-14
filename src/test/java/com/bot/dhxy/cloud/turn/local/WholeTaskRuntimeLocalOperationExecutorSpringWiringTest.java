@@ -30,6 +30,7 @@ class WholeTaskRuntimeLocalOperationExecutorSpringWiringTest {
                         XiuluoAcceptDialogLocalOperation.class,
                         JianghuLilianDialogLocalOperation.class,
                         CatchGhostDialogLocalOperation.class,
+                        GhostKingDialogLocalOperation.class,
                         DeferredReturnHomeReplayCoordinator.class,
                         NpcArrivalFrameFifoLocalExecutor.class,
                         ObjectMapper.class

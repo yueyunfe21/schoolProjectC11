@@ -1,6 +1,7 @@
 package com.bot.dhxy.cloud.turn;
 
 import com.bot.dhxy.cloud.turn.protocol.TurnInputAction;
+import com.bot.dhxy.cloud.turn.protocol.TurnInputCoordinateSpace;
 import com.bot.dhxy.cloud.turn.protocol.TurnInputSpec;
 import com.bot.dhxy.cloud.turn.protocol.TurnStep;
 import com.bot.dhxy.cloud.turn.protocol.TurnStepType;
@@ -23,6 +24,15 @@ import java.util.function.Supplier;
 @Component
 @Slf4j
 public final class TurnInputStepExecutor {
+
+    private static final int G051_ROUTE_INPUT_X = 560;
+    private static final int G051_ROUTE_INPUT_Y = 337;
+    private static final int G051_CANDIDATE_X = 502;
+    private static final int G051_CANDIDATE_Y = 345;
+    private static final int G051_CANDIDATE_WIDTH = 98;
+    private static final int G051_CANDIDATE_HEIGHT = 117;
+    private static final long G051_CANDIDATE_SETTLE_MS = 500L;
+    private static final long G051_AFTER_CLICK_MS = 200L;
 
     private final InputActionQueue inputActionQueue;
     private final WindowTaskContextHolder contextHolder;
@@ -81,7 +91,9 @@ public final class TurnInputStepExecutor {
                 case KEY_UP:
                     return deliverModifierRelease(window, input);
                 case TEXT_INPUT:
-                    return deliverText(window, input);
+                    return deliverText(window, input, false);
+                case ASCII_TEXT_INPUT:
+                    return deliverText(window, input, true);
                 default:
                     return Result.failed(
                             Code.BACKGROUND_KEY_UNSUPPORTED,
@@ -168,15 +180,18 @@ public final class TurnInputStepExecutor {
     }
 
     /** Deliver one TEXT_INPUT through the frozen exact-window input queue. */
-    private Result deliverText(TurnExecutionWindow window, TurnInputSpec input) {
+    private Result deliverText(TurnExecutionWindow window, TurnInputSpec input, boolean asciiOnly) {
         String text = input.text();
         if (text == null || text.isEmpty()) {
             return Result.failed(Code.INVALID_INPUT, "text input requires non-empty text");
         }
+        if (asciiOnly && !text.matches("[a-z0-9]+")) {
+            return Result.failed(Code.INVALID_INPUT, "ASCII text input accepts only lowercase a-z and 0-9");
+        }
         return submitKeyboardActions(
                 window,
-                "turn:input:keyboard:TEXT",
-                List.of(InputAction.typeTextUnicode(text)));
+                asciiOnly ? "turn:input:keyboard:ASCII" : "turn:input:keyboard:TEXT",
+                List.of(asciiOnly ? InputAction.typeTextAscii(text) : InputAction.typeTextUnicode(text)));
     }
 
     /**
@@ -243,6 +258,161 @@ public final class TurnInputStepExecutor {
         } catch (IllegalArgumentException invalid) {
             return MouseSequenceResult.beforeStart(Result.failed(Code.INVALID_INPUT, invalid.getMessage()));
         }
+    }
+
+    /** Execute one preflight-approved G051 route-input transaction as one frozen input-queue request. */
+    public MouseSequenceResult executeClosedInputSequence(TurnExecutionWindow window, List<TurnStep> steps) {
+        Objects.requireNonNull(window, "window");
+        Objects.requireNonNull(steps, "steps");
+        if (window.metadata().stopRequested() || Thread.currentThread().isInterrupted()) {
+            return MouseSequenceResult.beforeStart(Result.stopped(
+                    "stop requested before G051 input sequence"));
+        }
+        int approvedEnd = findG051AsciiSequenceEndExclusive(window, steps, 0);
+        if (approvedEnd != steps.size()) {
+            return MouseSequenceResult.beforeStart(Result.failed(
+                    Code.INVALID_INPUT, "unsupported G051 ASCII input sequence"));
+        }
+        List<InputAction> actions = new ArrayList<>();
+        List<Integer> stepEndActionIndexes = new ArrayList<>();
+        boolean hasMouse = false;
+        boolean allMouseAllowedDuringCombat = true;
+        try {
+            for (TurnStep step : steps) {
+                if (step.type() == TurnStepType.WAIT) {
+                    if (step.waitMs() == null || step.waitMs() <= 0L || step.waitMs() > Integer.MAX_VALUE) {
+                        return MouseSequenceResult.beforeStart(Result.failed(
+                                Code.INVALID_INPUT, "closed input sequence requires positive bounded WAIT"));
+                    }
+                    actions.add(InputAction.sleep(step.waitMs().intValue()));
+                } else if (step.type() == TurnStepType.INPUT && inputActionMapper.isMouse(step.inputAction())) {
+                    hasMouse = true;
+                    allMouseAllowedDuringCombat &= allowsCombatActiveMouse(step.inputAction(), step.input());
+                    actions.addAll(inputActionMapper.mapMouse(
+                            step.inputAction(), step.input(), window.metadata().windowRect()));
+                } else if (step.type() == TurnStepType.INPUT) {
+                    actions.add(mapClosedKeyboardAction(step.inputAction(), step.input()));
+                } else {
+                    return MouseSequenceResult.beforeStart(Result.failed(
+                            Code.INVALID_INPUT, "closed input sequence accepts only INPUT/WAIT"));
+                }
+                stepEndActionIndexes.add(actions.size() - 1);
+            }
+            InputActionExecutionResult execution = submitMouseActionsRaw(
+                    window, "turn:input:g051-closed-sequence", List.copyOf(actions),
+                    !hasMouse || allMouseAllowedDuringCombat);
+            Result result = toResult(execution);
+            return result.status() == Status.COMPLETED
+                    ? new MouseSequenceResult(result, steps.size())
+                    : new MouseSequenceResult(result, completedTurnStepCount(stepEndActionIndexes, execution));
+        } catch (IllegalArgumentException invalid) {
+            return MouseSequenceResult.beforeStart(Result.failed(Code.INVALID_INPUT, invalid.getMessage()));
+        }
+    }
+
+    private InputAction mapClosedKeyboardAction(TurnInputAction action, TurnInputSpec input) {
+        return switch (action) {
+            case ASCII_TEXT_INPUT -> {
+                if (input == null || input.text() == null || !input.text().matches("[a-z0-9]+")) {
+                    throw new IllegalArgumentException("ASCII text input accepts only lowercase a-z and 0-9");
+                }
+                yield InputAction.typeTextAscii(input.text());
+            }
+            case KEY_TAP -> {
+                if (input != null && keyMapper.isEnterKey(input.key())) {
+                    yield InputAction.pressEnter();
+                }
+                throw new IllegalArgumentException("G051 closed sequence supports Enter only");
+            }
+            default -> throw new IllegalArgumentException("not a closed keyboard input: " + action);
+        };
+    }
+
+    /**
+     * Validate every ASCII step before any physical input is enqueued.
+     *
+     * @param window immutable exact-window snapshot used to validate screen-absolute coordinates.
+     * @param steps complete Cloud action steps.
+     * @return null when every ASCII step belongs to one approved G051 transaction; otherwise a diagnostic.
+     */
+    public String validateG051AsciiSequences(TurnExecutionWindow window, List<TurnStep> steps) {
+        Objects.requireNonNull(window, "window");
+        Objects.requireNonNull(steps, "steps");
+        for (int index = 0; index < steps.size(); index++) {
+            if (!isAsciiAction(steps.get(index))) {
+                continue;
+            }
+            int start = index - 1;
+            if (start < 0 || findG051AsciiSequenceEndExclusive(window, steps, start) <= index) {
+                return "ASCII_TEXT_INPUT is outside an approved G051 route-input transaction at step " + index;
+            }
+        }
+        return null;
+    }
+
+    /** Return the exclusive end of one exact approved G051 sequence, or {@code startIndex} on mismatch. */
+    public int findG051AsciiSequenceEndExclusive(TurnExecutionWindow window,
+                                                  List<TurnStep> steps,
+                                                  int startIndex) {
+        if (startIndex < 0 || startIndex + 2 >= steps.size()) {
+            return startIndex;
+        }
+        TurnStep clickInput = steps.get(startIndex);
+        TurnStep ascii = steps.get(startIndex + 1);
+        TurnStep settle = steps.get(startIndex + 2);
+        if (!isClickAt(clickInput,
+                window.metadata().windowRect().left() + G051_ROUTE_INPUT_X,
+                window.metadata().windowRect().top() + G051_ROUTE_INPUT_Y)
+                || !isAscii(ascii)
+                || !isWait(settle, G051_CANDIDATE_SETTLE_MS)) {
+            return startIndex;
+        }
+        if (startIndex + 4 < steps.size()
+                && isCandidateClick(window, steps.get(startIndex + 3))
+                && isWait(steps.get(startIndex + 4), G051_AFTER_CLICK_MS)) {
+            return startIndex + 5;
+        }
+        return startIndex + 3;
+    }
+
+    private boolean isCandidateClick(TurnExecutionWindow window, TurnStep step) {
+        if (step == null || step.type() != TurnStepType.INPUT
+                || step.inputAction() != TurnInputAction.CLICK_LEFT || step.input() == null
+                || step.input().x() == null || step.input().y() == null) {
+            return false;
+        }
+        if (step.input().coordinateSpace() != TurnInputCoordinateSpace.SCREEN_ABSOLUTE) {
+            return false;
+        }
+        int left = window.metadata().windowRect().left() + G051_CANDIDATE_X;
+        int top = window.metadata().windowRect().top() + G051_CANDIDATE_Y;
+        return step.input().x() >= left && step.input().x() < left + G051_CANDIDATE_WIDTH
+                && step.input().y() >= top && step.input().y() < top + G051_CANDIDATE_HEIGHT;
+    }
+
+    private static boolean isClickAt(TurnStep step, int x, int y) {
+        return step != null && step.type() == TurnStepType.INPUT
+                && step.inputAction() == TurnInputAction.CLICK_LEFT
+                && step.input() != null
+                && step.input().coordinateSpace() == TurnInputCoordinateSpace.SCREEN_ABSOLUTE
+                && Objects.equals(step.input().x(), x)
+                && Objects.equals(step.input().y(), y);
+    }
+
+    private static boolean isAscii(TurnStep step) {
+        return isAsciiAction(step)
+                && step.input() != null && step.input().text() != null
+                && step.input().text().matches("[a-z0-9]+");
+    }
+
+    private static boolean isAsciiAction(TurnStep step) {
+        return step != null && step.type() == TurnStepType.INPUT
+                && step.inputAction() == TurnInputAction.ASCII_TEXT_INPUT;
+    }
+
+    private static boolean isWait(TurnStep step, long waitMs) {
+        return step != null && step.type() == TurnStepType.WAIT
+                && Objects.equals(step.waitMs(), waitMs);
     }
 
     /** Translate worker action progress into the completed prefix of original Turn steps. */

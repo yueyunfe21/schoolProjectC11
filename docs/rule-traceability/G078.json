@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "card": "G078",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "cloudBranch": "dev",
+    "cloudCommit": "847410396b3fda1cc00174910401713ff30cede4",
+    "pushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-TEAMRETURN-001", "BR-TIANTING-002"],
+  "affectedPaths": [
+    "docs/业务逻辑.md",
+    "docs/天庭任务流程大MD.md",
+    "docs/business-rules.json",
+    "docs/rule-traceability/G078.json",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnLocalOperation.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnWholeTaskRuntimeArguments.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnProtocolValidator.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/LocalServiceStepDispatcher.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/local/WholeTaskRuntimeLocalOperationExecutor.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/local/TeamReturnPanelLocalOperation.java",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnLocalOperation.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnWholeTaskRuntimeArguments.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnProtocolValidator.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/TeamReturnService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/LeaderTeamReturnCoordinator.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/zhuagui/CatchGhostTask.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/xinshoulilian/XinshouTrainingTask.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/guiwang/GhostKingTask.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/guiwang/GhostKingRoundContext.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/remote/CloudTeamReturnPort.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/remote/CloudTeamReturnPortAssembly.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/client/CloudWholeTaskRuntimeLocalServiceClient.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "完整队长归队面板门已收敛为共享协调器；2026-08-14 fresh 又证明天庭把非 fresh 的进战前地图缓存与战后 exact 地图比较，并在 fresh title/Tracker 之前用 CHANGED 直接选择 ACCEPT_TASK，错误回天宫。",
+    "userDecision": "leader 等待 phase 共用 exact-window/taskRun 协调器；成员 AutoBattleTask 保持先恢复再归队；战后 fresh title/Tracker 是任务是否仍存在的权威证据。title PRESENT 必须继续当前任务，title ABSENT 才允许 RETURN_HOME，UNKNOWN 有界等待；地图差异只使旧腿和旧 fingerprint 失效，不得直接 ACCEPT_TASK。",
+    "decisionRecordedAt": "2026-08-14",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G078"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-TEAMRETURN-001",
+      "producer": "Client exact-HWND 归队信号和完整队伍面板本地模板结果",
+      "transport": "共享 TEAM_RETURN_PANEL_OPEN/PROBE/CLOSE typed local operation，携带 exact businessTaskRunId 且仅传闭合枚举结果",
+      "consumer": "Cloud leader TeamReturn coordinator 锁存 exact window/taskRun 并驱动 WAITING/COMPLETE",
+      "ordering": "leader trigger -> open support -> Alt+T open -> yield -> probe -> fail-closed WAITING or close -> COMPLETE -> task resume phase",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/main/java/com/bot/dhxy/service/TeamReturnService.java",
+          "command": "source inspection plus mvn -q compiler:compile",
+          "proves": ["成员和队长职责保持分离", "队长信号读取和完整面板探测均走 typed local-service 边界"]
+        }
+      ]
+    },
+    {
+      "rule": "BR-TIANTING-002",
+      "producer": "Client Runner exact combat generation、fresh 天庭 title 三态与同帧 Tracker 结果；地图位置仅作为恢复上下文",
+      "transport": "脱战单一 arbiter 在 task turn 内消费 prepared Tracker/negative ready event；不新增 Observer interest、截图协议或客户端行为",
+      "consumer": "Tianting 单一 post-combat 仲裁由 fresh title/Tracker 决定继续、回城或有界等待；地图差异只废弃旧腿/旧 fingerprint",
+      "ordering": "exact combat exit -> team-return coordinator -> fresh title PRESENT/ABSENT/UNKNOWN -> PRESENT consume Tracker and RUN_SUBTASKS; ABSENT RETURN_HOME; UNKNOWN bounded park -> map mismatch may invalidate stale leg but cannot select ACCEPT_TASK",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java",
+          "command": "source inspection plus mvn -q compiler:compile",
+          "proves": ["fresh title/Tracker 优先于地图缓存决定任务是否仍存在", "title UNKNOWN 不冒充 ABSENT 并在同一 arbiter 有界等待", "地图差异只清除旧腿/旧 fingerprint，不得直接选择 ACCEPT_TASK"]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "2026-08-14 fresh runtime", "result": "FAIL", "evidence": "10:20:29.587 exact 脱战后 titlePresent=true 且 Tracker retained，却因 cached 天宫 vs fresh 御马监 被选为 ACCEPT_TASK"},
+    {"name": "Cloud production compile after repair", "result": "PASS", "evidence": "父级隔离输出目录执行 mvn -q -Dproject.build.directory=target/codex-g078-parent-review compiler:compile，exit 0"},
+    {"name": "Parent repair review", "result": "PASS", "evidence": "P0/P1/P2=0；第一版地图覆盖 fresh 暗雷问题已退回修正，最终版逐行复核通过"},
+    {"name": "repair fresh runtime", "result": "PENDING", "evidence": "待验证 title=PRESENT -> Tracker consumed -> RUN_SUBTASKS"}
+  ]
+}

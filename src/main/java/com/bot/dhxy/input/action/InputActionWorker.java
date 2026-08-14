@@ -472,6 +472,13 @@ public class InputActionWorker {
             inputProvider.moveMouse(action.getX(), action.getY());
         } else if (type == InputActionType.DRAG_AND_DROP) {
             inputProvider.dragAndDrop(action.getX(), action.getY(), action.getEndX(), action.getEndY());
+        } else if (type == InputActionType.TYPE_TEXT_ASCII) {
+            if (!inputProvider.requiresForegroundKeyboard()) {
+                log.warn("ASCII physical typing rejected because FakerInput foreground routing is unavailable: windowId={} request={}",
+                        request.getWindowId(), request.getDescription());
+                return false;
+            }
+            inputProvider.typeTextAscii(action.getText());
         } else if (isBackgroundKeyboardAction(type)) {
             if (!inputProvider.requiresForegroundKeyboard()) {
                 return executeBackgroundKeyboard(request, action);

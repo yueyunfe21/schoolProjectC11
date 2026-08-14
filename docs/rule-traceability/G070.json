@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "card": "G070",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "pushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-TIANTING-006"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/天庭任务流程大MD.md",
+    "docs/business-rules.json",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G070.json",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java"},
+    {"repo": "cloud", "path": "scripts/contracts/G070TiantingEnterBattleLinearGateContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "天庭已执行开打选项后，旧场外 watchdog 在 Runner IN_COMBAT 到达前抢跑 RETURN_HOME 并下发回程道具。",
+    "userDecision": "看打等真实点击是强入战证据；点击后必须线性等待 Runner 的 exact 战斗信号，禁止 watchdog 越过。",
+    "decisionRecordedAt": "2026-08-12",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G070"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-TIANTING-006",
+      "producer": "Client 天庭本地 dialog probe 完成 KAIDA/ZHUOYUE/YAOWANG 物理点击并发布 executed=true action key",
+      "transport": "TIANTING_DIALOG_ANSWERED ready event 与后续 Runner COMBAT_STATE_CHANGED exact-window 事件",
+      "consumer": "Cloud TiantingTask 锁存入战待确认栅栏，先于 G017/watchdog/Tracker/RETURN_HOME 只等 exact IN_COMBAT",
+      "ordering": "executed battle option -> clear old out-of-combat watchdog -> park on COMBAT_STATE_CHANGED -> exact IN_COMBAT -> normal combat flow",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "scripts/contracts/G070TiantingEnterBattleLinearGateContractTest.java",
+          "command": "javac -encoding UTF-8 -d target/g070-contract scripts/contracts/G070TiantingEnterBattleLinearGateContractTest.java && java -cp target/g070-contract com.bot.dhxy.task.tianting.G070TiantingEnterBattleLinearGateContractTest",
+          "proves": [
+            "三个已执行入战 action key 均建立栅栏",
+            "栅栏先于 watchdog 且期间不含 RETURN_HOME/BAG_RETURN_ITEM",
+            "只有 exact Runner IN_COMBAT 确认并释放栅栏"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "business rule gate", "result": "PASS", "command": "node scripts/check-business-rule-gate.js --card G070", "evidence": "BUSINESS RULE GATE PASSED (G070)"},
+    {"name": "changed-source isolated compile", "result": "PASS", "command": "javac -encoding UTF-8 -cp target/classes;<dependency-classpath> -d target/g070-isolated-20260812200220 TiantingTask.java", "evidence": "G070_JAVAC_EXIT=0"},
+    {"name": "linear gate source contract", "result": "PASS", "command": "isolated javac + java G070TiantingEnterBattleLinearGateContractTest", "evidence": "G070_CONTRACT_EXIT=0"},
+    {"name": "isolated-output production compile", "result": "PASS", "command": "mvn -q -DskipTests=false -Dproject.build.directory=target/g070-compile-20260812200325 compile", "evidence": "G070_COMPILE_EXIT=0"},
+    {"name": "targeted Maven test", "result": "BLOCKED", "command": "mvn -q -DskipTests=false -Dtest=TiantingSubtaskLoopContractTest -Dproject.build.directory=target/g070-maven-20260812200250 test", "evidence": "existing unrelated test fixtures fail testCompile against dirty production constructor/protocol signatures; no G070 source error"},
+    {"name": "touched-file diff check", "result": "PASS", "command": "git diff --check -- <G070 touched files in both repositories>", "evidence": "exit 0; line-ending warnings only"},
+    {"name": "fresh runtime", "result": "PENDING"}
+  ]
+}

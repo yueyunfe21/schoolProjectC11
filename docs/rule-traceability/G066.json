@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "card": "G066",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "pushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-TIANTING-005", "BR-GHOSTKING-005"],
+  "affectedPaths": [
+    "docs/天庭任务流程大MD.md",
+    "docs/业务逻辑.md",
+    "docs/business-rules.json",
+    "docs/云端迁移常见错误清单.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/ACTIVE_WORK.md",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G066.json",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnLocalOperation.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnProtocolValidator.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/LocalServiceStepDispatcher.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/local/WholeTaskRuntimeLocalOperationExecutor.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/local/GhostKingDialogLocalOperation.java",
+    "D:/mavenProject/dhxy-cloud-brain/src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnLocalOperation.java",
+    "D:/mavenProject/dhxy-cloud-brain/src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnProtocolValidator.java",
+    "D:/mavenProject/dhxy-cloud-brain/src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/client/CloudWholeTaskRuntimeLocalServiceClient.java",
+    "D:/mavenProject/dhxy-cloud-brain/src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java",
+    "D:/mavenProject/dhxy-cloud-brain/src/main/java/com/bot/dhxy/task/guiwang/GhostKingTask.java"
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "天庭标题等待仍为60秒；鬼王标题仅等2秒且取消阶段误用抓鬼模板，随后通用最后项 fallback 冒充恢复。",
+    "userDecision": "天庭和鬼王最多等待10秒；鬼王完整采用天庭的取消后重接语义并只用 guiwang/quxiao.png；真实取消后释放 task turn，等待7秒系统冷却再接。",
+    "decisionRecordedAt": "2026-08-12",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G066"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-GHOSTKING-005",
+      "producer": "Cloud GhostKingTask 在 accept 点击后十秒仍无 title 时进入取消专用 phase。",
+      "transport": "GHOST_KING_CANCEL_DIALOG_TEMPLATE 通过 closed local-service 协议发送到 exact Client window。",
+      "consumer": "Client GhostKingDialogLocalOperation 只匹配 guiwang/quxiao.png，真实点击后返回 CANCELLED。",
+      "ordering": "accept click -> title wait <=10s -> reopen NPC -> cancel-only operation -> CANCELLED ack -> release task turn -> 7s cooldown -> ordinary accept",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/main/java/com/bot/dhxy/task/guiwang/GhostKingTask.java",
+          "command": "source-order inspection + production compile",
+          "proves": ["标题确认期限先于取消 phase", "取消 phase 只消费鬼王专用 CANCELLED 回执", "真实取消后先释放 turn 再等待7秒"]
+        },
+        {
+          "repo": "client",
+          "path": "src/main/java/com/bot/dhxy/cloud/turn/local/GhostKingDialogLocalOperation.java",
+          "command": "source template wiring inspection + production compile",
+          "proves": ["取消操作只加载 guiwang/quxiao.png", "模板未命中不返回 CANCELLED"]
+        }
+      ]
+    },
+    {
+      "rule": "BR-TIANTING-005",
+      "producer": "Cloud TiantingTask 收到 accept action 后建立标题确认期限。",
+      "transport": "既有天庭 cancel-only observation action 链保持不变。",
+      "consumer": "既有 Client tianting/quxiao.png 专用探针保持不变。",
+      "ordering": "accept action -> title wait <=10s -> pending cancel-only recovery",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java",
+          "command": "source constant inspection + production compile",
+          "proves": ["accept action 后标题确认期限为10000ms", "既有 cancel-only 顺序保持不变"]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "business rule gate", "result": "PASS", "command": "node scripts/check-business-rule-gate.js --card G066"},
+    {"name": "client production compile", "result": "PASS", "command": "mvn -q -DskipTests compile"},
+    {"name": "cloud production compile", "result": "PASS", "command": "mvn -q -DskipTests=false compile"},
+    {"name": "ghost king cancel cooldown compile", "result": "PASS", "evidence": "CANCELLED returns SHARED_STATE_TRIGGERED, releases the task turn, and the stop-aware handoff delay is 7000ms before ACCEPT_TASK_CLICK_NPC."},
+    {"name": "shared protocol byte comparison", "result": "PASS", "evidence": "TurnLocalOperation and TurnProtocolValidator SHA-256 are byte-identical across Client and Cloud"},
+    {"name": "tests", "result": "NOT_RUN", "evidence": "Current user instruction forbids creating or running tests without explicit authorization."},
+    {"name": "fresh runtime", "result": "PENDING"}
+  ]
+}

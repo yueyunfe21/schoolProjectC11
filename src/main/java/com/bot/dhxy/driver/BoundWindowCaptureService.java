@@ -125,6 +125,68 @@ public class BoundWindowCaptureService {
         }
     }
 
+    /**
+     * Captures one small window-relative region directly with BitBlt, without rendering the full HWND first.
+     *
+     * <p>This entry is reserved for foreground/exclusive mechanics that already own an exact frozen binding.
+     * It deliberately has no PrintWindow fallback: a transient capture failure must remain a fast failure instead
+     * of blocking the input transaction while the game renders an entire 1024x768 frame.</p>
+     *
+     * @param binding exact frozen native window binding.
+     * @param windowBaseX screen-absolute X coordinate represented by the binding snapshot.
+     * @param windowBaseY screen-absolute Y coordinate represented by the binding snapshot.
+     * @param x1 first screen-absolute X edge.
+     * @param y1 first screen-absolute Y edge.
+     * @param x2 second screen-absolute X edge.
+     * @param y2 second screen-absolute Y edge.
+     * @return the clipped ROI copied from the exact HWND, or empty when binding/geometry/capture is unavailable.
+     */
+    public Optional<CaptureResult> captureRegionFast(WindowNativeBinding binding,
+                                                     int windowBaseX,
+                                                     int windowBaseY,
+                                                     int x1,
+                                                     int y1,
+                                                     int x2,
+                                                     int y2) {
+        long startedAtNanos = System.nanoTime();
+        if (binding == null || !binding.hasGeometry()) {
+            return Optional.empty();
+        }
+        WinDef.HWND hwnd = toHwnd(binding);
+        if (hwnd == null) {
+            return Optional.empty();
+        }
+
+        int requestedLeft = Math.min(x1, x2) - windowBaseX;
+        int requestedTop = Math.min(y1, y2) - windowBaseY;
+        int requestedRight = Math.max(x1, x2) - windowBaseX;
+        int requestedBottom = Math.max(y1, y2) - windowBaseY;
+        int relativeLeft = Math.max(0, requestedLeft);
+        int relativeTop = Math.max(0, requestedTop);
+        int relativeRight = Math.min(binding.getWidth(), requestedRight);
+        int relativeBottom = Math.min(binding.getHeight(), requestedBottom);
+        int width = relativeRight - relativeLeft;
+        int height = relativeBottom - relativeTop;
+        if (width <= 0 || height <= 0) {
+            return Optional.empty();
+        }
+
+        Optional<BufferedImage> image = captureWithCompatibleBitmap(hwnd, width, height,
+                (windowDc, memoryDc) -> GDI32.INSTANCE.BitBlt(
+                        memoryDc, 0, 0, width, height, windowDc, relativeLeft, relativeTop, SRCCOPY));
+        long elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000L;
+        log.info("HWND fast region capture: hwnd={} title={} result={} elapsedMs={} relative=({}, {}) size={}x{}",
+                binding.getNativeHandle(), binding.getTitle(), image.isPresent(), elapsedMs,
+                relativeLeft, relativeTop, width, height);
+        return image.map(captured -> {
+            CaptureResult result = new CaptureResult(captured, CaptureProvider.HWND_BITBLT_REGION);
+            captureEvidenceStore.persist(result.image(), binding, result.provider().name(),
+                    windowBaseX + relativeLeft, windowBaseY + relativeTop,
+                    windowBaseX + relativeRight, windowBaseY + relativeBottom);
+            return result;
+        });
+    }
+
     public boolean captureRegionToFile(WindowNativeBinding binding,
                                        int windowBaseX,
                                        int windowBaseY,
@@ -345,7 +407,8 @@ public class BoundWindowCaptureService {
 
     public enum CaptureProvider {
         HWND_PRINTWINDOW,
-        HWND_BITBLT
+        HWND_BITBLT,
+        HWND_BITBLT_REGION
     }
 
     @Value

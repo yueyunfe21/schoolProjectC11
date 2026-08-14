@@ -35,4 +35,11 @@ public class PendingRouteOutcome {
     String routeDecisionId;
     String intentId;
     long createdAtMs;
+    String searchToken;
+    String searchGeometryProfile;
+    Integer searchCandidateRelativeX;
+    Integer searchCandidateRelativeY;
+    Integer searchCandidateRow;
+    String searchCandidateEvidence;
+    boolean searchCandidateUsedMemory;
 }

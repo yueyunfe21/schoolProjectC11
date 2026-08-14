@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "card": "G051",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "pushedReference": "origin/dev",
+    "cloudBranch": "dev",
+    "cloudCommit": "847410396b3fda1cc00174910401713ff30cede4",
+    "cloudPushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-WORLDMAP-001"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/业务逻辑.md",
+    "docs/business-rules.json",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G051.json",
+    "src/main/java/com/bot/dhxy/input/InputProvider.java",
+    "src/main/java/com/bot/dhxy/input/action/InputAction.java",
+    "src/main/java/com/bot/dhxy/input/action/InputActionType.java",
+    "src/main/java/com/bot/dhxy/input/action/InputActionWorker.java",
+    "src/main/java/com/bot/dhxy/driver/fakerinput/FakerInputProvider.java",
+    "src/main/java/com/bot/dhxy/driver/WinApiMouseController.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/LocalTurnActionExecutor.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/TurnInputActionMapper.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/TurnInputStepExecutor.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/local/WholeTaskRuntimeLocalOperationExecutor.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnInputAction.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnMapSurveyCommand.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnMapSurveyResult.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnPendingRouteOutcome.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnProtocolValidator.java",
+    "src/main/java/com/bot/dhxy/model/navigation/PendingRouteOutcome.java",
+    "src/main/java/com/bot/dhxy/model/navigation/WorldMapSearchCandidateMatcher.java",
+    "src/main/java/com/bot/dhxy/model/navigation/WorldMapSearchTargetCatalog.java",
+    "src/main/java/com/bot/dhxy/tools/manual/G051WorldMapCandidateAcceptanceTool.java",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnMapSurveyCommand.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnMapSurveyResult.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnInputAction.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnPendingRouteOutcome.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnProtocolValidator.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/model/navigation/PendingRouteOutcome.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/model/navigation/WorldMapSearchCandidateMatcher.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/model/navigation/WorldMapSearchCandidateMemoryEntry.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/model/navigation/WorldMapSearchTargetCatalog.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/MemoryService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/NavigationService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/WorldMapSearchCandidateMemoryService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/CloudMapSurveyService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/host/CloudTurnRuntimeConfiguration.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/host/CloudServiceConfiguration.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/client/CloudWholeTaskRuntimeLocalServiceClient.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "驱动级输入不能直接输入中文；旧 PostMessage/WM_CHAR/剪贴板/输入法方案不符合输入边界。",
+    "userDecision": "固定业务地图使用可审计拼音首字母目录；候选由 Cloud OCR 完整名称精确匹配，本地只经 InputActionQueue + FakerInput 输入和点击；候选点击后不得按 Enter；候选记忆仅由同 intent/同目标 ARRIVED 落库。",
+    "decisionRecordedAt": "2026-08-10",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G051"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-WORLDMAP-001",
+      "producer": "Cloud NavigationService 通过 exact-window Turn 在 Client 输入审计目录 ASCII token；Client 只执行同一序列并返回绑定 ROI。",
+      "transport": "生产与 armed 共用 WindowTurnLoop/TurnMapSurveyCommand；Turn ASCII_TEXT_INPUT/CAPTURE 与 TurnPendingRouteOutcome 携带 token、geometry、候选相对点、intentId 和 canonical target。",
+      "consumer": "Cloud 使用共享 catalog 和 matcher 做候选行 OCR 完整名称精确匹配；MemoryService 只在同 intent/同目标 ARRIVED 时持久化。",
+      "ordering": "empty route field -> ASCII token -> stable candidate ROI -> Cloud exact OCR -> Client Faker click (no Enter) -> existing yellow/legacy green path -> exact ARRIVED settlement",
+      "contracts": [
+        {
+          "path": "src/main/java/com/bot/dhxy/tools/manual/G051WorldMapCandidateAcceptanceTool.java",
+          "command": "默认 dry-run；用户以后仅注册一个窗口后显式使用 --armed 运行后台实机验收",
+          "proves": [
+            "工具与生产逻辑共用 72 项显式目标 catalog",
+            "armed 命令经过 MapSurvey transport 并调用生产 NavigationService，不含 Client OCR/matcher/capture/input 副本",
+            "逐目标保存 raw/marked/after/OCR/PASS",
+            "候选点击后只对已选输入框 exact 确认中文目标，而非以 click=true 或固定行号判 PASS；不按 Enter",
+            "不点击路线结果，不让角色实际跑遍所有地图"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "Repair #2 strict candidate intent settlement", "result": "PASS", "evidence": "Cloud MemoryService requires nonblank exact pending/current intentId before G051 search-candidate recordSuccess; missing/wrong intent records failure"},
+    {"name": "Repair #2 shared TurnInputAction bytes", "result": "PASS", "evidence": "Client/Cloud SHA-256 BFB17BA635A089BFB6DCC18403EEF1E719A2C363AC00189490E94B078315BE55"},
+    {"name": "Client production compile", "result": "PASS", "evidence": "D:/mavenProject/DHXY-cr271: mvn -q -DskipTests compile"},
+    {"name": "Cloud production compile", "result": "PASS", "evidence": "D:/mavenProject/dhxy-cloud-brain: mvn -q -DskipTests=false compile"},
+    {"name": "Client/Cloud diff check", "result": "PASS", "evidence": "两仓 git diff --check exit 0"},
+    {"name": "Manual background acceptance - user scoped seven maps", "result": "PASS", "evidence": "仅按用户指定重测大雁塔二层、大雁塔一层、凤巢一层、斧头帮总部、龙窟三层、龙窟一层、瑶池；7/7 PASS。证据位于 D:/mavenProject/DHXY-cr271/logs/g051-manual/20260810-234910、234943、235015、235048、235122、235156、235453；其他不可导航目录项未重测且不计入本轮结果。"}
+  ]
+}

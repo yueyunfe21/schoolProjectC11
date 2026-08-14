@@ -282,6 +282,7 @@ public final class DeferredReturnHomeReplayCoordinator {
         return "XIULUO_V2".equalsIgnoreCase(taskCode)
                 || "XINSHOU_TRAINING".equalsIgnoreCase(taskCode)
                 || "CATCH_GHOST".equalsIgnoreCase(taskCode)
+                || "GHOST_KING".equalsIgnoreCase(taskCode)
                 || "WUBEI".equalsIgnoreCase(taskCode);
     }
 

@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "card": "G077",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "cloudBranch": "dev",
+    "cloudCommit": "847410396b3fda1cc00174910401713ff30cede4",
+    "pushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-START-001"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/业务逻辑.md",
+    "docs/business-rules.json",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G077.json",
+    "src/main/java/com/bot/dhxy/window/model/WindowTaskRunProgress.java",
+    "src/main/java/com/bot/dhxy/window/runtime/WindowRuntimeContext.java",
+    "src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java",
+    "src/main/java/com/bot/dhxy/window/control/WindowTaskControlService.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnTaskStartRequest.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnProtocolValidator.java",
+    "src/test/java/com/bot/dhxy/window/control/G077PauseResumeProgressContractTest.java",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnTaskStartRequest.java"},
+    {"repo": "cloud", "path": ".gitignore"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnProtocolValidator.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/remote/CloudTaskServiceMetadata.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/runner/context/TaskExecutionContext.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudTurnTaskRuntime.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java"},
+    {"repo": "cloud", "path": "src/test/java/com/bot/dhxy/task/tianting/G077TiantingPauseResumeProgressContractTest.java"},
+    {"repo": "cloud", "path": "src/test/java/com/bot/dhxy/cloud/turn/protocol/G077ResumeProgressProtocolContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "暂停清场与新 run 启动都会清空 Client UI 次数，Cloud 天庭也始终从 0 初始化，导致热恢复丢失累计次数并可能多跑。",
+    "userDecision": "暂停继续清除瞬时状态，但保留数值累计次数；同任务同总数的 PAUSE_RESUME 将该值交给 Cloud，天庭按剩余次数继续。",
+    "decisionRecordedAt": "2026-08-13",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G077"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-START-001",
+      "producer": "Client WindowRuntimeContext 在暂停清场前保存 exact-window 天庭 completed/total",
+      "transport": "TurnTaskStartRequest.taskInitialCompletedRuns 与 task queue 索引对齐传到 Cloud runtime metadata",
+      "consumer": "TiantingTask 同时初始化 completedSubtasks、GameContext 与首次 UI progress",
+      "ordering": "running progress -> pause snapshot -> volatile reset -> matching PAUSE_RESUME -> accepted new run -> retained progress -> remaining-count loop",
+      "contracts": [
+        {
+          "path": "src/test/java/com/bot/dhxy/window/control/G077PauseResumeProgressContractTest.java",
+          "command": "javac -encoding UTF-8 -cp target/classes;<JUnit classpath> -d target/g077-client-manual-test src/test/java/com/bot/dhxy/window/control/G077PauseResumeProgressContractTest.java && junit execute --select-class com.bot.dhxy.window.control.G077PauseResumeProgressContractTest",
+          "proves": [
+            "暂停完整清场后 UI 仍显示 34/60",
+            "只有同任务同总数 PAUSE_RESUME 生成初始完成次数",
+            "新 run 接受后从 34/60 显示并消费暂停快照"
+          ]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/task/tianting/G077TiantingPauseResumeProgressContractTest.java",
+          "command": "javac -encoding UTF-8 -cp target/classes;<JUnit classpath> -d target/g077-cloud-manual-test src/test/java/com/bot/dhxy/task/tianting/G077TiantingPauseResumeProgressContractTest.java && junit execute --select-class com.bot.dhxy.task.tianting.G077TiantingPauseResumeProgressContractTest",
+          "proves": ["天庭业务计数、GameContext 和 UI 使用同一初始值", "循环上限按剩余次数判断"]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/cloud/turn/protocol/G077ResumeProgressProtocolContractTest.java",
+          "command": "javac -encoding UTF-8 -cp target/classes;<JUnit classpath> -d target/g077-cloud-manual-test src/test/java/com/bot/dhxy/cloud/turn/protocol/G077ResumeProgressProtocolContractTest.java && junit execute --select-class com.bot.dhxy.cloud.turn.protocol.G077ResumeProgressProtocolContractTest",
+          "proves": ["正数初始次数仅允许 PAUSE_RESUME", "初始次数不得超过有限总数"]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "Client production compile", "result": "PASS", "command": "mvn -q -DskipTests -Dproject.build.directory=target/g077-client-compile compile"},
+    {"name": "Cloud production compile", "result": "PASS", "command": "mvn -q -DskipTests=false -Dmaven.test.skip=false -Dproject.build.directory=target/g077-cloud-compile compile"},
+    {"name": "Client G077 isolated JUnit", "result": "PASS", "evidence": "3/3 tests passed"},
+    {"name": "Cloud G077 isolated JUnit", "result": "PASS", "evidence": "2/2 tests passed"},
+    {"name": "aggregate testCompile", "result": "BLOCKED_UNRELATED", "evidence": "existing dirty tests reference missing fixtures, stale constructors and deleted APIs"},
+    {"name": "fresh runtime", "result": "PENDING"}
+  ]
+}

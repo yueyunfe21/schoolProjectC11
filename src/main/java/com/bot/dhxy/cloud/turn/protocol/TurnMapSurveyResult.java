@@ -6,7 +6,17 @@ public record TurnMapSurveyResult(
         String message,
         String mapName,
         Integer projectedX,
-        Integer projectedY) {
+        Integer projectedY,
+        String evidenceJson) {
+
+    public TurnMapSurveyResult(String commandId,
+                               Status status,
+                               String message,
+                               String mapName,
+                               Integer projectedX,
+                               Integer projectedY) {
+        this(commandId, status, message, mapName, projectedX, projectedY, null);
+    }
 
     public enum Status {
         ACCEPTED,

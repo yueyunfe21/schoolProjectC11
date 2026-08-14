@@ -100,6 +100,21 @@ class TiantingDialogLocalMechanicsTest {
     }
 
     @Test
+    void acceptedCycleRecoveryCanExcludeYinyaoWithoutLosingOtherOptions() throws IOException {
+        BufferedImage yinyao = dialogCanvas();
+        paste(yinyao, TiantingDialogLocalMechanics.YINYAO, OPTION_X, OPTION_Y);
+        assertTrue(TiantingDialogLocalMechanics.matchRecoveryOptionWithoutYinyao(yinyao).isEmpty(),
+                "an accepted cycle that consumed 引妖香 must not match it again");
+
+        BufferedImage kaida = dialogCanvas();
+        paste(kaida, TiantingDialogLocalMechanics.KAIDA, OPTION_X, OPTION_Y);
+        assertEquals(TiantingDialogLocalMechanics.ACTION_ENTER_BATTLE_KAIDA,
+                TiantingDialogLocalMechanics.matchRecoveryOptionWithoutYinyao(kaida)
+                        .orElseThrow().actionKey(),
+                "excluding 引妖香 must not disable the rest of 天庭 recovery");
+    }
+
+    @Test
     void everyKnownTemplateMapsToItsStableBusinessActionKey() {
         assertEquals(TiantingDialogLocalMechanics.ACTION_ACCEPT_TASK,
                 TiantingDialogLocalMechanics.actionKeyForTemplate(TiantingDialogLocalMechanics.ACCEPT).orElseThrow());

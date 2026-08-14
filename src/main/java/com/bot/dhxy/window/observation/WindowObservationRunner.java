@@ -1,6 +1,7 @@
 package com.bot.dhxy.window.observation;
 
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationFact;
+import com.bot.dhxy.cloud.turn.protocol.observation.ObservationFactType;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationInterest;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationKeyEvent;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPathingFact;
@@ -24,6 +25,7 @@ import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -57,8 +59,14 @@ public final class WindowObservationRunner {
     private final String deviceId;
     private final String windowId;
     private final String hwnd;
-    private final String taskCode;
+    /** Exact child task currently owning this queue-scoped observation run. */
+    private volatile String taskCode;
     private final String taskRunId;
+    /**
+     * Prevents an in-flight response for the previous queue child from overwriting the new child's state.
+     * Even values are stable bindings; odd values mean a rebind is in progress.
+     */
+    private final AtomicLong taskBindingRevision = new AtomicLong();
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
     private final AtomicBoolean retainStateOnStop = new AtomicBoolean(false);
@@ -88,7 +96,12 @@ public final class WindowObservationRunner {
     private volatile ObservationPreparedFrameDemand preparedFrameDemand;
     private volatile ObservationPreparedFrame retainedPreparedFrame;
     /** True until Cloud has accepted this new run's first observation-plane request. */
-    private boolean startupScreenObservationPending = true;
+    private volatile boolean startupScreenObservationPending = true;
+    /**
+     * Rearmed on every runner start, including pause resume. It sends the first definitive local combat fact and,
+     * when that fact is VISIBLE, remains armed until Cloud has accepted the Runner's first ABSENT frame.
+     */
+    private volatile boolean startupCombatObservationPending = true;
 
     public WindowObservationRunner(ObservationClient client,
                                    String tenantId,
@@ -179,6 +192,7 @@ public final class WindowObservationRunner {
             }
             retainStateOnStop.set(false);
             stopRequested.set(false);
+            startupCombatObservationPending = true;
             Thread thread = new Thread(this::runLoop, "dhxy-observe-" + windowId);
             thread.setDaemon(true);
             workerThread = thread;
@@ -269,6 +283,42 @@ public final class WindowObservationRunner {
 
     public String taskRunId() {
         return taskRunId;
+    }
+
+    public String taskCode() {
+        return taskCode;
+    }
+
+    /**
+     * Rebinds this queue-scoped runner to the exact child task announced by Cloud's {@code TASK_STARTED} event.
+     * The observation run id and monotonically increasing observer sequence stay unchanged, while old child
+     * interests/events are fenced and the new child receives its own startup-screen boundary.
+     *
+     * @param exactTaskCode canonical child task code; must be nonblank
+     */
+    public void rebindTaskCode(String exactTaskCode) {
+        String normalized = requireIdentity(exactTaskCode, "exactTaskCode").toLowerCase(Locale.ROOT);
+        String previous = taskCode;
+        if (previous.equals(normalized)) {
+            return;
+        }
+        taskBindingRevision.incrementAndGet();
+        taskCode = normalized;
+        interests = List.of();
+        preparedFrameDemand = null;
+        retainedPreparedFrame = null;
+        lastDeliveredPathingFact = null;
+        startupScreenObservationPending = true;
+        startupCombatObservationPending = true;
+        lastSuccessfulSendAtMs = 0L;
+        synchronized (pendingKeyEvents) {
+            pendingKeyEvents.clear();
+        }
+        long revision = taskBindingRevision.incrementAndGet();
+        log.info("Observation child task rebound: windowId={} taskRunId={} previousTaskCode={} "
+                        + "taskCode={} bindingRevision={}",
+                windowId, taskRunId, previous, normalized, revision);
+        wakeForLocalStateChange();
     }
 
     public long observerSeq() {
@@ -378,6 +428,19 @@ public final class WindowObservationRunner {
         if (stopRequested.get()) {
             return;
         }
+        long requestTaskBindingRevision = taskBindingRevision.get();
+        if ((requestTaskBindingRevision & 1L) != 0L) {
+            wakeForLocalStateChange();
+            return;
+        }
+        String requestTaskCode = taskCode;
+        boolean requestStartupScreenObservation = startupScreenObservationPending;
+        boolean requestStartupCombatObservation = startupCombatObservationPending;
+        List<ObservationInterest> requestInterests = interests;
+        if (taskBindingRevision.get() != requestTaskBindingRevision) {
+            wakeForLocalStateChange();
+            return;
+        }
         // Execute due Cloud-issued interests first: fresh facts/ROIs are latest-wins for this request, while key
         // edges enter the bounded retention so they survive transport failure until acknowledged.
         List<ObservationFact> factsForThisRequest = List.of();
@@ -417,7 +480,10 @@ public final class WindowObservationRunner {
         if (sampler != null) {
             try {
                 WindowObservationSampler.SampleBatch batch = sampler.collect(
-                        interests, requestObserverSeq, startupScreenObservationPending && observesWuhuan());
+                        requestInterests,
+                        requestObserverSeq,
+                        requestStartupCombatObservation,
+                        requestStartupScreenObservation && observesWuhuan(requestTaskCode));
                 factsForThisRequest = batch.facts();
                 pathingFactsForThisRequest = batch.pathingFacts().stream()
                         .filter(fact -> taskRunId.equals(fact.taskRunId())
@@ -507,7 +573,7 @@ public final class WindowObservationRunner {
                 deviceId,
                 windowId,
                 hwnd,
-                taskCode,
+                requestTaskCode,
                 taskRunId,
                 requestObserverSeq,
                 System.currentTimeMillis(),
@@ -515,7 +581,7 @@ public final class WindowObservationRunner {
                 currentIntentId,
                 null,
                 null,
-                startupScreenObservationPending ? "startup-screen-observation" : RUNNER_SOURCE,
+                requestStartupScreenObservation ? "startup-screen-observation" : RUNNER_SOURCE,
                 null,
                 pathingFactsForThisRequest,
                 factsForThisRequest,
@@ -542,9 +608,22 @@ public final class WindowObservationRunner {
         }
         try {
             ObservationResponse response = client.send(request);
+            if (taskBindingRevision.get() != requestTaskBindingRevision) {
+                log.info("Observation response ignored after child task rebind: windowId={} taskRunId={} "
+                                + "requestTaskCode={} currentTaskCode={} observerSeq={} requestBindingRevision={} "
+                                + "currentBindingRevision={}",
+                        windowId, taskRunId, requestTaskCode, taskCode, requestObserverSeq,
+                        requestTaskBindingRevision, taskBindingRevision.get());
+                wakeForLocalStateChange();
+                return;
+            }
             // A failed send deliberately keeps the startup marker so the next request describes the same fresh
             // screen boundary. Only the first accepted request consumes it.
             startupScreenObservationPending = false;
+            if (response.acceptedObserverSeq() == requestObserverSeq
+                    && hasConfirmedOutOfCombatFact(factsForThisRequest)) {
+                startupCombatObservationPending = false;
+            }
             synchronized (pendingKeyEvents) {
                 for (String acknowledged : response.acknowledgedEventIds()) {
                     pendingKeyEvents.remove(acknowledged);
@@ -631,14 +710,24 @@ public final class WindowObservationRunner {
         }
     }
 
-    private boolean observesWuhuan() {
-        for (String code : taskCode.split(",")) {
-            String trimmed = code.trim();
-            if ("WUHUAN_V2".equalsIgnoreCase(trimmed) || "WUHUAN_V3".equalsIgnoreCase(trimmed)) {
-                return true;
-            }
+    /**
+     * VISIBLE opens the common combat wait but deliberately keeps this startup duty armed; only an accepted
+     * ABSENT frame proves the resumed task may leave the gate. UNAVAILABLE proves nothing.
+     */
+    private static boolean hasConfirmedOutOfCombatFact(List<ObservationFact> facts) {
+        if (facts == null || facts.isEmpty()) {
+            return false;
         }
-        return false;
+        return facts.stream()
+                .filter(fact -> fact != null && fact.factType() == ObservationFactType.COMBAT_SIGNAL)
+                .map(ObservationFact::value)
+                .filter(Objects::nonNull)
+                .anyMatch(value -> value.startsWith("ABSENT:"));
+    }
+
+    private boolean observesWuhuan(String exactTaskCode) {
+        return "WUHUAN_V2".equalsIgnoreCase(exactTaskCode)
+                || "WUHUAN_V3".equalsIgnoreCase(exactTaskCode);
     }
 
     /**

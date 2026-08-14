@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "card": "G080",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "pushedReference": "origin/dev",
+    "cloudBranch": "dev",
+    "cloudCommit": "847410396b3fda1cc00174910401713ff30cede4",
+    "cloudPushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-RUNNER-001", "BR-TIANTING-003"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/business-rules.json",
+    "docs/业务逻辑.md",
+    "docs/天庭任务流程大MD.md",
+    "docs/云端迁移常见错误清单.md",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G080.json",
+    "src/main/java/com/bot/dhxy/window/observation/WindowObservationSampler.java",
+    "src/main/java/com/bot/dhxy/window/runtime/WindowRuntimeContext.java",
+    "images/test-cases/runner-position/g080-position-full.png",
+    "images/test-cases/runner-position/g080-position-marked.png",
+    "images/test-cases/runner-position/g080-position-strip.png",
+    "images/test-cases/runner-position/g080-position-digits.png",
+    "images/test-cases/runner-position/g080-position-digits-12x.png",
+    "images/test-cases/runner-position/g080-position-digits-legacy.png",
+    "images/test-cases/runner-position/g080-production-multimap.png",
+    "images/test-cases/runner-position/g080-position-acceptance.txt",
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/tools/manual/G080RunnerPositionAcceptanceTool.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "G029 和现有源码把45x12像素差降为调度信号，并用新intent继承的旧地图/X/Y与Cloud识别坐标差异生成movement truth；用户明确否决该双判据和旧缓存基线。",
+    "userDecision": "绿链移动只保留Runner共享帧内动态括号内部完整X,Y数字的像素变化判据；同一张178x35地图名+坐标图负责位置识别和缓存更新，不新增截图。固定45x12横向框因截断数字被废止。",
+    "decisionRecordedAt": "2026-08-14",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G080"
+  },
+  "verification": [
+    {
+      "kind": "compile",
+      "command": "mvn -q -DskipTests compile",
+      "result": "PASS",
+      "note": "Client production compile; no tests started."
+    },
+    {
+      "kind": "production-replay",
+      "command": "JShell reflection invokes compiled WindowObservationSampler.cropMovementDigits(BufferedImage)",
+      "result": "PASS",
+      "note": "User-confirmed 86,17 marked output plus 224,101 / 120,83 / 95,84 / 94,85 multi-map outputs; brackets and map label excluded."
+    }
+  ],
+  "connectivity": [
+    {
+      "rule": "BR-RUNNER-001",
+      "producer": "WindowObservationSampler 每个 G002 exact-HWND 共享周期只裁一次178x35完整位置图，并从其内部动态定位左右括号，只裁完整X,Y数字子图；exact intent内子图变化锁存coordinateMovementObserved。",
+      "transport": "ObservationPathingFact 携带Runner锁存布尔；同一178x35图作为coordinate-strip/pre-combat-coordinate-strip ROI交给现有Cloud PlayerStateLocationRecognizer。",
+      "consumer": "Cloud任务只消费typed pathing movement/terminal；Client仅用Cloud结构化mapName/x/y更新pathing snapshot、PlayerCharacter和兼容位置缓存，不允许这些缓存生成movement truth。",
+      "ordering": "shared full frame -> one 178x35 crop -> dynamic bracket interior diff -> movement latch; same 178x35 bytes -> Cloud recognition -> cache update; no second HWND capture",
+      "contracts": [{
+        "path": "src/main/java/com/bot/dhxy/window/observation/WindowObservationSampler.java",
+        "command": "JShell reflection invokes compiled cropMovementDigits(BufferedImage) against repo-local full-window screenshots",
+        "proves": [
+          "compiled production sampler emits complete bracket-interior X,Y digits",
+          "one-to-three digit coordinates work across multiple map screenshots",
+          "178x35 ROI fully covers map label and coordinates",
+          "production PlayerStateLocationRecognizer returns expected mapName/x/y",
+          "marked evidence shows both ROI boundaries"
+        ]
+      }]
+    },
+    {
+      "rule": "BR-TIANTING-003",
+      "producer": "Runner 为封妖符坐标点击登记 exact pathing intent，并以 BR-RUNNER-001 的单一图像变化判据锁存 movement。",
+      "transport": "ObservationPathingFact.coordinateMovementObserved 保持既有 typed contract，不新增协议字段。",
+      "consumer": "TiantingTask 只消费 exact intent 的 locked movement 与 terminal，不能再从逻辑坐标或等待时长重建移动事实。",
+      "ordering": "coordinate click -> exact intent -> Runner image change latch -> Cloud consumes movement -> coordinate handled",
+      "contracts": [{
+        "path": "docs/天庭任务流程大MD.md",
+        "command": "business rule source gate",
+        "proves": ["BR-TIANTING-003 explicitly delegates movement truth to BR-RUNNER-001"]
+      }]
+    }
+  ]
+}

@@ -478,3 +478,101 @@ PREPARE → ACCEPT_TASK → RUN_SUBTASKS → RETURN_HOME ─┐(回城后)
   不得用 `dispatched=true`、画面时间差或下一帧布局变化替代业务结果。
 - 用户要求本轮只完成源码与文档返修，保持五窗 STOPPED，不运行 Maven、合同、runtime、application、UI、capture
   或 input。后续编译与 fresh 必须另获明确授权。
+
+### 2026-08-11 01:07 天庭脱战后约 36 秒才重新移动：运行审计
+
+- 现场窗口：队长 `hwnd-24197C`，taskRun=`remote-turn-73eb17a4-e42b-493f-bc75-c51b6b818a38`。
+  `01:07:08.465` Client Runner 已以 `minimap-visible` 明确确认脱战；新的 Tracker 绿链直到
+  `01:07:44.203` 才开始执行，`01:07:44.852` 完成点击并登记新 pathing intent。脱战到新腿登记共
+  `36.387s`；最后一个队员于 `01:07:12.658` 脱战，五人全部脱战到新腿登记仍有 `32.194s`。
+- 更正：先前把同期队员维护误判成队长的共享 turn 排队，结论错误。Cloud 日志中队长的
+  `tianting:dark-thunder:sync-position`、`tianting:dark-thunder:patrol` 和三次
+  `tianting:tracker-green-click:advance` 均为 `waitMs=0`、`queuedWaiters=0`；队员没有阻塞队长。
+  Client `01:07:11.265` 的右键是上一条暗雷任务脱战后的继续巡逻动作，不是战后维护。
+- 精确唤醒链如下：
+  1. `createdAtMs=1786424828551` 发布 `COMBAT_STATE_CHANGED` sequence `27`，云端立即从脱战等待醒来并执行
+     `RUN_POST_COMBAT`；随后因战前/战后 task box 仍相同，执行 `RUN_DARK_THUNDER` 继续上一条暗雷巡逻。
+  2. `1786424831175` 发布新 Tracker 的 `PREPARED_ACTION_READY` sequence `28`。G048 对新 task box 做暗雷 OCR，
+     `5588ms` 后发布 `TIANTING_DARK_THUNDER_RESOLVED` sequence `29`，云端被该事件唤醒。
+  3. 云端随即尝试点击绿链，但点击前 raw-RGB consume validation 得分 `0.72616 < 0.8`，在物理点击前拒绝
+     action，并以 `RETRYABLE_ERROR` 放权；这一步同样没有排队。
+  4. Observer 于 `1786424837623` 发布 replacement `PREPARED_ACTION_READY` sequence `30`，任务 `398ms`
+     内醒来；但该 replacement 又触发一次 G048 OCR。此次 OCR `10033ms` 超时，代码再强制等待
+     `10000ms` cooldown，未发布可继续执行的 definitive resolution。
+  5. 原 action 等待期间，Observer 到 `1786424856722` 才发布又一个 replacement
+     `PREPARED_ACTION_READY` sequence `31`，本次 `await` 实际等待 `19047ms`。新 action 再做 OCR
+     `4743ms`，发布 `TIANTING_DARK_THUNDER_RESOLVED` sequence `32`；随后 consume validation 通过，
+     真实绿链点击执行并登记新 intent。
+- 结论：`36.387s` 的主耗时不是 turn 插队，而是 G048 把“新 Tracker 是否仍为暗雷”的 OCR 判定放在绿链
+  点击前作为阻塞门；第一次点击又被 raw-RGB 校验拒绝，replacement 再经历 `10.033s` OCR 超时、`10s`
+  cooldown 和第三次 OCR。该行为违反已经确认的“暗雷 OCR 后台分析，先移动、后纠正”业务方向。
+- 修复方向：普通 Tracker 的 prepared action 不得等待 G048 definitive OCR 才允许点击；模板未命中时先消费
+  绿链并开始移动，OCR 只作为后台纠正。raw-RGB consume validation 失败后的 replacement 不得重新支付完整
+  OCR 超时和 cooldown；应复用同一 task-box/action lineage 的已知判定，或允许 fresh action 直接消费。
+- Fresh gate：脱战后的普通新 task box 在 action ready 后应立即点击并登记 intent；G048 超时不得阻塞移动，
+  `task.turn.handoff` 必须继续保持 `waitMs=0`，且同一 task-box 的 validation retry 不得重复启动阻塞 OCR。
+
+#### 两个 `10s` 与 fingerprint/OCR 职责复核
+
+- 第一个 `10s` 不是业务等待，而是 `LocalOcrClient` 的 HTTP deadline：`dhxy.cloud.brain.localOcrTimeoutMs` 默认 `10000ms`。本地 OCR sidecar 虽使用 `ThreadingHTTPServer`，但 `local_ocr_server.py` 用全局 `OCR_LOCK` 串行执行全部 RapidOCR 调用；请求可能在锁后排队，也可能卡在本次推理，Java 端到 `10s` 即丢弃该 HTTP 请求。现有持久日志没有记录 sidecar 的 `lockWaitMs` 与 inference 分段，故本轮只能确认“Java 等不到 HTTP 响应而超时”，不能把内部耗时伪定为某一个子阶段。
+- 第二个 `10s` 是 `CloudWholeTaskObserver.DARK_THUNDER_OCR_RETRY_COOLDOWN_MS=10000` 主动安排的失败重试。该逻辑用原始 ARGB CRC 作为缓存键；同一语义任务框只要像素有轻微变化就会生成新 hash、新 actionId 并再次 OCR。HTTP 超时也不会终止 sidecar 中已经开始的推理，固定冷却后重发可能与旧请求重叠。这不是可靠的“同图去重”，只是历史上的限流补丁。
+- 战后旧任务框未变化时，不应重新 OCR。本轮 `taskBoxChange=UNCHANGED score=0.94639` 后，云端已经正确沿用已锁存的 `darkThunder=true`，直接执行 `RUN_DARK_THUNDER/PATROL`；这一段 fingerprint 逻辑没有问题。
+- OCR 只可能用于“任务框已经变化为新子任务、模板又未能分类”时的后台补充分类，不能作为绿链点击前置门。`TiantingTask` 当前的 `classification == null -> LinkClick.NONE` 把 G048 OCR 变成硬门，违背“先移动、后纠正”的业务规则；而 `applyDarkThunderOcrCorrection(actionId, ...)` 已经提供同一 action 的迟到纠正入口。
+- 修复合同：
+  1. `UNCHANGED` 任务框仅沿用当前子任务已锁存分类，不新建 OCR 请求；
+  2. 新任务框按模板初判后立即允许绿链点击，OCR 仅在后台按同一 actionId 迟到纠正，OCR 缺失/超时不得返回 `LinkClick.NONE`；
+  3. 删除前台固定 `10s` retry cooldown；按既有任务框内容比较器（归一化相关系数阈值 `0.80`）维护每个语义任务框唯一 in-flight future，相同画面加入同一 future，不重复发图；
+  4. OCR sidecar 补 `requestId/lockWaitMs/inferenceMs/totalMs` 分段日志，但该观测不得成为业务修复的前置条件。
+
+#### 用户补充裁决：OCR 服务本身必须治理，绿链始终先行
+
+- 仅把 OCR 改成后台不足以闭环第一个 `10s`。Cloud 侧所有 `LocalOcrClient` 调用必须先进入一个全局单飞调度器，最多一个请求实际进入 sidecar；等待中的任务按任务框内容相似度合并，不能继续在 Python 的 `OCR_LOCK` 后无观测排队。
+- 相同任务框判定直接复用任务框图片内容匹配（归一化相关系数阈值 `0.80`），禁止使用“原始像素完全一致”的 CRC 作为业务去重判据。相同画面复用同一个 in-flight future 和最终结果，不产生第二个 HTTP 请求。
+- OCR worker 必须有自恢复边界：真实 RapidOCR 推理超过硬上限时终止并重建隔离 worker，不能让一个失控推理永久占住全局锁；调用方得到一次明确 `UNAVAILABLE`，不得固定冷却后自动重发同图。由下一张语义不同的任务框再触发新识别。
+- 天庭动作顺序固定为“先点绿链并移动，后并行分类”。新任务框发布后立即消费绿链；模板/OCR 均在移动途中处理，任何分类等待都不得站在原地阻塞点击。
+- 已完成暗雷任务且任务框确认 `CHANGED` 时，下一条任务按业务规则不可能继续是暗雷，直接按普通任务点击绿链，不再启动暗雷 OCR。其余需要确认任务类型的新任务，也只能在移动途中并行计算。
+
+#### 2026-08-11 暗雷巡逻顺序与坐标复核
+
+- 业务基线仍是：蟠桃园首轮 `右、右、左、右、左……`；其他地图从 `左、右、左、右……` 开始。`TiantingDarkThunderPlan.patrolPointAt` 当前代码与该顺序一致，前提是本轮 `mapName` 确实包含“蟠桃园”，且 `darkThunderClicks` 从该 attempt 的 `0` 开始。
+- 本轮 `hwnd-24197C` 实际点击 `(490,299)` 与 `(858,302)`。窗口 base 为 `(161,24)`；减去 base 后得到 `(329,275)` 与 `(697,278)`，与 `TiantingGeometry` 的瑶池两点完全一致。因此本轮执行的是瑶池普通交替，不是蟠桃园的 `右、右` 起手。
+- 鼠标执行没有累积漂移：日志中的实际 cursor 坐标始终精确回到上述两个固定点。但坐标表本身并非全部水平。瑶池两点 Y 仅差 `3px`；蟠桃园参考点为 `(1617,568)` 与 `(1737,608)`，Y 相差 `40px`，所以从右点切回左点时画面会明显向上移动。这是 2026-08-07 导入的测量值，不是输入驱动在执行时修改了 Y。
+- **用户最终裁决：** 蟠桃园左右点统一采用右点的绝对 Y=`608`，即窗口相对 LEFT=`(300,421)`、RIGHT=`(420,421)`；顺序仍为 `右、右、左、右、左……`。标注回放 `images/test-output/g037-tianting-dark-thunder/pantao-live-sequence-marked.png` 已把两个点画在同一水平线上。
+
+#### 2026-08-13 G075 蟠桃园第二个右点覆盖
+
+- 用户根据实机点击纠正了 2026-08-11 的“右、右”含义：第一下保留老右 `(420,421)`，第二下必须在其右侧再加旧左右间距 `120px`，即 `(540,421)`，第三下回到老右，之后继续交替。
+- 因此废弃旧左 `(300,421)`；生产点对改为新左/新右 `(420,421)/(540,421)`，通用交替得到物理序列 `老右 -> 新右 -> 老右 -> 新右……`。G075 合同与 `images/test-output/g075-tianting-dark-thunder/pantao-live-mirrored-sequence-marked.png` 为最新验收依据。
+
+#### 2026-08-11 实施与验证结果
+
+- 绿链消费不再等待后台暗雷 OCR。模板未命中且 OCR 尚未返回时，当前 action 暂按普通任务立即点击并登记寻路；同一 `actionId` 的迟到 OCR 仍可在移动途中纠正分类。
+- 暗雷 OCR 缓存改为完整 task-box 原 RGB 内容比较，复用 `TrackerTaskBoxContentComparator` 的 `0.80` 阈值；同一语义画面只保留一个 in-flight 请求并共享结果。固定 `10s` cooldown、ARGB CRC 键和同图自动重发已删除。
+- Java OCR 请求先经过全局单飞门；Python sidecar 将 RapidOCR 放进独立常驻进程，单次推理硬上限 `8s`。超时会终止并重建 worker，调用方收到明确 `503/ocr-inference-timeout`，旧队列句柄同步关闭，不会让失控推理继续占住后续请求。
+- 上一项已确认是暗雷且 fresh task box 为 `CHANGED` 时，下一项直接发布普通 prepared action、跳过暗雷 OCR；不再站在原地重新识别一个业务上不可能连续出现的暗雷任务。
+- 蟠桃园巡逻点统一为 LEFT=`(300,421)`、RIGHT=`(420,421)`，序列保持 `R,R,L,R,L`，消除从右点回左点时向上偏移 `40px`。
+- 静态门：Cloud production compile PASS；`python -m py_compile ocr/local_ocr_server.py` PASS；隔离 `TiantingSubtaskLoopContractTest` `36/36 PASS`；相关 `git diff --check` PASS。仓库全量 `testCompile` 仍被写集外既有旧测试构造器/枚举漂移阻断，未扩大本卡修理范围。
+- Fresh gate：重启 Cloud 与 OCR sidecar 后，普通新任务应在 prepared action ready 后立即点击绿链；同一 task box 不得出现固定 `10s` OCR 重发；暗雷完成且 task box 变化后不得再次等待暗雷 OCR；蟠桃园点击日志的左右点 Y 必须完全相同，并保持 `右、右、左、右、左`。
+
+### 2026-08-11 用户批准：一次接任务周期内暗雷只判定一次
+
+- 将“上一项暗雷且下一 task box `CHANGED` 时跳过 OCR”扩大为完整接任务周期合同：本周期一旦由模板或
+  definitive OCR 确认过暗雷，后续所有不同 task box 均跳过暗雷模板与暗雷 OCR，直接按普通任务推进。
+- 当前暗雷 task box 自身仍保持暗雷，战后内容未变化时继续既有巡逻，不得因为本周期锁存而被降成普通任务。
+- 锁存按窗口槽跨 pause/resume 和 task run 保存；只有 `awaitAcceptedTitle()` 真正确认下一次 fresh 天庭
+  `title` 后重置并递增 generation。旧 generation 的迟到 OCR 不得发布 resolution 或污染新周期。
+- 精确生产链：`TaskTrackerPanelService` 可按该锁关闭天庭暗雷模板分类；Observer 在首次模板/OCR 暗雷时登记
+  slot 状态并为 OCR 携带 generation；`TiantingTask` 在点击前按锁存 fingerprint 最终分流，在接任务 title 成功
+  点重置。
+
+### 2026-08-11 实施与静态验收
+
+- slot 锁已实现：首次模板或 definitive OCR 暗雷登记 generation、seen 与原始 task-box fingerprint；同框继续
+  DARK，后续不同框直接 OTHER，并在 Tracker 分析入口跳过暗雷模板和 OCR。
+- pause/resume、task-run 重建和 observation-run 注销不会清锁；异步 OCR 在执行、登记、发布/消费 resolution
+  三处检查 generation，旧结果不能污染下一周期。
+- 接任务换代采用 fresh reclassification 栅栏：第一张 accepted title 只重置 generation 并丢弃旧代际 action，
+  下一张新 generation Tracker action 才允许 `awaitAcceptedTitle()` 成功返回。
+- Cloud production compile PASS；隔离 `TiantingSubtaskLoopContractTest` `41/41 PASS`。标准命名 Maven test 因
+  写集外既有 aggregate `testCompile` 漂移被阻断，不属于本卡失败。未启动 runtime/UI/capture/input；fresh 待
+  验证一次接任务周期只 latch 一次，暂停恢复不清锁，下一次接任务后 reset 并重新分类。

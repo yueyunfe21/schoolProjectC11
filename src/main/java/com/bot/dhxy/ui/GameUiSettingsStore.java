@@ -27,6 +27,7 @@ public class GameUiSettingsStore {
     private static final String XIULUO_MAX_RUNS = "xiuluoMaxRuns";
     private static final String XINSHOU_TRAINING_MAX_RUNS = "xinshouTrainingMaxRuns";
     private static final String CATCH_GHOST_MAX_RUNS = "catchGhostMaxRuns";
+    private static final String GHOST_KING_MAX_RUNS = "ghostKingMaxRuns";
     private static final String WUHUAN_MAX_RUNS = "wuhuanMaxRuns";
     private static final String FIVEFOLD_MAX_RUNS = "fivefoldMaxRuns";
     private static final String WILD_BATTLE_DURATION_MINUTES = "wildBattleDurationMinutes";
@@ -40,6 +41,7 @@ public class GameUiSettingsStore {
     private static final String LEADER_COMMON_BOX_ENABLED = "leaderCommonBoxEnabled";
     private static final String MEMBER_COMMON_BOX_ENABLED = "memberCommonBoxEnabled";
     private static final String TASK_STARTUP_PREPARATION_ENABLED = "taskStartupPreparationEnabled";
+    private static final String DOUBLE_EXPERIENCE_CLAIM_ENABLED = "doubleExperienceClaimEnabled";
     private static final String PLAYER_HP_SUPPLY_ENABLED = "playerHpSupplyEnabled";
     private static final String PLAYER_HP_SUPPLY_THRESHOLD = "playerHpSupplyThreshold";
     private static final String PLAYER_MP_SUPPLY_ENABLED = "playerMpSupplyEnabled";
@@ -71,6 +73,8 @@ public class GameUiSettingsStore {
                 properties, XINSHOU_TRAINING_MAX_RUNS, botProperties.getXinshouTrainingMaxRuns()));
         botProperties.setCatchGhostMaxRuns(readInt(
                 properties, CATCH_GHOST_MAX_RUNS, botProperties.getCatchGhostMaxRuns()));
+        botProperties.setGhostKingMaxRuns(readInt(
+                properties, GHOST_KING_MAX_RUNS, botProperties.getGhostKingMaxRuns()));
         botProperties.setWuhuanMaxRuns(readInt(properties, WUHUAN_MAX_RUNS, botProperties.getWuhuanMaxRuns()));
         botProperties.setFivefoldMaxRuns(readInt(properties, FIVEFOLD_MAX_RUNS, botProperties.getFivefoldMaxRuns()));
         botProperties.setWildBattleDurationMinutes(readInt(
@@ -86,6 +90,8 @@ public class GameUiSettingsStore {
         botProperties.setLeaderCommonBoxEnabled(readBoolean(properties, LEADER_COMMON_BOX_ENABLED, botProperties.isLeaderCommonBoxEnabled()));
         botProperties.setMemberCommonBoxEnabled(readBoolean(properties, MEMBER_COMMON_BOX_ENABLED, botProperties.isMemberCommonBoxEnabled()));
         botProperties.setTaskStartupPreparationEnabled(readBoolean(properties, TASK_STARTUP_PREPARATION_ENABLED, botProperties.isTaskStartupPreparationEnabled()));
+        botProperties.setDoubleExperienceClaimEnabled(readBoolean(
+                properties, DOUBLE_EXPERIENCE_CLAIM_ENABLED, botProperties.isDoubleExperienceClaimEnabled()));
         botProperties.setPlayerHpSupplyEnabled(readBoolean(properties, PLAYER_HP_SUPPLY_ENABLED, botProperties.isPlayerHpSupplyEnabled()));
         botProperties.setPlayerHpSupplyThreshold(readInt(properties, PLAYER_HP_SUPPLY_THRESHOLD, botProperties.getPlayerHpSupplyThreshold()));
         botProperties.setPlayerMpSupplyEnabled(readBoolean(properties, PLAYER_MP_SUPPLY_ENABLED, botProperties.isPlayerMpSupplyEnabled()));
@@ -110,6 +116,7 @@ public class GameUiSettingsStore {
         properties.setProperty(XIULUO_MAX_RUNS, String.valueOf(botProperties.getXiuluoMaxRuns()));
         properties.setProperty(XINSHOU_TRAINING_MAX_RUNS, String.valueOf(botProperties.getXinshouTrainingMaxRuns()));
         properties.setProperty(CATCH_GHOST_MAX_RUNS, String.valueOf(botProperties.getCatchGhostMaxRuns()));
+        properties.setProperty(GHOST_KING_MAX_RUNS, String.valueOf(botProperties.getGhostKingMaxRuns()));
         properties.setProperty(WUHUAN_MAX_RUNS, String.valueOf(botProperties.getWuhuanMaxRuns()));
         properties.setProperty(FIVEFOLD_MAX_RUNS, String.valueOf(botProperties.getFivefoldMaxRuns()));
         properties.setProperty(
@@ -125,6 +132,7 @@ public class GameUiSettingsStore {
         properties.setProperty(LEADER_COMMON_BOX_ENABLED, String.valueOf(botProperties.isLeaderCommonBoxEnabled()));
         properties.setProperty(MEMBER_COMMON_BOX_ENABLED, String.valueOf(botProperties.isMemberCommonBoxEnabled()));
         properties.setProperty(TASK_STARTUP_PREPARATION_ENABLED, String.valueOf(botProperties.isTaskStartupPreparationEnabled()));
+        properties.setProperty(DOUBLE_EXPERIENCE_CLAIM_ENABLED, String.valueOf(botProperties.isDoubleExperienceClaimEnabled()));
         properties.setProperty(PLAYER_HP_SUPPLY_ENABLED, String.valueOf(botProperties.isPlayerHpSupplyEnabled()));
         properties.setProperty(PLAYER_HP_SUPPLY_THRESHOLD, String.valueOf(botProperties.getPlayerHpSupplyThreshold()));
         properties.setProperty(PLAYER_MP_SUPPLY_ENABLED, String.valueOf(botProperties.isPlayerMpSupplyEnabled()));

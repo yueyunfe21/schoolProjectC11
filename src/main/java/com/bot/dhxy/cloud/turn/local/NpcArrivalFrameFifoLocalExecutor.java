@@ -55,6 +55,11 @@ public final class NpcArrivalFrameFifoLocalExecutor {
     private static final int CTRL_MENU_SCAN_H = 120;
     private static final String CTRL_TEMPLATE = "images/calibrate/npc_menu_clean_sample.png";
     private static final double CTRL_TEMPLATE_THRESHOLD = 0.80d;
+    private static final String GHOST_KING_TASK_CODE = "ghost_king";
+    private static final String GHOST_KING_ACCEPT_NPC = "地藏王";
+    private static final String GHOST_KING_COMPLETE_STORY_TEMPLATE =
+            "images/template/dialog/guiwang/complete.png";
+    private static final double GHOST_KING_COMPLETE_STORY_THRESHOLD = 0.85d;
     private static final int[][] CTRL_OFFSETS = {
             {0, 0}, {0, -18}, {18, 0}, {0, 18}, {-18, 0}
     };
@@ -112,6 +117,11 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                     spec == null ? null : spec.hwnd(),
                     binding == null ? null : binding.getNativeHandle(),
                     arguments == null ? null : arguments.intentId());
+            return false;
+        }
+        if (GHOST_KING_TASK_CODE.equalsIgnoreCase(arguments.taskCode())
+                && GHOST_KING_ACCEPT_NPC.equals(arguments.targetKeyword())
+                && !dismissGhostKingCompletionStoryIfPresent(arguments.source())) {
             return false;
         }
         if (spec.reuseLastVerifiedPoint()) {
@@ -559,6 +569,48 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                 && snapshot != null
                 && snapshot.getType() == DialogType.STORY
                 ? sequence : 0L;
+    }
+
+    /**
+     * Clears the known post-combat 鬼王 Story entirely on the bound Client before the NPC click.
+     * The raw exact-window ROI is matched directly; no image or result is sent to Cloud.
+     */
+    private boolean dismissGhostKingCompletionStoryIfPresent(String source) {
+        int[] rect = coordinateHelper.getScaledRect(250, 345, 529, 143);
+        BufferedImage raw = tracker.captureToMemory(
+                "ghost-king-pre-accept-complete-story",
+                rect[0], rect[1], rect[2], rect[3]);
+        BufferedImage template = ImagePreprocessor.pathToBufferedImage(
+                GHOST_KING_COMPLETE_STORY_TEMPLATE);
+        if (raw == null || template == null) {
+            log.warn("Ghost King local completion-story probe unavailable; continue NPC flow: "
+                            + "source={} rawPresent={} templatePresent={}",
+                    source, raw != null, template != null);
+            if (raw != null) {
+                raw.flush();
+            }
+            if (template != null) {
+                template.flush();
+            }
+            return true;
+        }
+
+        double[] match;
+        try {
+            match = ImageFinder.find(raw, template, GHOST_KING_COMPLETE_STORY_THRESHOLD);
+        } finally {
+            raw.flush();
+            template.flush();
+        }
+        if (match == null || match.length < 3) {
+            log.info("Ghost King local completion story absent; continue NPC flow: source={}", source);
+            return true;
+        }
+
+        log.info("Ghost King local completion story matched; dismiss before NPC click: "
+                        + "source={} score={} match=({}, {})",
+                source, match[2], match[0], match[1]);
+        return fastClickKnownSmallStoryDialog(source);
     }
 
     private boolean fastClickKnownSmallStoryDialog(String source) {

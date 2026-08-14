@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "card": "G067",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "pushedReference": "origin/dev"
+  },
+  "repositories": {"cloud": "../dhxy-cloud-brain"},
+  "rules": ["BR-GHOSTKING-006"],
+  "affectedPaths": [
+    "docs/业务逻辑.md",
+    "docs/business-rules.json",
+    "docs/云端迁移常见错误清单.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/ACTIVE_WORK.md",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G067.json",
+    "images/template/team/not_returned_yet.png",
+    "images/test-cases/team-return/g067/leader_team_panel_not_returned.png",
+    "images/test-cases/team-return/g067/leader_team_panel_not_returned_marked.png",
+    "images/test-cases/team-return/g067/leader_team_panel_not_returned_roi.png",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnLocalOperation.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnProtocolValidator.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/LocalServiceStepDispatcher.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/local/WholeTaskRuntimeLocalOperationExecutor.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/local/GhostKingTeamReturnLocalOperation.java",
+    "src/main/java/com/bot/dhxy/tools/manual/G067TeamReturnPanelReplayTool.java",
+    "D:/mavenProject/dhxy-cloud-brain/src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnLocalOperation.java",
+    "D:/mavenProject/dhxy-cloud-brain/src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnProtocolValidator.java",
+    "D:/mavenProject/dhxy-cloud-brain/src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/client/CloudWholeTaskRuntimeLocalServiceClient.java",
+    "D:/mavenProject/dhxy-cloud-brain/src/main/java/com/yueyunfe/dhxy/cloudbrain/remote/CloudTeamReturnPort.java",
+    "D:/mavenProject/dhxy-cloud-brain/src/main/java/com/yueyunfe/dhxy/cloudbrain/remote/CloudTeamReturnPortAssembly.java",
+    "D:/mavenProject/dhxy-cloud-brain/src/main/java/com/bot/dhxy/service/TeamReturnService.java",
+    "D:/mavenProject/dhxy-cloud-brain/src/main/java/com/bot/dhxy/task/guiwang/GhostKingRoundContext.java",
+    "D:/mavenProject/dhxy-cloud-brain/src/main/java/com/bot/dhxy/task/guiwang/GhostKingTask.java"
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "队员进入正在归队中的中间态后，队长侧招标记消失，旧逻辑把该negative直接当作全部归队并继续接任务。",
+    "userDecision": "招只负责首次触发；队长末尾Alt+T后立即park，下一轮起由Client本地ROI匹配not_returned_yet，命中或UNKNOWN继续park，明确miss后关面板才放行。",
+    "decisionRecordedAt": "2026-08-12",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G067"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-GHOSTKING-006",
+      "producer": "Cloud GhostKingTask锁存首次招事实，并在WAIT_TEAM_RETURN末尾请求打开或探测队伍面板。",
+      "transport": "GHOST_KING_TEAM_RETURN_PANEL_OPEN/PROBE只传闭合local-service请求和enum结果，不传图片。",
+      "consumer": "Client GhostKingTeamReturnLocalOperation通过exact-HWND捕获窗口相对ROI并匹配team/not_returned_yet.png。",
+      "ordering": "initial zhao fact -> latch gate -> tail Alt+T open -> immediate MUST_YIELD -> later local probe -> hit/UNKNOWN park OR miss -> Alt+T close -> continue",
+      "contracts": [
+        {
+          "repo": "client",
+          "path": "src/main/java/com/bot/dhxy/cloud/turn/local/GhostKingTeamReturnLocalOperation.java",
+          "command": "G067 manual ROI replay + production compile",
+          "proves": ["图片只在Client本地匹配", "ROI与模板命中点可视化", "明确miss并关面板成功才返回ALL_RETURNED"]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/main/java/com/bot/dhxy/task/guiwang/GhostKingTask.java",
+          "command": "source-order inspection + production compile",
+          "proves": ["首次打开轮不匹配并立即让权", "触发后不再使用招消失放行", "NOT_RETURNED_YET/UNKNOWN持续park"]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "business rule gate", "result": "PASS", "command": "node scripts/check-business-rule-gate.js --card G067"},
+    {"name": "local ROI replay", "result": "PASS", "evidence": "matched=true score=1.000000 threshold=0.85 roi=(314,279,561,40) center=(694,292); marked output images/test-cases/team-return/g067/leader_team_panel_not_returned_marked.png"},
+    {"name": "client production compile", "result": "PASS", "command": "mvn -q -DskipTests compile"},
+    {"name": "cloud production compile", "result": "PASS", "command": "mvn -q -DskipTests=false compile"},
+    {"name": "shared protocol byte comparison", "result": "PASS", "evidence": "TurnLocalOperation and TurnProtocolValidator are byte-identical across Client and Cloud."},
+    {"name": "diff check", "result": "PASS", "command": "git diff --check in both repositories"},
+    {"name": "tests", "result": "NOT_RUN", "evidence": "Current user instruction forbids creating or running tests without explicit authorization."},
+    {"name": "fresh runtime", "result": "PENDING"}
+  ]
+}

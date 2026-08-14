@@ -5,10 +5,10 @@
   "status": "APPROVED_IMPLEMENTATION",
   "baseline": {
     "clientBranch": "dev",
-    "clientCommit": "8e165332e3832975f05b79130b37d46e6a36059c",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
     "pushedReference": "origin/dev",
     "cloudBranch": "dev",
-    "cloudCommit": "e15554ff652e6d0cde4a3411dc8cb00494ac9d10",
+    "cloudCommit": "847410396b3fda1cc00174910401713ff30cede4",
     "cloudPushedReference": "origin/dev"
   },
   "repositories": {
@@ -38,9 +38,9 @@
   ],
   "businessDifference": {
     "kind": "USER_APPROVED",
-    "conflictSummary": "G017 清除天庭本地七模板 probe 并直接 Cloud fallback，且 Client 又用 2.5 秒墙钟淘汰多谢后的封妖符资格；同步观察循环实际周期包含 HTTP 往返，正确弹窗可在下一次采样前被资格门丢弃。",
-    "userDecision": "仅对天庭恢复 G014：exact no-movement 后 known local templates 优先，all-miss 才 Cloud fallback；Dialog 可见时禁止 Tracker reopen；删除多谢后的 2.5 秒墙钟门，改为 DUOXIE 成功后建立、FENGYAO 成功或 interest/run 清理时结束的本地状态。",
-    "decisionRecordedAt": "2026-08-05",
+    "conflictSummary": "G029 既有实现仍以 white*2<green 放行同行白字较少的绿色正文带，并在封妖符目标动作后先探测 Dialog、后比较 task box；两者都与用户确认的排他分类和任务完成优先顺序冲突。",
+    "userDecision": "小型两行 Dialog 的绿色带同行只要存在任意白字像素，整带不得贡献 OPTION 证据；封妖符目标点击并按 Alt+A 后先比较 fresh task box，CHANGED 立即完成、INDETERMINATE 等待，只有 UNCHANGED 才允许 STORY fallback。",
+    "decisionRecordedAt": "2026-08-11",
     "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G029"
   },
   "connectivity": [
@@ -62,6 +62,16 @@
             "fallback remains reachable only after exact retained all-miss",
             "retained all-miss from recovery A cannot authorize recovery B",
             "visible option/coordinate dialog cannot trigger tracker reopen"
+          ]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/service/DialogOptionRowProseDiscriminationContractTest.java",
+          "command": "mvn -q -Dtest=DialogOptionRowProseDiscriminationContractTest test",
+          "proves": [
+            "a pure green option row still qualifies",
+            "a single same-row white pixel rejects the entire green band",
+            "two pure option rows still qualify as a multi-row option"
           ]
         }
       ]
@@ -89,7 +99,7 @@
       "producer": "Client WindowObservationSampler 为封妖符坐标点击登记 exact pathing intent，并只在同 intent 的逻辑 X/Y 变化后写 movementObservedAtMs；pixel diff 只调度坐标识别。",
       "transport": "WindowPathingSnapshot 持续保留同一 ACTIVE intent，直到 Runner 发布 ARRIVED/STOPPED_AWAY 权威终态；Cloud 不用短时等待到期替代该终态，也不提前清 ACTIVE intent。",
       "consumer": "TiantingTask 仅在同 intent 终态携带真实 movementObservedAtMs 时消费当前坐标并进入既有 tooltip-only 妖王幻影阶段；终态无移动证明时才清 STORY 并重试同一坐标。",
-      "ordering": "coordinate click -> exact intent remains pending across turns -> Runner exact terminal -> movement proof consumes coordinate OR no-movement STORY fallback retries same coordinate",
+      "ordering": "coordinate click -> exact intent remains pending across turns -> Runner exact terminal -> movement proof consumes coordinate -> target click/Alt+A -> fresh task-box comparison -> CHANGED completes OR INDETERMINATE waits OR UNCHANGED permits STORY fallback and next coordinate",
       "contracts": [
         {
           "repo": "cloud",
@@ -99,7 +109,17 @@
             "long continuous movement does not clear or re-click an ACTIVE exact intent",
             "terminal with exact X/Y movement proof consumes the coordinate and enters the target phase",
             "terminal without movement proof clears only STORY and retries the same coordinate",
-            "a short leg already terminal before the next Cloud pass still advances correctly"
+            "a short leg already terminal before the next Cloud pass still advances correctly",
+            "target action compares task box before any target-no-combat or post-combat STORY probe"
+          ]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/task/tianting/TiantingFengyaofuBranchContractTest.java",
+          "command": "isolated JUnit: TiantingFengyaofuBranchContractTest#targetActionComparesTaskBoxBeforeAnyStoryProbe",
+          "proves": [
+            "successful tooltip click arms the task-box gate without an immediate STORY probe",
+            "CHANGED and INDETERMINATE branches appear before both post-combat and target-no-combat STORY paths"
           ]
         }
       ]
@@ -115,6 +135,10 @@
     {"name": "G029 coordinate lifecycle gate", "result": "PASS", "evidence": "BR-TIANTING-003 registered; node scripts/check-business-rule-gate.js --card G029"},
     {"name": "G029 coordinate lifecycle production compile", "result": "PASS", "evidence": "Cloud mvn -q -DskipTests=false compile"},
     {"name": "G029 coordinate lifecycle isolated contract", "result": "PASS", "evidence": "TiantingSubtaskLoopContractTest 30/30 via javac -proc:none + JUnit ConsoleLauncher"},
-    {"name": "fresh runtime", "result": "PENDING", "evidence": "requires a real long-distance 封妖符 coordinate leg; runtime not started in this repair"}
+    {"name": "fresh runtime", "result": "PENDING", "evidence": "requires a real long-distance 封妖符 coordinate leg; runtime not started in this repair"},
+    {"name": "G029 strict option-row repair", "result": "PASS", "evidence": "isolated JUnit DialogOptionRowProseDiscriminationContractTest 4/4; one same-row white pixel rejected green=670 white=1"},
+    {"name": "G029 tracker-first repair", "result": "PASS", "evidence": "isolated JUnit TiantingFengyaofuBranchContractTest#targetActionComparesTaskBoxBeforeAnyStoryProbe 1/1"},
+    {"name": "G029 2026-08-11 production compile", "result": "PASS", "evidence": "Cloud mvn -q -DskipTests=false compile"},
+    {"name": "G029 visual replay", "result": "PASS", "evidence": "target/testcase-replay/g029-strict-option-row/same-row-white-input.png and same-row-white-rejected-marked.png"}
   ]
 }

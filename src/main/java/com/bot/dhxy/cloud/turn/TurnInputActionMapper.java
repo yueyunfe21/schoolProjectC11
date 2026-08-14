@@ -93,7 +93,7 @@ public final class TurnInputActionMapper {
                         : InputAction.scrollUp(-delta);
                 yield List.of(InputAction.moveMouse(point.x, point.y), wheel);
             }
-            case KEY_TAP, KEY_DOWN, KEY_UP, TEXT_INPUT ->
+            case KEY_TAP, KEY_DOWN, KEY_UP, TEXT_INPUT, ASCII_TEXT_INPUT ->
                     throw new IllegalArgumentException("not a mouse input action: " + action);
         };
     }

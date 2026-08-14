@@ -2,11 +2,101 @@
   "schemaVersion": 1,
   "rules": [
     {
-      "id": "BR-START-001",
-      "title": "战斗中启动任务的逻辑",
+      "id": "BR-AUTOBATTLE-001",
+      "title": "独立自动战斗战中只维护面板并在Runner脱战后补给",
       "source": "docs/业务逻辑.md",
-      "heading": "[BR-START-001] 战斗中启动任务的逻辑",
-      "domains": ["startup", "combat", "client-cloud"],
+      "heading": "[BR-AUTOBATTLE-001] 战中只维护面板，Runner 脱战后才补给",
+      "domains": ["auto-battle", "combat", "recovery", "runner", "exact-window", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-BAG-001",
+      "title": "包裹独占输入、动态锚点与小区域物品扫描",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-BAG-001] 包裹独占输入、动态锚点与小区域物品扫描",
+      "domains": ["bag", "input", "capture", "exact-window"],
+      "crossBoundary": false,
+      "status": "active"
+    },
+    {
+      "id": "BR-GHOSTKING-001",
+      "title": "鬼王任务独立运行、无暗雷且脱战直接回城",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-GHOSTKING-001] 鬼王任务初始独立基线",
+      "domains": ["ghost-king", "task-registration", "client-cloud", "state-machine"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-GHOSTKING-002",
+      "title": "鬼王阎王书房旧绿链导航与地藏王四级点击",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-GHOSTKING-002] 阎王书房专属导航与地藏王点击",
+      "domains": ["ghost-king", "navigation", "npc-click", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-GHOSTKING-003",
+      "title": "鬼王长寿村首次到图后的饱和度飞行辅助",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-GHOSTKING-003] 长寿村首次到图后的饱和度飞行辅助",
+      "domains": ["ghost-king", "pathing", "observation", "input", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-GHOSTKING-004",
+      "title": "鬼王双倍识别与领取受 exact-run UI 开关控制",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-GHOSTKING-004] 摄妖香同帧判断双倍与下一轮领取",
+      "domains": ["ghost-king", "maintenance", "runtime-settings", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-GHOSTKING-005",
+      "title": "鬼王接任务标题十秒超时后专用取消再重接",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-GHOSTKING-005] 接任务标题超时后取消旧任务再重接",
+      "domains": ["ghost-king", "dialog", "tracker", "state-lifecycle", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-TEAMRETURN-001",
+      "title": "队长归队协调与单一战后仲裁",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-TEAMRETURN-001] 队长归队协调与单一战后仲裁",
+      "domains": ["team-return", "combat", "state-lifecycle", "observation", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-GHOSTKING-006",
+      "title": "鬼王使用Client本地队伍面板确认归队完成",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-GHOSTKING-006] 本地队伍面板确认归队完成",
+      "domains": ["ghost-king", "team-return", "template", "input", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-LOCATION-001",
+      "title": "可信 OCR 后缺失地图名模板双边自动学习",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-LOCATION-001] 缺失地图名模板的双边自动学习",
+      "domains": ["location", "template", "ocr", "persistence", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-START-001",
+      "title": "战斗中启动与暂停恢复任务的逻辑",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-START-001] 战斗中启动与暂停恢复任务的逻辑",
+      "domains": ["startup", "combat", "client-cloud", "pause-resume", "progress"],
       "crossBoundary": true,
       "status": "active"
     },
@@ -56,7 +146,52 @@
       "status": "active"
     },
     {
-      "id": "BR-WUHAN-001",
+      "id": "BR-START-002",
+      "title": "有专属回程道具任务的通用Hot Start流程",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-START-002] 有专属回程道具任务的通用 Hot Start Policy",
+      "domains": ["startup", "tracker", "return-item", "team-return", "state-machine"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-TIANTING-004",
+      "title": "天庭一次接任务周期内暗雷只判定一次",
+      "source": "docs/天庭任务流程大MD.md",
+      "heading": "[BR-TIANTING-004] 一次接任务周期内暗雷只判定一次",
+      "domains": ["tianting", "tracker", "template", "ocr", "state-lifecycle", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-TIANTING-005",
+      "title": "天庭错误重接前按 fresh Tracker 决定是否取消旧任务",
+      "source": "docs/天庭任务流程大MD.md",
+      "heading": "[BR-TIANTING-005] 错误回李靖时取消旧任务后重接",
+      "domains": ["tianting", "tracker", "dialog", "state-lifecycle", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+      {
+        "id": "BR-TIANTING-006",
+        "title": "天庭入战选项执行后线性等待Runner战斗确认",
+        "source": "docs/天庭任务流程大MD.md",
+        "heading": "[BR-TIANTING-006] 入战选项执行后的线性 Runner 确认",
+        "domains": ["tianting", "dialog", "combat", "watchdog", "state-lifecycle", "client-cloud"],
+        "crossBoundary": true,
+        "status": "active"
+      },
+      {
+        "id": "BR-TIANTING-007",
+        "title": "天庭一次接任务周期内引妖香只匹配并消费一次",
+        "source": "docs/天庭任务流程大MD.md",
+        "heading": "[BR-TIANTING-007] 一次接任务周期内引妖香只匹配并消费一次",
+        "domains": ["tianting", "dialog", "template", "state-lifecycle", "client-cloud"],
+        "crossBoundary": true,
+        "status": "active"
+      },
+      {
+        "id": "BR-WUHAN-001",
       "title": "五环接任务 Title 确认与暂不可用 Story 重试",
       "source": "docs/业务逻辑.md",
       "heading": "[BR-WUHAN-001] 五环接任务 Title 确认与“暂不可用”Story 重试",
@@ -79,6 +214,33 @@
       "source": "docs/业务逻辑.md",
       "heading": "[BR-WUHAN-003] 五环买鞋后经长安地图标签直达接任务 NPC",
       "domains": ["wuhuan", "shoe-shop", "navigation", "pathing", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-WUHAN-004",
+      "title": "五环按Runner脱战事实直接执行完整恢复",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-WUHAN-004] Runner 脱战后的五环完整恢复",
+      "domains": ["wuhuan", "combat", "runner", "recovery", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-WORLDMAP-001",
+      "title": "世界地图固定目标拼音候选选择与 ARRIVED 记忆",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-WORLDMAP-001] 世界地图固定目标拼音候选选择与 ARRIVED 记忆",
+      "domains": ["navigation", "ocr", "input", "pathing", "memory", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-RUNNER-001",
+      "title": "绿链单一移动判据与同帧位置缓存",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-RUNNER-001] 绿链单一移动判据与同帧位置缓存",
+      "domains": ["runner", "pathing", "capture", "location", "state-lifecycle", "client-cloud"],
       "crossBoundary": true,
       "status": "active"
     }

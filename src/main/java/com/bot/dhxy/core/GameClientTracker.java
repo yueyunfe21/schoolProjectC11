@@ -157,6 +157,70 @@ public class GameClientTracker {
         return null;
     }
 
+    /**
+     * Captures a small ROI directly from the current exact HWND without a full-window PrintWindow render.
+     *
+     * <p>The caller must already own a frozen/exclusive exact-window transaction. This method does not refresh,
+     * focus, search for another window, or fall back to a full capture; unavailable binding or native capture is
+     * reported immediately so physical-input code cannot block behind an unrelated full-window render.</p>
+     *
+     * @param elementName diagnostic label for the ROI.
+     * @param x1 first screen-absolute X edge.
+     * @param y1 first screen-absolute Y edge.
+     * @param x2 second screen-absolute X edge.
+     * @param y2 second screen-absolute Y edge.
+     * @return captured ROI pixels, or null when the exact binding/capture is unavailable.
+     */
+    public BufferedImage captureExactWindowRegionFastToMemory(String elementName,
+                                                              int x1, int y1, int x2, int y2) {
+        if (!isValidRect(x1, y1, x2, y2)) {
+            logCaptureResult("memory-fast-region", elementName, null, x1, y1, x2, y2,
+                    false, "INVALID_RECT", "HWND_BITBLT_REGION");
+            return null;
+        }
+        Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
+        WindowNativeBinding binding = current.map(WindowRuntimeContext::getNativeBinding).orElse(null);
+        if (binding == null || !binding.hasNativeHandle() || !binding.hasGeometry()) {
+            logCaptureResult("memory-fast-region", elementName, null, x1, y1, x2, y2,
+                    false, "EXACT_BINDING_UNAVAILABLE", "HWND_BITBLT_REGION");
+            return null;
+        }
+        Optional<BoundWindowCaptureService.CaptureResult> captured = boundWindowCaptureService.captureRegionFast(
+                binding, binding.getX(), binding.getY(), x1, y1, x2, y2);
+        if (captured.isEmpty()) {
+            logCaptureResult("memory-fast-region", elementName, null, x1, y1, x2, y2,
+                    false, "FAST_REGION_CAPTURE_FAILED", "HWND_BITBLT_REGION");
+            return null;
+        }
+        logCaptureResult("memory-fast-region", elementName, null, x1, y1, x2, y2,
+                true, "OK", captured.get().provider().name());
+        return captured.get().image();
+    }
+
+    /**
+     * Writes {@link #captureExactWindowRegionFastToMemory(String, int, int, int, int)} to a PNG file.
+     *
+     * @param elementName diagnostic label for the ROI.
+     * @param savePath destination PNG path.
+     * @param x1 first screen-absolute X edge.
+     * @param y1 first screen-absolute Y edge.
+     * @param x2 second screen-absolute X edge.
+     * @param y2 second screen-absolute Y edge.
+     * @return true only when both the exact-HWND ROI capture and PNG write succeed.
+     */
+    public boolean captureExactWindowRegionFastToFile(String elementName, String savePath,
+                                                      int x1, int y1, int x2, int y2) {
+        BufferedImage image = captureExactWindowRegionFastToMemory(elementName, x1, y1, x2, y2);
+        if (image == null) {
+            return false;
+        }
+        try {
+            return writeCaptureToFile(image, savePath);
+        } finally {
+            image.flush();
+        }
+    }
+
 
     private boolean captureToFileWithoutLock(String elementName, String savePath, int x1, int y1, int x2, int y2) {
         if (!isValidRect(x1, y1, x2, y2)) {

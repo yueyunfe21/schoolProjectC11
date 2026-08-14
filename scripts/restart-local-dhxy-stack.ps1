@@ -31,7 +31,7 @@ if (Test-Path -LiteralPath $backgroundTestRequestFile -PathType Leaf) {
         $backgroundRequest = Get-Content -LiteralPath $backgroundTestRequestFile -Raw | ConvertFrom-Json
         Remove-Item -LiteralPath $backgroundTestRequestFile -Force
         $backgroundAction = [string]$backgroundRequest.action
-        if ($backgroundAction -notin @("start-wuhuan", "start-tianting")) {
+        if ($backgroundAction -notin @("start-wuhuan", "start-tianting", "start-catch-ghost", "start-ghost-king")) {
             throw "Unsupported elevated background action: $backgroundAction"
         }
         $backgroundMaxRuns = [Math]::Max(1, [int]$backgroundRequest.maxRuns)

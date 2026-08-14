@@ -27,6 +27,8 @@ import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -249,8 +251,9 @@ class TiantingDialogProbeContractTest {
     }
 
     @Test
-    void noMovementRecoveryCarriesEveryNonPostCombatOptionAcrossTheRealSamplerSeam() {
+    void noMovementRecoveryCarriesEveryTiantingBusinessOptionAcrossTheRealSamplerSeam() {
         for (String templatePath : List.of(
+                TiantingDialogLocalMechanics.YINYAO,
                 TiantingDialogLocalMechanics.KAIDA,
                 TiantingDialogLocalMechanics.DUOXIE,
                 TiantingDialogLocalMechanics.ZHUOYUE,
@@ -276,18 +279,151 @@ class TiantingDialogProbeContractTest {
     }
 
     @Test
-    void noMovementRecoveryDoesNotMatchPostCombatYinyao() {
+    void noMovementRecoveryAlwaysMatchesYinyaoWithoutTrackerOcrClassification() {
         Fixture fixture = new Fixture();
         fixture.armRecoveryInterest();
         fixture.showOption(TiantingDialogLocalMechanics.YINYAO);
 
         List<ObservationKeyEvent> events = fixture.collectCycles(1);
 
-        assertTrue(fixture.inputSequences.clicks.isEmpty(),
-                "generic no-movement recovery must not click yinyao.png");
+        assertEquals(1, fixture.inputSequences.clicks.size(),
+                "天庭 no-movement fallback must always include yinyao.png");
+        assertTrue(events.stream().anyMatch(event -> event.detail() != null
+                        && event.detail().startsWith(TiantingDialogLocalMechanics.ACTION_YINYAO + "|")
+                        && event.detail().contains("executed=true")),
+                "fallback must publish the stable tianting.yinyao action without an OCR gate");
+    }
+
+    @Test
+    void recoveryAfterAcceptedCycleYinyaoDoesNotClickYinyaoAgain() {
+        Fixture fixture = new Fixture();
+        fixture.armDialogInterest(DialogOperation.TIANTING_RECOVERY_OPTION_NO_YINYAO,
+                "test-recovery-after-yinyao");
+        fixture.showOption(TiantingDialogLocalMechanics.YINYAO);
+
+        List<ObservationKeyEvent> events = fixture.collectCycles(1);
+
+        assertTrue(fixture.inputSequences.clicks.isEmpty());
         assertTrue(events.stream().noneMatch(event -> event.detail() != null
                         && event.detail().startsWith(TiantingDialogLocalMechanics.ACTION_YINYAO + "|")),
-                "only the explicit Tracker-classified TIANTING_YINYAO interest may publish 引妖香");
+                "the no-yinyao recovery operation must neither click nor publish 引妖香");
+    }
+
+    @Test
+    void capturedPostCombatDialogMatchesYinyaoAndWritesMarkedReplay() throws IOException {
+        Path evidence = Path.of("images/test-cases/tianting/g005-yinyao-fallback");
+        Path rawPath = evidence.resolve("20260814_170710_yinyao-dialog-raw.png");
+        BufferedImage raw = ImageIO.read(rawPath.toFile());
+        assertTrue(raw != null, "the exact captured 640x300 dialog ROI must be readable");
+
+        TiantingDialogLocalMechanics.OptionHit hit =
+                TiantingDialogLocalMechanics.matchRecoveryOption(raw).orElseThrow();
+        assertEquals(TiantingDialogLocalMechanics.ACTION_YINYAO, hit.actionKey());
+
+        BufferedImage template = ImageIO.read(Path.of(TiantingDialogLocalMechanics.YINYAO).toFile());
+        assertTrue(template != null, "yinyao template must be readable");
+        BufferedImage marked = new BufferedImage(raw.getWidth(), raw.getHeight(), BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = marked.createGraphics();
+        graphics.drawImage(raw, 0, 0, null);
+        graphics.setColor(Color.RED);
+        graphics.drawRect(hit.roiOffsetX() - template.getWidth() / 2,
+                hit.roiOffsetY() - template.getHeight() / 2,
+                template.getWidth(), template.getHeight());
+        graphics.drawLine(hit.roiOffsetX() - 8, hit.roiOffsetY(), hit.roiOffsetX() + 8, hit.roiOffsetY());
+        graphics.drawLine(hit.roiOffsetX(), hit.roiOffsetY() - 8, hit.roiOffsetX(), hit.roiOffsetY() + 8);
+        graphics.dispose();
+        ImageIO.write(marked, "png", evidence.resolve("20260814_170710_yinyao-dialog-marked.png").toFile());
+        template.flush();
+        raw.flush();
+        marked.flush();
+    }
+
+    @Test
+    void cancelOnlyOperationClicksQuxiaoAndReportsItsStableAction() {
+        Fixture fixture = new Fixture();
+        fixture.armCancelInterest();
+        fixture.showOption(TiantingDialogLocalMechanics.CANCEL);
+
+        List<ObservationKeyEvent> events = fixture.collectCycles(1);
+
+        assertEquals(1, fixture.inputSequences.clicks.size());
+        assertTrue(events.stream().anyMatch(event ->
+                        event.eventType() == ObservationKeyEventType.TIANTING_DIALOG_CLICKED
+                                && event.detail().startsWith(
+                                TiantingDialogLocalMechanics.ACTION_CANCEL_TASK + "|")
+                                && event.detail().contains("executed=true")),
+                "cancel-only must cross the real sampler seam with tianting.cancelTask");
+        assertTrue(events.stream().anyMatch(event -> event.detail() != null
+                        && event.detail().contains("probeCorrelation=test-cancel")),
+                "the click event must carry the exact Cloud probe correlation");
+    }
+
+    @Test
+    void acceptAndRecoveryOperationsNeverTreatQuxiaoAsTheirOwnAction() {
+        for (DialogOperation operation : List.of(
+                DialogOperation.TIANTING_ACCEPT_TASK,
+                DialogOperation.TIANTING_RECOVERY_OPTION)) {
+            Fixture fixture = new Fixture();
+            fixture.armDialogInterest(operation, "test-not-cancel");
+            fixture.showOption(TiantingDialogLocalMechanics.CANCEL);
+
+            List<ObservationKeyEvent> events = fixture.collectCycles(1);
+
+            assertTrue(fixture.inputSequences.clicks.isEmpty(), operation + " must not click quxiao.png");
+            assertTrue(events.stream().noneMatch(event -> event.detail() != null
+                            && event.detail().startsWith(
+                            TiantingDialogLocalMechanics.ACTION_CANCEL_TASK + "|")),
+                    operation + " must not publish tianting.cancelTask");
+        }
+    }
+
+    @Test
+    void staleFengyaoFollowUpCannotOverrideCancelOnlyOperation() {
+        Fixture fixture = new Fixture();
+        fixture.context.markTiantingFengyaoPending("stale-duoxie");
+        fixture.armCancelInterest();
+        fixture.showOption(TiantingDialogLocalMechanics.FENGYAO);
+
+        List<ObservationKeyEvent> events = fixture.collectCycles(1);
+
+        assertTrue(fixture.inputSequences.clicks.isEmpty(),
+                "cancel-only must not click a stale fengyao follow-up");
+        assertTrue(events.stream().noneMatch(event -> event.detail() != null
+                        && event.detail().startsWith(TiantingDialogLocalMechanics.ACTION_FENGYAO + "|")),
+                "cancel-only must publish no fengyao action even when the old local latch remains set");
+    }
+
+    @Test
+    void cancelTemplateReplayWritesMarkedClickEvidence() throws Exception {
+        BufferedImage raw = Fixture.canvasWith(TiantingDialogLocalMechanics.CANCEL);
+        BufferedImage roi = raw.getSubimage(
+                TiantingDialogLocalMechanics.DIALOG_ROI_LEFT,
+                TiantingDialogLocalMechanics.DIALOG_ROI_TOP,
+                TiantingDialogLocalMechanics.DIALOG_ROI_WIDTH,
+                TiantingDialogLocalMechanics.DIALOG_ROI_HEIGHT);
+        TiantingDialogLocalMechanics.OptionHit hit =
+                TiantingDialogLocalMechanics.matchCancelOption(roi).orElseThrow();
+        BufferedImage template = ImageIO.read(new File(TiantingDialogLocalMechanics.CANCEL));
+        Path evidence = Path.of("images/test-cases/tianting/cancel-option");
+        Files.createDirectories(evidence);
+        ImageIO.write(raw, "png", evidence.resolve("cancel-option-raw.png").toFile());
+
+        BufferedImage marked = new BufferedImage(raw.getWidth(), raw.getHeight(), BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = marked.createGraphics();
+        graphics.drawImage(raw, 0, 0, null);
+        graphics.setColor(Color.RED);
+        int clickX = TiantingDialogLocalMechanics.DIALOG_ROI_LEFT + hit.roiOffsetX();
+        int clickY = TiantingDialogLocalMechanics.DIALOG_ROI_TOP + hit.roiOffsetY();
+        graphics.drawRect(clickX - template.getWidth() / 2, clickY - template.getHeight() / 2,
+                template.getWidth(), template.getHeight());
+        graphics.drawLine(clickX - 8, clickY, clickX + 8, clickY);
+        graphics.drawLine(clickX, clickY - 8, clickX, clickY + 8);
+        graphics.dispose();
+        ImageIO.write(marked, "png", evidence.resolve("cancel-option-marked.png").toFile());
+        template.flush();
+        roi.flush();
+        raw.flush();
+        marked.flush();
     }
 
     @Test
@@ -442,13 +578,21 @@ class TiantingDialogProbeContractTest {
         }
 
         void armRecoveryInterest() {
+            armDialogInterest(DialogOperation.TIANTING_RECOVERY_OPTION, "test-recovery");
+        }
+
+        void armCancelInterest() {
+            armDialogInterest(DialogOperation.TIANTING_CANCEL_TASK, "test-cancel");
+        }
+
+        void armDialogInterest(DialogOperation operation, String source) {
             context.updateDialogInterest(WindowDialogInterest.builder()
                     .taskType(TaskType.TIANTING)
-                    .operations(List.of(DialogOperation.TIANTING_RECOVERY_OPTION))
-                    .source("test-recovery")
+                    .operations(List.of(operation))
+                    .source(source)
                     .localTemplateProbeOnly(true)
                     .probeStartAtMs(1L)
-                    .build(), "test-recovery");
+                    .build(), source);
         }
 
         void armYinyaoInterest(long createdAtMs, String intentId) {

@@ -52,4 +52,21 @@ class DialogServiceKandaConstantsContractTest {
         assertTrue(DialogService.XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_HEIGHT >= template.getHeight(),
                 "the probe ROI must not be shorter than kaida.png");
     }
+
+    @Test
+    void catchGhostAndGhostKingOwnDifferentTemplatesInsideTheSharedDialogRoi() throws Exception {
+        assertEquals("images/template/dialog/zhuagui/jinzhan.png",
+                DialogService.CATCH_GHOST_ENTER_BATTLE_LOCAL_TEMPLATE);
+        assertEquals("images/template/dialog/guiwang/jinzhan.png",
+                DialogService.GHOST_KING_ENTER_BATTLE_LOCAL_TEMPLATE);
+
+        BufferedImage catchGhost = ImageIO.read(Path.of(
+                DialogService.CATCH_GHOST_ENTER_BATTLE_LOCAL_TEMPLATE).toFile());
+        BufferedImage ghostKing = ImageIO.read(Path.of(
+                DialogService.GHOST_KING_ENTER_BATTLE_LOCAL_TEMPLATE).toFile());
+        assertTrue(catchGhost != null, "catch-ghost jinzhan template must decode");
+        assertTrue(ghostKing != null, "ghost-king jinzhan template must decode");
+        assertTrue(DialogService.CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_WIDTH >= ghostKing.getWidth());
+        assertTrue(DialogService.CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_HEIGHT >= ghostKing.getHeight());
+    }
 }

@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -63,51 +64,115 @@ class WindowTurnLoopContractTest {
     }
 
     @Test
-    void explicitCloudStartRejectionCanBeRemovedButGenericHttpFailureRemainsFenced() throws Exception {
+    void deterministicPreAck4xxStopsWhileUncertainTransportStillRetries() throws Exception {
         TurnTaskStartRequest rejectedStart = new TurnTaskStartRequest(
                 "start-rejected", List.of(TurnTaskCode.TIANTING), List.of(1),
                 TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE);
+        AtomicInteger rejectedCalls = new AtomicInteger();
         WindowTurnLoop rejectedLoop = new WindowTurnLoop(
-                "device", "window-rejected", 1_000L, WindowTurnLoopContractTest::metadata,
-                (request, optionalPng) -> {
-                    throw new TurnTransportException(
-                            TurnTransportException.Kind.HTTP_STATUS,
-                            "Cloud request rejected [TASK_START_REJECTED]: team missing",
-                            409,
-                            "TASK_START_REJECTED",
-                            null);
+                "device", "window-rejected", 1_000L, () -> metadata("window-rejected"),
+                new TurnClient() {
+                    @Override
+                    public TurnExchangeResult exchange(TurnRequest request, byte[] optionalPng)
+                            throws TurnTransportException {
+                        rejectedCalls.incrementAndGet();
+                        throw new TurnTransportException(
+                                TurnTransportException.Kind.HTTP_STATUS,
+                                "Cloud request rejected [TASK_START_REJECTED]: team missing",
+                                409,
+                                "TASK_START_REJECTED",
+                                null);
+                    }
+
+                    @Override
+                    public TurnTemplateDownload downloadTemplate(String templateKey, String ifNoneMatch) {
+                        throw new AssertionError("rejected start must not download templates");
+                    }
                 },
                 action -> { throw new AssertionError("rejected start must not execute an action"); });
         rejectedLoop.attachStartRequest(rejectedStart);
         rejectedLoop.start();
         assertTrue(rejectedLoop.awaitStopped(Duration.ofSeconds(2)));
+        assertEquals(1, rejectedCalls.get(), "a deterministic pre-ACK 4xx must never retry the same invalid request");
         assertTrue(rejectedLoop.wasTaskStartExplicitlyRejected());
-        assertTrue(TurnModeGuard.canRemoveStoppedLoop(rejectedLoop),
-                "Cloud explicitly denied the start before an ACK, so no RunSlot can remain");
+        assertNotNull(rejectedLoop.lastFailure());
+        assertTrue(rejectedLoop.startAcknowledgement().isCompletedExceptionally());
 
+        AtomicInteger uncertainCalls = new AtomicInteger();
+        CountDownLatch uncertainRetried = new CountDownLatch(1);
         WindowTurnLoop uncertainLoop = new WindowTurnLoop(
-                "device", "window-uncertain", 1_000L, WindowTurnLoopContractTest::metadata,
-                (request, optionalPng) -> {
-                    throw new TurnTransportException(
-                            TurnTransportException.Kind.HTTP_STATUS,
-                            "Cloud request rejected [OTHER]: unknown",
-                            409,
-                            "OTHER",
-                            null);
+                "device", "window-uncertain", 1_000L, () -> metadata("window-uncertain"),
+                new TurnClient() {
+                    @Override
+                    public TurnExchangeResult exchange(TurnRequest request, byte[] optionalPng)
+                            throws TurnTransportException {
+                        if (uncertainCalls.incrementAndGet() >= 2) {
+                            uncertainRetried.countDown();
+                        }
+                        throw new TurnTransportException(
+                                TurnTransportException.Kind.NETWORK,
+                                "connection reset before a response");
+                    }
+
+                    @Override
+                    public TurnTemplateDownload downloadTemplate(String templateKey, String ifNoneMatch) {
+                        throw new AssertionError("uncertain start must not download templates");
+                    }
                 },
                 action -> { throw new AssertionError("uncertain start must not execute an action"); });
         uncertainLoop.attachStartRequest(new TurnTaskStartRequest(
                 "start-uncertain", List.of(TurnTaskCode.TIANTING), List.of(1),
                 TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE));
         uncertainLoop.start();
-        assertTrue(uncertainLoop.awaitStopped(Duration.ofSeconds(2)));
+        assertTrue(uncertainRetried.await(3, TimeUnit.SECONDS));
+        assertTrue(uncertainLoop.isRunning());
         assertFalse(uncertainLoop.wasTaskStartExplicitlyRejected());
-        assertFalse(TurnModeGuard.canRemoveStoppedLoop(uncertainLoop),
-                "only the exact Cloud rejection code may release a pre-ACK task loop");
+        assertNull(uncertainLoop.lastFailure());
+        uncertainLoop.stop();
+        assertTrue(uncertainLoop.awaitStopped(Duration.ofSeconds(2)));
     }
 
     @Test
-    void staleTerminalIsIgnoredAndMatchingSkippedTerminalStopsTheExactRun() throws Exception {
+    void localRuntimeFailureRetriesInsideTheSameLoopUntilExplicitStop() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        CountDownLatch retried = new CountDownLatch(1);
+        TurnClient client = new TurnClient() {
+            @Override
+            public TurnExchangeResult exchange(TurnRequest request, byte[] optionalPng)
+                    throws TurnTransportException {
+                if (calls.incrementAndGet() == 1) {
+                    throw new IllegalStateException("local test failure");
+                }
+                retried.countDown();
+                try {
+                    Thread.sleep(TimeUnit.SECONDS.toMillis(30));
+                    throw new AssertionError("loop was not stopped");
+                } catch (InterruptedException stopped) {
+                    Thread.currentThread().interrupt();
+                    throw new TurnTransportException(
+                            TurnTransportException.Kind.INTERRUPTED, "stopped", stopped);
+                }
+            }
+
+            @Override
+            public TurnTemplateDownload downloadTemplate(String templateKey, String ifNoneMatch) {
+                throw new AssertionError("runtime retry test does not download templates");
+            }
+        };
+        WindowTurnLoop loop = new WindowTurnLoop(
+                "device", "window-runtime-retry", 1_000L, () -> metadata("window-runtime-retry"),
+                client, action -> { throw new AssertionError("runtime retry test does not execute actions"); });
+
+        loop.start();
+        assertTrue(retried.await(3, TimeUnit.SECONDS));
+        assertTrue(loop.isRunning());
+        assertNull(loop.lastFailure());
+        loop.stop();
+        assertTrue(loop.awaitStopped(Duration.ofSeconds(2)));
+    }
+
+    @Test
+    void staleTerminalIsIgnoredAndMatchingSkippedTerminalRemainsRecoverable() throws Exception {
         TurnTaskStartRequest startRequest = new TurnTaskStartRequest(
                 "run-current", List.of(TurnTaskCode.XIULUO_V2), List.of(0),
                 TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE);
@@ -146,8 +211,8 @@ class WindowTurnLoopContractTest {
         assertEquals(startRequest.startRequestId(), terminal.startRequestId());
         assertEquals(TurnTaskTerminalResult.Status.SKIPPED, terminal.status());
         assertTrue(loop.awaitStopped(Duration.ofSeconds(2)));
-        assertTrue(loop.lastFailure() instanceof IllegalStateException,
-                "SKIPPED must become a visible failed terminal instead of remaining running");
+        assertNull(loop.lastFailure(),
+                "SKIPPED closes only the old Cloud run; the control service must replace it without a failed UI");
         assertEquals(2, calls.get());
     }
 
@@ -189,13 +254,34 @@ class WindowTurnLoopContractTest {
 
         loop.start();
         assertTrue(exchangeEntered.await(2, TimeUnit.SECONDS));
+        assertFalse(loop.startAcknowledgement().isDone());
         assertFalse(loop.awaitStartAcknowledged(Duration.ofMillis(50)),
                 "client control must not report success before Cloud acknowledges the start");
         releaseAck.countDown();
         assertTrue(loop.awaitStartAcknowledged(Duration.ofSeconds(2)));
+        assertEquals(startRequest.startRequestId(),
+                loop.startAcknowledgement().get(2, TimeUnit.SECONDS).startRequestId());
 
         loop.stop();
         assertTrue(loop.awaitStopped(Duration.ofSeconds(2)));
+    }
+
+    @Test
+    void retryPolicyBacksOffWithBoundedPerWindowJitterAndNeverProducesATerminalDelay() {
+        long first = WindowTurnLoop.failureRetryDelayMs("window-a", 1);
+        long second = WindowTurnLoop.failureRetryDelayMs("window-a", 2);
+        long third = WindowTurnLoop.failureRetryDelayMs("window-a", 3);
+        long fourth = WindowTurnLoop.failureRetryDelayMs("window-a", 4);
+        long fifth = WindowTurnLoop.failureRetryDelayMs("window-a", 5);
+        long longRunning = WindowTurnLoop.failureRetryDelayMs("window-a", 10_000);
+
+        assertTrue(first >= 200L && first <= 300L);
+        assertTrue(second >= 400L && second <= 600L);
+        assertTrue(third >= 800L && third <= 1_200L);
+        assertTrue(fourth >= 1_600L && fourth <= 2_400L);
+        assertTrue(fifth >= 3_200L && fifth <= 4_800L);
+        assertTrue(longRunning >= 4_000L && longRunning <= 5_000L,
+                "even a permanent failure remains a bounded retry rather than becoming terminal");
     }
 
     @Test
@@ -224,16 +310,13 @@ class WindowTurnLoopContractTest {
         CompletableFuture<TurnMapSurveyResult> result = loop.attachMapSurveyCommand(command);
         assertThrows(IllegalStateException.class, () -> loop.attachMapSurveyCommand(command));
         client.releaseFirstExchange.countDown();
-        assertTrue(loop.awaitStopped(Duration.ofSeconds(2)));
-        assertTrue(loop.lastFailure() instanceof TurnTransportException);
+        TurnMapSurveyResult terminal = result.get(5, TimeUnit.SECONDS);
+        assertTrue(loop.isRunning(), "uncertain transport must recover inside the same live loop");
+        assertNull(loop.lastFailure());
         assertEquals(command, client.requests.get(1).mapSurveyCommand());
-        assertFalse(result.isDone(), "uncertain transport must retain the UI completion");
-
-        loop.start();
-        TurnMapSurveyResult terminal = result.get(2, TimeUnit.SECONDS);
         assertEquals(TurnMapSurveyResult.Status.COMPLETED, terminal.status());
         assertEquals(command, client.requests.get(2).mapSurveyCommand(),
-                "restart resends the exact immutable command");
+                "automatic retry resends the exact immutable command");
         assertEquals(command, client.requests.get(3).mapSurveyCommand(),
                 "ACCEPTED keeps the command pending");
         assertNull(client.requests.get(4).mapSurveyCommand());
@@ -250,8 +333,12 @@ class WindowTurnLoopContractTest {
     }
 
     private static TurnWindowMetadata metadata() {
+        return metadata("window-a");
+    }
+
+    private static TurnWindowMetadata metadata(String windowId) {
         return new TurnWindowMetadata(
-                "device", "window-a", "game", "0x1", 40L,
+                "device", windowId, "game", "0x1", 40L,
                 new TurnWindowRect(0, 0, 1024, 768), false, false,
                 null, "UNKNOWN", null, null, false, false, "NORMAL");
     }

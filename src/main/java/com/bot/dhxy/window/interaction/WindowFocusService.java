@@ -17,8 +17,8 @@ import org.springframework.stereotype.Service;
  * Windows 原生窗口激活服务。
  *
  * SetForegroundWindow 在 Windows 前台权限限制下经常返回 false，
- * 但真实鼠标/键盘动作仍然可能正常执行。因此这里把 focus 视为 best-effort：
- * 只要 hwnd 合法并完成置前尝试，就不阻断输入队列。
+ * 但真实鼠标/键盘动作仍然可能正常执行。普通输入调用方仍可把 focus 视为 best-effort；
+ * 本服务的返回值只表示目标 HWND 是否已被确认成当前前台窗口，供必须依赖前台键盘的动作严格判定。
  */
 @Slf4j
 @Service
@@ -73,7 +73,7 @@ public class WindowFocusService {
             log.debug("Window focus confirmed: handle={} title={} foregroundOk={} focused={}",
                     binding.getNativeHandle(), binding.getTitle(), foregroundOk, focused);
         }
-        return true;
+        return focused;
     }
 
     private boolean focusWithAttachedInput(WinDef.HWND hwnd) {
@@ -128,6 +128,20 @@ public class WindowFocusService {
             return null;
         }
         return String.valueOf(Pointer.nativeValue(foreground.getPointer()));
+    }
+
+    /**
+     * Checks whether the supplied exact binding is already the foreground HWND without changing focus.
+     *
+     * @param binding exact native binding expected to own the current input transaction.
+     * @return true only when Windows currently reports the same native handle as foreground.
+     */
+    public boolean isForeground(WindowNativeBinding binding) {
+        if (binding == null || !binding.hasNativeHandle()) {
+            return false;
+        }
+        WinDef.HWND hwnd = toHwnd(binding.getNativeHandle());
+        return hwnd != null && isFocused(hwnd);
     }
 
     private WinDef.HWND toHwnd(String handleText) {

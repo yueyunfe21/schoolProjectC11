@@ -254,6 +254,11 @@ public class WinApiMouseController implements InputProvider {
     }
 
     @Override
+    public void typeTextAscii(String text) {
+        throw new UnsupportedOperationException("G051 ASCII route input requires FakerInput");
+    }
+
+    @Override
     public void scrollDown(int clicks) {
         traceInput("scrollDown", "clicks=" + clicks);
         inputCoordinator.runInput("scrollDown", () -> doScroll(-120 * clicks));

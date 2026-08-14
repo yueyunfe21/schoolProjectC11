@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "card": "G052",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "pushedReference": "origin/dev",
+    "cloudBranch": "dev",
+    "cloudCommit": "847410396b3fda1cc00174910401713ff30cede4",
+    "cloudPushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-START-001", "BR-TIANTING-002"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/云端迁移常见错误清单.md",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G052.json",
+    "src/main/java/com/bot/dhxy/window/observation/WindowObservationRunner.java",
+    "src/main/java/com/bot/dhxy/window/observation/WindowObservationSampler.java",
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudTurnTaskRuntime.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/guiwang/GhostKingTask.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java"},
+    {"repo": "cloud", "path": "src/test/java/com/bot/dhxy/task/tianting/TiantingSubtaskLoopContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "NONE",
+    "summary": "无已批准业务差异；恢复战斗中暂停热恢复只维护自动战斗并等待 Runner 脱战、脱战后再读取 fresh Dialog/Tracker 的权威规则。"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-START-001",
+      "producer": "Client WindowObservationRunner 每次 start 重武装 startup combat duty；WindowObservationSampler 发布 exact run/window/HWND 的 VISIBLE/ABSENT 事实与 IN_COMBAT/COMBAT_EXITED Runner 边沿。",
+      "transport": "CloudFastExpectedCombatExitCoordinator 只投影 Runner 边沿到 scoped GameContext，并发布 COMBAT_STATE_CHANGED ready event。",
+      "consumer": "CloudTurnTaskRuntime 的通用 PAUSE_RESUME 门在任何 GameTask.execute、启动补给、G017 Title/Dialog ACK 或 phase 决定前消费首个 Runner 战斗状态；战中只运行 AutoCombatService maintenance tick 并 park。",
+      "ordering": "Runner 首个明确 combat snapshot -> 通用 startup gate -> VISIBLE 时 auto-combat maintenance/park -> Runner fresh ABSENT exit frame -> next accepted observation -> task-specific startup recovery",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/task/tianting/TiantingSubtaskLoopContractTest.java",
+          "command": "mvn -q -Dtest=TiantingSubtaskLoopContractTest test",
+          "proves": [
+            "startup combat gate precedes visible startup maintenance and G017 consumption",
+            "combat wait uses Runner COMBAT_STATE_CHANGED and existing auto-combat maintenance",
+            "Cloud radar does not participate in startup phase adjudication"
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "BR-TIANTING-002",
+      "producer": "Runner publishes NOT_IN_COMBAT and the post-exit observation cycle produces a new G017 Title/Dialog pair under a rearmed interest revision.",
+      "transport": "Cloud ready-event state carries NOT_IN_COMBAT; CloudWindowObservationInbox fences Title/Dialog by exact observation run, HWND, observer sequence and current interest revision.",
+      "consumer": "TiantingTask removes combat-era G017 interests, rearms after exit, rejects the stale pair and only then maps fresh title present to RUN_SUBTASKS or fresh absent to ACCEPT_TASK.",
+      "ordering": "NOT_IN_COMBAT -> remove combat-era interests -> rearm revision -> fresh paired Title/Dialog -> G017 ACK -> phase",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/task/tianting/TiantingSubtaskLoopContractTest.java",
+          "command": "mvn -q -Dtest=TiantingSubtaskLoopContractTest test",
+          "proves": [
+            "combat-era title absent cannot be consumed after exit",
+            "post-exit interest rearm occurs before G017 phase consumption",
+            "fresh title present continues RUN_SUBTASKS instead of navigating to ACCEPT_TASK"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "business rule gate", "result": "PASS"},
+    {"name": "generic gate touched-file static review", "result": "PASS P0/P1/P2=0/0/0"},
+    {"name": "generic gate cloud production compile", "result": "DEFERRED_ACTIVE_RUNTIME_LISTENING_18080"},
+    {"name": "generic gate client production compile", "result": "DEFERRED_ACTIVE_RUNTIME_UI_PROCESS"},
+    {"name": "previous task-specific TiantingSubtaskLoopContractTest", "result": "PASS 33/33"},
+    {"name": "cloud aggregate testCompile", "result": "BLOCKED_BY_UNRELATED_EXISTING_TEST_DRIFT"},
+    {"name": "fresh runtime", "result": "PENDING"}
+  ]
+}

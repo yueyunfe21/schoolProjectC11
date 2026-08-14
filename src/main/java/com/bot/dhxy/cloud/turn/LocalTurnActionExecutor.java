@@ -77,12 +77,37 @@ public final class LocalTurnActionExecutor {
                 validated.actionId(), window.metadata().windowId(), window.binding().getNativeHandle(),
                 describeSteps(validated.steps()));
         List<TurnStepExecution> executions = new ArrayList<>(validated.steps().size());
+        String asciiPreflightFailure = inputExecutor.validateG051AsciiSequences(window, validated.steps());
+        if (asciiPreflightFailure != null) {
+            TurnStep first = validated.steps().getFirst();
+            executions.add(TurnStepExecution.failed(
+                    first, "INVALID_G051_ASCII_SEQUENCE", null, null, null, asciiPreflightFailure));
+            for (int index = 1; index < validated.steps().size(); index++) {
+                executions.add(TurnStepExecution.notRun(validated.steps().get(index)));
+            }
+            var outcome = outcomeAssembler.assemble(validated, window.metadata(), executions, null);
+            log.warn("[G051] rejected action before enqueue actionId={} reason={}",
+                    validated.actionId(), asciiPreflightFailure);
+            return new ExecutedTurn(outcome, null);
+        }
             TurnFrame candidateFrame = null;
             boolean terminal = false;
             for (int index = 0; index < validated.steps().size(); index++) {
                 TurnStep step = validated.steps().get(index);
                 if (terminal) {
                     executions.add(TurnStepExecution.notRun(step));
+                    continue;
+                }
+
+                int asciiSequenceEnd = inputExecutor.findG051AsciiSequenceEndExclusive(
+                        window, validated.steps(), index);
+                if (asciiSequenceEnd > index) {
+                    List<TurnStep> inputSequence = validated.steps().subList(index, asciiSequenceEnd);
+                    TurnInputStepExecutor.MouseSequenceResult sequenceResult =
+                            inputExecutor.executeClosedInputSequence(window, inputSequence);
+                    executions.addAll(expandMouseSequenceExecutions(inputSequence, sequenceResult));
+                    terminal = sequenceResult.result().status() != TurnInputStepExecutor.Status.COMPLETED;
+                    index = asciiSequenceEnd - 1;
                     continue;
                 }
 
@@ -239,7 +264,7 @@ public final class LocalTurnActionExecutor {
         return switch (step.inputAction()) {
             case MOVE_MOUSE, CLICK_LEFT, CLICK_RIGHT, DOUBLE_CLICK_LEFT, DOUBLE_CLICK_RIGHT, DRAG_LEFT, SCROLL ->
                     true;
-            case KEY_TAP, KEY_DOWN, KEY_UP, TEXT_INPUT -> false;
+            case KEY_TAP, KEY_DOWN, KEY_UP, TEXT_INPUT, ASCII_TEXT_INPUT -> false;
         };
     }
 

@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "card": "G074",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "cloudBranch": "dev",
+    "cloudCommit": "847410396b3fda1cc00174910401713ff30cede4",
+    "pushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-AUTOBATTLE-001"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/业务逻辑.md",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G074.json",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/AutoCombatService.java"},
+    {"repo": "cloud", "path": "scripts/contracts/G074PostCombatFrameSettleContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "Runner 刚发布脱战时游戏可能仍处于画面过渡，立即捕获右上角状态条可能造成多余补给。",
+    "userDecision": "即时脱战恢复先固定等待 1500ms，并记录实际 elapsedMs，再执行恢复截图。",
+    "decisionRecordedAt": "2026-08-13",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G074"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-AUTOBATTLE-001",
+      "producer": "Client Runner 发布 exact COMBAT_EXITED",
+      "transport": "Cloud AutoCombatService 消费脱战边沿并进入即时恢复",
+      "consumer": "recoverAfterConfirmedExit 在 common-box 与 first-aid 捕获前等待 1500ms",
+      "ordering": "Runner exit -> 1500ms interruptible settle -> elapsedMs log -> post-combat captures/recovery",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "scripts/contracts/G074PostCombatFrameSettleContractTest.java",
+          "command": "javac -encoding UTF-8 -d target/g074-contract scripts/contracts/G074PostCombatFrameSettleContractTest.java && java -cp target/g074-contract com.bot.dhxy.task.G074PostCombatFrameSettleContractTest",
+          "proves": [
+            "固定稳定等待为 1500ms",
+            "等待位于 common-box 与 first-aid 捕获之前",
+            "deferred 恢复不重复等待",
+            "日志包含 configuredMs 与 elapsedMs"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "G074 source contract", "result": "PASS", "command": "isolated javac + java G074PostCombatFrameSettleContractTest"},
+    {"name": "G072 regression contract", "result": "PASS", "command": "isolated javac + java G072AutoBattleRunnerRecoveryContractTest"},
+    {"name": "isolated-output Cloud production compile", "result": "PASS", "command": "mvn -q -DskipTests=false -Dmaven.test.skip=false -Dproject.build.directory=target/g074-main-compile compile"},
+    {"name": "fresh runtime", "result": "PENDING"}
+  ]
+}

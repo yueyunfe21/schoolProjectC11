@@ -28,7 +28,7 @@ public record ObservationPathingFact(
         @JsonInclude(JsonInclude.Include.NON_NULL) Integer currentX,
         @JsonInclude(JsonInclude.Include.NON_NULL) Integer currentY,
         long locationChangedAtMs,
-        long movementObservedAtMs,
+        boolean coordinateMovementObserved,
         boolean dialogBlocking,
         @JsonInclude(JsonInclude.Include.NON_NULL) String dialogBlockingReason,
         long dialogBlockingDetectedAtMs,
@@ -55,14 +55,15 @@ public record ObservationPathingFact(
             Integer currentX,
             Integer currentY,
             long locationChangedAtMs,
-            long movementObservedAtMs,
+            boolean coordinateMovementObserved,
             boolean dialogBlocking,
             String dialogBlockingReason,
             long dialogBlockingDetectedAtMs) {
         this(taskRunId, windowId, hwnd, intentId, replacedIntentId, source, targetMapName,
                 targetX, targetY, tolerance, pathingType, pathingStartedAtMs, pathingUpdatedAtMs,
                 state, transition, currentMapName, currentX, currentY, locationChangedAtMs,
-                movementObservedAtMs, dialogBlocking, dialogBlockingReason, dialogBlockingDetectedAtMs,
+                coordinateMovementObserved,
+                dialogBlocking, dialogBlockingReason, dialogBlockingDetectedAtMs,
                 null, null);
     }
 }

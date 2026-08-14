@@ -27,8 +27,13 @@ class TurnTaskLifecycleProtocolGoldenJsonTest {
         assertEquals(List.of(TurnTaskCode.WUHUAN_V2, TurnTaskCode.WUBEI, TurnTaskCode.XIULUO_V2,
                 TurnTaskCode.AUTO_BATTLE), request.taskStartRequest().taskCodes());
         assertEquals(List.of(1, 0, 0, 1), request.taskStartRequest().taskMaxRuns());
+        assertEquals(List.of(0, 0, 0, 0), request.taskStartRequest().taskInitialCompletedRuns());
         assertEquals(TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE,
                 request.taskStartRequest().failurePolicy());
+        assertEquals(3_600_000L,
+                request.taskStartRequest().runtimeSettings().healPetMaintenanceIntervalMs());
+        assertFalse(request.taskStartRequest().runtimeSettings().taskStartupPreparationEnabled());
+        assertTrue(request.taskStartRequest().runtimeSettings().doubleExperienceClaimEnabled());
         assertEquals(TurnResponse.Status.IDLE, response.status());
         assertEquals(request.taskStartRequest().startRequestId(), response.taskStartAck().startRequestId());
 

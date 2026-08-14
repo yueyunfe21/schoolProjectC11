@@ -3,6 +3,7 @@ package com.bot.dhxy.cloud.turn;
 import com.bot.dhxy.cloud.turn.protocol.TurnRequest;
 import com.bot.dhxy.cloud.turn.protocol.TurnResponse;
 import com.bot.dhxy.cloud.turn.protocol.TurnTaskCode;
+import com.bot.dhxy.cloud.turn.protocol.TurnTaskQueueEvent;
 import com.bot.dhxy.cloud.turn.protocol.TurnTaskQueueFailurePolicy;
 import com.bot.dhxy.cloud.turn.protocol.TurnTaskStartAck;
 import com.bot.dhxy.cloud.turn.protocol.TurnTaskStartRequest;
@@ -21,6 +22,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -122,6 +124,42 @@ class WindowTurnLoopObservationContractTest {
             assertTrue(factory.observationRequestsFor("window-tianting").stream()
                             .allMatch(request -> "tianting".equals(request.taskCode())),
                     "every real observation request must match the Cloud business task code exactly");
+        } finally {
+            loop.stop();
+            assertTrue(loop.awaitStopped(Duration.ofSeconds(3)));
+        }
+    }
+
+    @Test
+    void queueChildTransitionRebindsExactTaskIdentityAndRetainsFailedIndex() throws Exception {
+        RecordingRunnerFactory factory = new RecordingRunnerFactory();
+        QueueTransitionTurnClient turnClient = new QueueTransitionTurnClient();
+        WindowTurnLoop loop = loop(turnClient, factory, "window-queue-transition");
+        loop.attachStartRequest(new TurnTaskStartRequest(
+                "start-queue-transition",
+                List.of(TurnTaskCode.GHOST_KING, TurnTaskCode.TIANTING),
+                List.of(60, 60),
+                TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE));
+        try {
+            loop.start();
+            assertTrue(loop.awaitStartAcknowledged(Duration.ofSeconds(3)));
+            assertTrue(turnClient.awaitBlocking(Duration.ofSeconds(3)));
+            assertTrue(awaitCondition(Duration.ofSeconds(3), () ->
+                            factory.observationRequestsFor("window-queue-transition").stream()
+                                    .anyMatch(request -> "tianting".equals(request.taskCode())
+                                            && "startup-screen-observation".equals(request.source()))),
+                    "the second queue child must receive a fresh exact-task startup boundary");
+
+            assertEquals(1, factory.createCalls.size(),
+                    "queue child transitions retain one observation run and its monotonic observer sequence");
+            assertEquals("ghost_king", factory.createCalls.getFirst().taskCode(),
+                    "the runner starts with the first exact child, never a comma-joined queue identity");
+            assertEquals("tianting", loop.observationRunner().taskCode());
+            assertEquals(1, loop.recoverableQueueIndex(),
+                    "terminal recovery must checkpoint the failed second child");
+            assertTrue(factory.observationRequestsFor("window-queue-transition").stream()
+                            .noneMatch(request -> request.taskCode().contains(",")),
+                    "no observation request may carry a whole-queue taskCode");
         } finally {
             loop.stop();
             assertTrue(loop.awaitStopped(Duration.ofSeconds(3)));
@@ -575,6 +613,82 @@ class WindowTurnLoopObservationContractTest {
                         "test long wait interrupted",
                         interrupted);
             }
+        }
+
+        @Override
+        public TurnTemplateDownload downloadTemplate(String templateKey, String ifNoneMatch) {
+            throw new AssertionError("unexpected template download");
+        }
+    }
+
+    /** Announces Ghost King success, then 天庭 start/failure, and finally parks the command loop. */
+    private static final class QueueTransitionTurnClient implements TurnClient {
+        private final java.util.concurrent.atomic.AtomicInteger exchangeCount =
+                new java.util.concurrent.atomic.AtomicInteger();
+        private final CountDownLatch blocking = new CountDownLatch(1);
+
+        boolean awaitBlocking(Duration timeout) throws InterruptedException {
+            return blocking.await(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        }
+
+        @Override
+        public TurnExchangeResult exchange(TurnRequest request, byte[] optionalPng) throws TurnTransportException {
+            int current = exchangeCount.incrementAndGet();
+            if (current == 1) {
+                TurnTaskStartRequest start = request.taskStartRequest();
+                return TurnExchangeResult.accepted(new TurnResponse(
+                        TurnResponse.Status.IDLE, null,
+                        new TurnTaskStartAck(start.startRequestId(),
+                                List.of(TurnTaskCode.GHOST_KING, TurnTaskCode.TIANTING)),
+                        null, null, null,
+                        List.of(queueEvent("ghost-started", 0, "ghost_king",
+                                TurnTaskQueueEvent.Type.TASK_STARTED, null))));
+            }
+            if (current == 2) {
+                return TurnExchangeResult.accepted(new TurnResponse(
+                        TurnResponse.Status.IDLE, null, null, null, null, null,
+                        List.of(
+                                queueEvent("ghost-success", 0, "ghost_king",
+                                        TurnTaskQueueEvent.Type.TASK_TERMINAL, "SUCCESS"),
+                                queueEvent("tianting-started", 1, "tianting",
+                                        TurnTaskQueueEvent.Type.TASK_STARTED, null))));
+            }
+            if (current == 3) {
+                return TurnExchangeResult.accepted(new TurnResponse(
+                        TurnResponse.Status.IDLE, null, null, null, null, null,
+                        List.of(queueEvent("tianting-failed", 1, "tianting",
+                                TurnTaskQueueEvent.Type.TASK_TERMINAL, "FAILED"))));
+            }
+            blocking.countDown();
+            try {
+                new CountDownLatch(1).await();
+                throw new AssertionError("blocking fake unexpectedly released");
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new TurnTransportException(
+                        TurnTransportException.Kind.INTERRUPTED, "test long wait interrupted", interrupted);
+            }
+        }
+
+        private static TurnTaskQueueEvent queueEvent(String id,
+                                                     int queueIndex,
+                                                     String taskCode,
+                                                     TurnTaskQueueEvent.Type type,
+                                                     String result) {
+            return new TurnTaskQueueEvent(
+                    id,
+                    "start-queue-transition",
+                    "start-queue-transition:" + queueIndex + ":" + taskCode.toUpperCase(Locale.ROOT),
+                    taskCode,
+                    taskCode,
+                    queueIndex,
+                    type,
+                    result,
+                    type.name(),
+                    null,
+                    "execute",
+                    null,
+                    1L);
         }
 
         @Override

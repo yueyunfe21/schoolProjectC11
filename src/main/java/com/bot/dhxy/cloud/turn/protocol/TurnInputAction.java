@@ -11,5 +11,6 @@ public enum TurnInputAction {
     KEY_TAP,
     KEY_DOWN,
     KEY_UP,
-    TEXT_INPUT
+    TEXT_INPUT,
+    ASCII_TEXT_INPUT
 }

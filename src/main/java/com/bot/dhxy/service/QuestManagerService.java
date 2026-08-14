@@ -176,12 +176,15 @@ public class QuestManagerService {
     }
 
     private String taskTitleTemplatePath(String task) {
-        // 江湖历练和抓鬼的 title are task-owned; they must never fall back to the 修罗 title.
+        // 江湖历练、抓鬼和鬼王的 title are task-owned; they must never fall back to the 修罗 title.
         if ("xinshou_training".equals(task)) {
             return "images/template/a3/a3_title.png";
         }
         if ("catch_ghost".equals(task)) {
             return "images/template/zhuagui/zhuagui_title.png";
+        }
+        if ("ghost_king".equals(task)) {
+            return "images/template/guiwang/title.png";
         }
         return "images/template/task/" + task + "_title.png";
     }

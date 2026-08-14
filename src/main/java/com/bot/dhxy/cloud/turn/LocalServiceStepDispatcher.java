@@ -4,6 +4,7 @@ import com.bot.dhxy.cloud.turn.local.BagLocalOperationExecutor;
 import com.bot.dhxy.cloud.turn.local.GiveItemLocalOperationExecutor;
 import com.bot.dhxy.cloud.turn.local.MetricsLocalOperationExecutor;
 import com.bot.dhxy.cloud.turn.local.MapSurveyPointerLocalOperationExecutor;
+import com.bot.dhxy.cloud.turn.local.MapLabelTemplateLocalOperationExecutor;
 import com.bot.dhxy.cloud.turn.local.LeftTopStatusLocalOperationExecutor;
 import com.bot.dhxy.cloud.turn.local.QuestLocalOperationExecutor;
 import com.bot.dhxy.cloud.turn.local.TaskTrackerLocalOperationExecutor;
@@ -50,6 +51,7 @@ public final class LocalServiceStepDispatcher {
     private final MetricsLocalOperationExecutor metricsAdapter;
     private final HostLocalOperationExecutor hostAdapter;
     private final MapSurveyPointerLocalOperationExecutor mapSurveyPointerAdapter;
+    private final MapLabelTemplateLocalOperationExecutor mapLabelTemplateAdapter;
     private final LeftTopStatusLocalOperationExecutor leftTopStatusAdapter;
     private final com.bot.dhxy.cloud.turn.local.XinshouDragLocalOperationExecutor xinshouDragAdapter;
     private final com.bot.dhxy.cloud.turn.local.XinshouTrackerLinkChainLocalOperationExecutor xinshouTrackerChainAdapter;
@@ -70,6 +72,7 @@ public final class LocalServiceStepDispatcher {
                                       MetricsLocalOperationExecutor metricsAdapter,
                                       HostLocalOperationExecutor hostAdapter,
                                       MapSurveyPointerLocalOperationExecutor mapSurveyPointerAdapter,
+                                      MapLabelTemplateLocalOperationExecutor mapLabelTemplateAdapter,
                                       LeftTopStatusLocalOperationExecutor leftTopStatusAdapter,
                                       com.bot.dhxy.cloud.turn.local.XinshouDragLocalOperationExecutor xinshouDragAdapter,
                                        com.bot.dhxy.cloud.turn.local.XinshouTrackerLinkChainLocalOperationExecutor xinshouTrackerChainAdapter,
@@ -88,6 +91,7 @@ public final class LocalServiceStepDispatcher {
         this.metricsAdapter = Objects.requireNonNull(metricsAdapter, "metricsAdapter");
         this.hostAdapter = Objects.requireNonNull(hostAdapter, "hostAdapter");
         this.mapSurveyPointerAdapter = Objects.requireNonNull(mapSurveyPointerAdapter, "mapSurveyPointerAdapter");
+        this.mapLabelTemplateAdapter = Objects.requireNonNull(mapLabelTemplateAdapter, "mapLabelTemplateAdapter");
         this.leftTopStatusAdapter = Objects.requireNonNull(leftTopStatusAdapter, "leftTopStatusAdapter");
         this.xinshouDragAdapter = Objects.requireNonNull(xinshouDragAdapter, "xinshouDragAdapter");
         this.xinshouTrackerChainAdapter = Objects.requireNonNull(xinshouTrackerChainAdapter, "xinshouTrackerChainAdapter");
@@ -220,10 +224,16 @@ public final class LocalServiceStepDispatcher {
                     WHOLE_TASK_RETURN_HOME_REPLAY_ARM,
                     WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM,
                     WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME,
+                    WHOLE_TASK_DOUBLE_EXPERIENCE_BROADCAST_CLICK,
                     XIULUO_ACCEPT_DIALOG_TEMPLATE,
                     JIANGHU_LILIAN_ACCEPT_DIALOG_TEMPLATE,
                     CATCH_GHOST_ACCEPT_DIALOG_TEMPLATE,
-                    CATCH_GHOST_CANCEL_DIALOG_TEMPLATE -> wholeTaskAdapter.execute(
+                    CATCH_GHOST_CANCEL_DIALOG_TEMPLATE,
+                    GHOST_KING_ACCEPT_DIALOG_TEMPLATE,
+                    GHOST_KING_CANCEL_DIALOG_TEMPLATE,
+                    TEAM_RETURN_PANEL_OPEN,
+                    TEAM_RETURN_PANEL_PROBE,
+                    TEAM_RETURN_PANEL_CLOSE -> wholeTaskAdapter.execute(
                             call, actionId, sourceStepIndex, continuationGateway);
             // Metric records are pure diagnostics: no input, no capture, no queue ownership, so
             // they are never wrapped in an exclusive input callback.
@@ -232,6 +242,7 @@ public final class LocalServiceStepDispatcher {
                     METRIC_RECORD_XIULUO_FAILURE_CASE -> metricsAdapter.execute(call);
             case HOST_SLEEP_COMPUTER -> hostAdapter.execute(call, actionStopToken);
             case MAP_SURVEY_POINTER_SAMPLE -> mapSurveyPointerAdapter.execute(deviceId, windowId);
+            case MAP_LABEL_TEMPLATE_SAVE -> mapLabelTemplateAdapter.execute(call.mapLabelTemplate());
             case LEFT_TOP_STATUS_OBSERVE -> leftTopStatusAdapter.execute(deviceId, windowId);
             // Queue-owning bag operations: the public BagService entries acquire the single input
             // queue themselves, so wrapping them here would deadlock queue-in-queue. The captured

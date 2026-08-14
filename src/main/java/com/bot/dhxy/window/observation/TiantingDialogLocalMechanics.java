@@ -11,7 +11,7 @@ import java.util.Optional;
 /**
  * Client-local 天庭 dialog option matching.
  *
- * <p>The business flow puts these seven templates on the client on purpose: when one of them is on
+ * <p>The business flow puts these eight templates on the client on purpose: when one of them is on
  * screen the answer is already known, so shipping the frame to the cloud only to be told "click the
  * option you can already see" costs a round trip per dialog. Only a dialog that matches none of them
  * goes up, and the cloud answers with the first green line.</p>
@@ -42,11 +42,17 @@ final class TiantingDialogLocalMechanics {
 
     /** 为民除害 on 李靖's dialog; matched only during the accept leg. */
     static final String ACCEPT = "images/template/dialog/tianting/accept.png";
+    /** 取消任务 on 李靖's dialog; matched only under an explicit Cloud cancel operation. */
+    static final String CANCEL = "images/template/dialog/tianting/quxiao.png";
+    /** 在下愿为三 on 地藏王's dialog; it deliberately reuses this mature 640x300 matcher. */
+    static final String GHOST_KING_ACCEPT = "images/template/dialog/guiwang/accept.png";
 
-    /** 使用引妖香; matched only during the post-combat pass, where it blocks everything else. */
+    /** 使用引妖香; checked post-combat and again in 天庭's no-movement business fallback. */
     static final String YINYAO = "images/template/dialog/tianting/yinyao.png";
 
     static final String ACTION_ACCEPT_TASK = "tianting.acceptTask";
+    static final String ACTION_CANCEL_TASK = "tianting.cancelTask";
+    static final String ACTION_GHOST_KING_ACCEPT_TASK = "ghostKing.acceptTask";
     static final String ACTION_ENTER_BATTLE_KAIDA = "tianting.enterBattle.kaida";
     static final String ACTION_DUOXIE = "tianting.duoxie";
     static final String ACTION_FENGYAO = "tianting.fengyao";
@@ -55,14 +61,16 @@ final class TiantingDialogLocalMechanics {
     static final String ACTION_ENTER_BATTLE_YAOWANG = "tianting.enterBattle.yaowang";
 
     /** Stable wire/business identity for every locally known dialog option. */
-    private static final Map<String, String> ACTION_KEYS_BY_TEMPLATE = Map.of(
-            ACCEPT, ACTION_ACCEPT_TASK,
-            KAIDA, ACTION_ENTER_BATTLE_KAIDA,
-            DUOXIE, ACTION_DUOXIE,
-            FENGYAO, ACTION_FENGYAO,
-            YINYAO, ACTION_YINYAO,
-            ZHUOYUE, ACTION_ENTER_BATTLE_ZHUOYUE,
-            YAOWANG, ACTION_ENTER_BATTLE_YAOWANG);
+    private static final Map<String, String> ACTION_KEYS_BY_TEMPLATE = Map.ofEntries(
+            Map.entry(ACCEPT, ACTION_ACCEPT_TASK),
+            Map.entry(CANCEL, ACTION_CANCEL_TASK),
+            Map.entry(GHOST_KING_ACCEPT, ACTION_GHOST_KING_ACCEPT_TASK),
+            Map.entry(KAIDA, ACTION_ENTER_BATTLE_KAIDA),
+            Map.entry(DUOXIE, ACTION_DUOXIE),
+            Map.entry(FENGYAO, ACTION_FENGYAO),
+            Map.entry(YINYAO, ACTION_YINYAO),
+            Map.entry(ZHUOYUE, ACTION_ENTER_BATTLE_ZHUOYUE),
+            Map.entry(YAOWANG, ACTION_ENTER_BATTLE_YAOWANG));
 
     /**
      * The options polled on every frame, in match order.
@@ -74,13 +82,17 @@ final class TiantingDialogLocalMechanics {
     private static final List<String> RESIDENT_OPTIONS = List.of(KAIDA, DUOXIE, ZHUOYUE, YAOWANG);
 
     /**
-     * Non-post-combat 天庭 options whose business meaning is already known.
+     * 天庭 business options checked after a green tracker click starts no movement.
      *
-     * <p>This set is deliberately wider than {@link #RESIDENT_OPTIONS}: it is used only after a green
-     * tracker click has proved that no movement started, when a dialog is the likely blocker. 引妖香 is
-     * deliberately excluded: only an explicit Tracker-classified {@code TIANTING_YINYAO} interest may match it.</p>
+     * <p>This is deliberately wider than {@link #RESIDENT_OPTIONS}. It is not a global resident set:
+     * the sampler uses it only inside 天庭's bounded no-movement arbitration. 引妖香 stays here as a
+     * fixed candidate because the dialog itself can block the green click; it must not depend on the
+     * asynchronous Tracker OCR having classified that option first.</p>
      */
     private static final List<String> RECOVERY_OPTIONS =
+            List.of(YINYAO, KAIDA, DUOXIE, ZHUOYUE, YAOWANG, FENGYAO, ACCEPT);
+    /** Same recovery priority after the accepted-cycle 引妖香 latch has been consumed. */
+    private static final List<String> RECOVERY_OPTIONS_NO_YINYAO =
             List.of(KAIDA, DUOXIE, ZHUOYUE, YAOWANG, FENGYAO, ACCEPT);
 
     private TiantingDialogLocalMechanics() {
@@ -102,7 +114,7 @@ final class TiantingDialogLocalMechanics {
      * Resolve a local template to the stable business action carried across the observation boundary.
      *
      * @param templatePath exact repo-local template path; null and unknown paths are rejected.
-     * @return stable action key, or empty when the template is outside the seven approved options.
+     * @return stable action key, or empty when the template is outside the approved local options.
      */
     static Optional<String> actionKeyForTemplate(String templatePath) {
         return Optional.ofNullable(ACTION_KEYS_BY_TEMPLATE.get(templatePath));
@@ -129,6 +141,11 @@ final class TiantingDialogLocalMechanics {
         return matchFirstOf(roi, RECOVERY_OPTIONS);
     }
 
+    /** Match normal 天庭 recovery options without rechecking 引妖香 in the same accepted cycle. */
+    static Optional<OptionHit> matchRecoveryOptionWithoutYinyao(BufferedImage roi) {
+        return matchFirstOf(roi, RECOVERY_OPTIONS_NO_YINYAO);
+    }
+
     /**
      * Match 为民除害 on 李靖's dialog.
      *
@@ -141,6 +158,26 @@ final class TiantingDialogLocalMechanics {
      */
     static Optional<OptionHit> matchAcceptOption(BufferedImage roi) {
         return matchFirstOf(roi, List.of(ACCEPT));
+    }
+
+    /**
+     * Match 取消任务 only after Cloud has explicitly decided that the carried task must be cancelled.
+     *
+     * @param roi the dialog ROI crop; null yields no hit.
+     * @return the cancel option when present; accept and every combat option remain ineligible.
+     */
+    static Optional<OptionHit> matchCancelOption(BufferedImage roi) {
+        return matchFirstOf(roi, List.of(CANCEL));
+    }
+
+    /**
+     * Match the only legal 鬼王 accept option using the same raw 640x300 dialog ROI as 天庭.
+     *
+     * @param roi exact-window dialog ROI crop; null yields no hit.
+     * @return the 鬼王 accept option when present.
+     */
+    static Optional<OptionHit> matchGhostKingAcceptOption(BufferedImage roi) {
+        return matchFirstOf(roi, List.of(GHOST_KING_ACCEPT));
     }
 
     /**

@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "card": "G072",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "pushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-AUTOBATTLE-001"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/业务逻辑.md",
+    "docs/business-rules.json",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G072.json",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/AutoBattleTask.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/AutoCombatService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/PlayerStateService.java"},
+    {"repo": "cloud", "path": "scripts/contracts/G072AutoBattleRunnerRecoveryContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "独立自动战斗忽略已经到达的 exact Runner 脱战边沿，另用 Cloud Radar 裁决，导致多数窗口漏掉战后人物/宝宝补给；战斗中被 Client 拒绝的启动补给还错误消耗唯一检查次数。",
+    "userDecision": "独立自动战斗改用 Runner 判断；战斗中不能补给，只维护自动战斗面板，脱战时再补给。",
+    "decisionRecordedAt": "2026-08-13",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G072"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-AUTOBATTLE-001",
+      "producer": "Client Runner 为 exact window/task-run 发布 IN_COMBAT 与 COMBAT_EXITED",
+      "transport": "CloudFastExpectedCombatExitCoordinator 写入 exact GameContext 并发布 COMBAT_STATE_CHANGED ready event",
+      "consumer": "Cloud AutoBattleTask 顺序消费 Runner 边沿；AutoCombatService 战中只维护面板，脱战执行既有 FULL_RECOVERY",
+      "ordering": "exact IN_COMBAT -> panel maintenance only -> exact NOT_IN_COMBAT -> full recovery; newer opposite edge suppresses stale action",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "scripts/contracts/G072AutoBattleRunnerRecoveryContractTest.java",
+          "command": "javac -encoding UTF-8 -d target/g072-contract scripts/contracts/G072AutoBattleRunnerRecoveryContractTest.java && java -cp target/g072-contract com.bot.dhxy.task.G072AutoBattleRunnerRecoveryContractTest",
+          "proves": [
+            "独立自动战斗直接消费并等待 exact Runner 战斗边沿",
+            "战中路径不执行人物/宝宝补给",
+            "只有未被更新入战覆盖的 exact exit 才执行完整恢复",
+            "补给输入失败不消耗本轮检查额度"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "standalone auto-battle source contract", "result": "PASS", "command": "isolated javac + java G072AutoBattleRunnerRecoveryContractTest", "evidence": "G072_CONTRACT_EXIT=0"},
+    {"name": "isolated-output Cloud production compile", "result": "PASS", "command": "mvn -q -DskipTests=false -Dmaven.test.skip=false -Dproject.build.directory=target/g072-main-compile-2 compile", "evidence": "G072_COMPILE_EXIT=0; active runtime target/classes was not overwritten"},
+    {"name": "touched-file diff check", "result": "PASS", "command": "git diff --check -- <G072 touched files in both repositories>", "evidence": "exit 0; line-ending warnings only"},
+    {"name": "business rule gate", "result": "PASS", "command": "node scripts/check-business-rule-gate.js --card G072", "evidence": "BUSINESS RULE GATE PASSED (G072)"},
+    {"name": "fresh runtime", "result": "PENDING"}
+  ]
+}

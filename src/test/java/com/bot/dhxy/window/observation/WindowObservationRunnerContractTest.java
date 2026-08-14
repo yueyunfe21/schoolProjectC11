@@ -92,7 +92,7 @@ class WindowObservationRunnerContractTest {
                 .state(WindowPathingState.ACTIVE)
                 .intent(intent)
                 .locationChangedAtMs(now - 3_000L)
-                .movementObservedAtMs(0L)
+                .coordinateMovementObserved(false)
                 .updatedAtMs(now)
                 .build());
         WindowObservationSampler sampler = sampler(context);
@@ -112,12 +112,12 @@ class WindowObservationRunnerContractTest {
                 intent.getIntentId(), null, null, null, "different-map-ocr", 155, 108, null)));
 
         assertEquals(WindowPathingState.STOPPED_AWAY, context.getPathingSnapshot().getState());
-        assertEquals(0L, context.getPathingSnapshot().getMovementObservedAtMs(),
+        assertFalse(context.getPathingSnapshot().isCoordinateMovementObserved(),
                 "map OCR changes and pixel differences must not become logical movement proof");
     }
 
     @Test
-    void clickTimeCoordinateSeedsTheIntentAndFirstResolvedDestinationProvesMovement() throws Exception {
+    void clickTimeCoordinateSeedsTheIntentAndMovementStaysLatchedAfterReturningToStart() throws Exception {
         WindowRuntimeContext context = new WindowRuntimeContext(WINDOW, new GameContext());
         context.setNativeBinding(new WindowNativeBinding(HWND, "title", "class", 7L, 0, 0, 1024, 768));
         PlayerCharacter me = new PlayerCharacter("队长", "leader", "server");
@@ -153,8 +153,21 @@ class WindowObservationRunnerContractTest {
                 intent.getIntentId(), null, null, null, "瑶池", 94, 83, null)));
 
         assertEquals(WindowPathingState.ACTIVE, context.getPathingSnapshot().getState());
-        assertTrue(context.getPathingSnapshot().getMovementObservedAtMs() > 0L,
+        assertTrue(context.getPathingSnapshot().isCoordinateMovementObserved(),
                 "the first destination coordinate must compare with the click-time baseline");
+
+        setSamplerField(sampler, "localPathingCoordinatePending", true);
+        setSamplerField(sampler, "localPathingCoordinateRequestedChangedAtMs",
+                getSamplerField(sampler, "localPathingLastChangedAtMs"));
+        setSamplerField(sampler, "localPathingCoordinateRequestedAtMs", now + 1_000L);
+        sampler.acceptAnalysisResults(List.of(new ObservationAnalysisResult(
+                "analysis-returned-to-start", "PATHING_COORDINATE_RESOLVED", "coordinate-strip",
+                intent.getIntentId(), null, null, null, "御马监", 183, 94, null)));
+
+        assertEquals(183, context.getPathingSnapshot().getCurrentX());
+        assertEquals(94, context.getPathingSnapshot().getCurrentY());
+        assertTrue(context.getPathingSnapshot().isCoordinateMovementObserved(),
+                "returning to the original coordinate must not erase movement already observed in this intent");
     }
 
     @Test
@@ -198,19 +211,19 @@ class WindowObservationRunnerContractTest {
 
     @Test
     void movingPathingFactStaysLocalUntilARealEdgeNeedsTransport() {
-        ObservationPathingFact first = activePathingFact("intent-1", 1_100L, 1_100L, false);
-        ObservationPathingFact moving = activePathingFact("intent-1", 1_400L, 1_400L, false);
-        ObservationPathingFact blocked = activePathingFact("intent-1", 1_700L, 1_700L, true);
+        ObservationPathingFact first = activePathingFact("intent-1", 1_100L, true, false);
+        ObservationPathingFact moving = activePathingFact("intent-1", 1_400L, true, false);
+        ObservationPathingFact blocked = activePathingFact("intent-1", 1_700L, true, true);
         ObservationPathingFact arrived = new ObservationPathingFact(
                 TASK_RUN, WINDOW, HWND, "intent-1", null, "test", "灵兽村",
                 112, 93, 5, ObservationPathingType.TARGETED,
                 1_000L, 2_000L, ObservationPathingState.ARRIVED, ObservationPathingTransition.CURRENT,
-                "灵兽村", 112, 93, 2_000L, 1_400L, false, null, 0L);
+                "灵兽村", 112, 93, 2_000L, true, false, null, 0L);
 
         assertTrue(WindowObservationRunner.requiresImmediatePathingSend(first, null),
                 "the first fact must register the intent");
         assertFalse(WindowObservationRunner.requiresImmediatePathingSend(moving, first),
-                "timestamp-only movement updates must remain local");
+                "movement-latch-only updates must remain local");
         assertTrue(WindowObservationRunner.requiresImmediatePathingSend(blocked, first),
                 "dialog blocking changes must wake Cloud");
         assertTrue(WindowObservationRunner.requiresImmediatePathingSend(arrived, moving),
@@ -547,7 +560,7 @@ class WindowObservationRunnerContractTest {
                 .currentX(100)
                 .currentY(70)
                 .locationChangedAtMs(startedAt + 500L)
-                .movementObservedAtMs(startedAt + 500L)
+                .coordinateMovementObserved(true)
                 .updatedAtMs(startedAt + 1_000L)
                 .dialogBlocking(true)
                 .dialogBlockingReason("expected route dialog")
@@ -615,7 +628,7 @@ class WindowObservationRunnerContractTest {
                 .state(WindowPathingState.STOPPED_AWAY)
                 .intent(intent)
                 .locationChangedAtMs(snapshotAt)
-                .movementObservedAtMs(snapshotAt)
+                .coordinateMovementObserved(true)
                 .updatedAtMs(snapshotAt)
                 .build());
 
@@ -625,8 +638,7 @@ class WindowObservationRunnerContractTest {
         assertTrue(fact.pathingUpdatedAtMs() >= fact.pathingStartedAtMs());
         assertTrue(fact.locationChangedAtMs() >= fact.pathingStartedAtMs());
         assertTrue(fact.locationChangedAtMs() <= fact.pathingUpdatedAtMs());
-        assertTrue(fact.movementObservedAtMs() >= fact.pathingStartedAtMs());
-        assertTrue(fact.movementObservedAtMs() <= fact.pathingUpdatedAtMs());
+        assertTrue(fact.coordinateMovementObserved());
     }
 
     @Test
@@ -648,7 +660,7 @@ class WindowObservationRunnerContractTest {
                 .state(WindowPathingState.ACTIVE)
                 .intent(intent)
                 .locationChangedAtMs(now - 1_244L)
-                .movementObservedAtMs(now - 1_244L)
+                .coordinateMovementObserved(true)
                 .updatedAtMs(now)
                 .build());
         WindowObservationSampler sampler = sampler(context);
@@ -868,13 +880,13 @@ class WindowObservationRunnerContractTest {
 
     private static ObservationPathingFact activePathingFact(String intentId,
                                                             long updatedAtMs,
-                                                            long movementObservedAtMs,
+                                                            boolean coordinateMovementObserved,
                                                             boolean dialogBlocking) {
         return new ObservationPathingFact(
                 TASK_RUN, WINDOW, HWND, intentId, null, "test", "灵兽村",
                 112, 93, 5, ObservationPathingType.TARGETED,
                 1_000L, updatedAtMs, ObservationPathingState.ACTIVE, ObservationPathingTransition.CURRENT,
-                null, null, null, 0L, movementObservedAtMs,
+                null, null, null, 0L, coordinateMovementObserved,
                 dialogBlocking, dialogBlocking ? "OPTION_DIALOG" : null,
                 dialogBlocking ? updatedAtMs : 0L);
     }

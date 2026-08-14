@@ -155,26 +155,66 @@ class WindowRemoteTurnControlContractTest {
     }
 
     @Test
-    void acknowledgedRoleWriteOccursOnlyAfterAckAndFinalCancellationFence() throws IOException {
+    void batchStartReturnsSuccessOnlyAfterAckAndRoleProjectionFence() throws IOException {
         String source = Files.readString(Path.of(
                 "src/main/java/com/bot/dhxy/window/control/WindowTaskControlService.java"));
         int methodStart = source.indexOf("private WindowTaskCommandDetail startOneRemote(");
         int methodEnd = source.indexOf("private void projectRemoteTerminal(", methodStart);
         String method = source.substring(methodStart, methodEnd);
 
-        int ackGate = method.indexOf("if (!loop.awaitStartAcknowledged(REMOTE_START_ACK_TIMEOUT))");
+        int ackGate = method.indexOf("loop.startAcknowledgement().thenAccept(");
+        int ackWait = method.indexOf("loop.awaitStartAcknowledged(REMOTE_START_ACK_TIMEOUT)", ackGate);
         int lifecycleMonitor = method.indexOf("synchronized (remoteStartLifecycleMonitor)", ackGate);
-        int cancellationFence = method.indexOf("if (isRemoteStartCancelled(startEpoch))", lifecycleMonitor);
-        int markStarted = method.indexOf("runner.markRemoteStarted(effectiveQueue)", cancellationFence);
+        int cancellationFence = method.indexOf("if (remoteStartEpoch.get() != startEpoch", lifecycleMonitor);
+        int markStarted = method.indexOf(
+                "runner.markRemoteStarted(effectiveQueue, effectiveProgress)", cancellationFence);
         int roleWrite = method.indexOf("context.setRole(acknowledgedWindowRole(", markStarted);
 
-        assertTrue(ackGate >= 0, "start must wait for Cloud ACK before retaining authority");
+        assertTrue(ackGate >= 0, "start must project authority from the asynchronous exact Cloud ACK");
+        assertTrue(ackWait > ackGate,
+                "batch start must not report success before the exact Cloud ACK is accepted");
         assertTrue(lifecycleMonitor > ackGate, "ACK commit must share the lifecycle monitor with pause/stop");
         assertTrue(cancellationFence > lifecycleMonitor, "cancel must be checked again inside the commit lock");
         assertTrue(markStarted > cancellationFence, "cancelled starts must not become locally started");
         assertTrue(roleWrite > markStarted, "failed local start bookkeeping must not retain a new role");
         assertEquals(1, occurrences(method, "context.setRole("),
                 "failure, timeout and pre-ACK paths must not have another role write");
+    }
+
+    @Test
+    void recoverableCloudTerminalKeepsWindowOwnedAndSubmitsFreshHotResumeRun() throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/bot/dhxy/window/control/WindowTaskControlService.java"));
+        int projectionStart = source.indexOf("private void projectRemoteTerminal(");
+        int recoveryStart = source.indexOf("private void recoverRemoteTerminal(", projectionStart);
+        int recoveryEnd = source.indexOf("public WindowTaskCommandResult pauseRemoteWindows(", recoveryStart);
+        String projection = source.substring(projectionStart, recoveryStart);
+        String recovery = source.substring(recoveryStart, recoveryEnd);
+
+        assertTrue(projection.contains("TurnTaskTerminalResult.Status.FAILED")
+                        && projection.contains("TurnTaskTerminalResult.Status.SKIPPED"));
+        assertFalse(projection.contains("markRemoteFailed("),
+                "recoverable terminal must never become a failed window projection");
+        assertTrue(projection.contains("remoteTerminalRecoveryPending.put("));
+        assertTrue(projection.contains("recoveryPlan.remainingFrom(loop.recoverableQueueIndex())"),
+                "recovery must drop successful queue predecessors at the exact failed child checkpoint");
+        assertTrue(projection.contains("recoverRemoteTerminal(remainingPlan, terminal, 1)"));
+        assertTrue(recovery.contains("remoteTerminalRecoveryPending.get(windowId)"),
+                "a newer terminal generation must supersede an older pending restart");
+        assertTrue(recovery.contains("remove(windowId, terminal.startRequestId())"),
+                "an older restart callback must not clear a newer terminal generation");
+        assertTrue(recovery.contains("awaitAndRemoveStoppedRemote(windowId)"),
+                "the old exact terminal run must be retired before a replacement is minted");
+        assertTrue(recovery.contains("startOneRemote("));
+        assertTrue(source.contains("taskCodes.subList(queueIndex, taskCodes.size())")
+                        && source.contains("taskMaxRuns.subList(queueIndex, taskMaxRuns.size())"),
+                "replacement request must contain only the failed child and later queue suffix");
+        assertTrue(recovery.contains("TaskStartupMode.PAUSE_RESUME"),
+                "replacement must resume the current game screen instead of rerunning cold-start preflight");
+        assertTrue(recovery.contains("recoveryPlan.runtimeSettings()"),
+                "replacement must retain the accepted run's UI setting snapshot");
+        assertTrue(recovery.contains("attempt + 1"),
+                "failed replacement submission remains a bounded-backoff retry rather than a terminal");
     }
 
     @Test

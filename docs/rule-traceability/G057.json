@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "card": "G057",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "pushedReference": "origin/dev",
+    "cloudBranch": "dev",
+    "cloudCommit": "847410396b3fda1cc00174910401713ff30cede4",
+    "cloudPushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-GHOSTKING-003"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/业务逻辑.md",
+    "docs/business-rules.json",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G057.json",
+    "images/test-cases/guiwang/g057/flying_marked.png",
+    "images/test-cases/guiwang/g057/flying_map_label_marked.png",
+    "images/test-cases/guiwang/g057/flying_raw.png",
+    "images/test-cases/guiwang/g057/ground_marked.png",
+    "images/test-cases/guiwang/g057/ground_map_label_marked.png",
+    "images/test-cases/guiwang/g057/ground_raw.png",
+    "src/main/java/com/bot/dhxy/window/observation/FlyingSaturationLocalMechanics.java",
+    "src/main/java/com/bot/dhxy/window/observation/WindowObservationRunner.java",
+    "src/main/java/com/bot/dhxy/window/observation/WindowObservationSampler.java",
+    "src/test/java/com/bot/dhxy/window/observation/WindowObservationTerminalFrameContractTest.java"
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "鬼王绿链进入长寿村时可能未自动飞行，现有 Runner 只观察地图/坐标，没有这一次性辅助。",
+    "userDecision": "用户批准新增饱和度飞行判定；首次识别长寿村后下一 tick 检查，明确落地则聚焦并按一次 Alt+C。",
+    "decisionRecordedAt": "2026-08-11",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G057"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-GHOSTKING-003",
+      "producer": "While the exact ghost-king tracker-shortcut intent is ACTIVE/UNKNOWN, WindowObservationSampler matches 长寿村.png inside the current G002 shared-frame coordinate strip and arms that intent on the first hit.",
+      "transport": "The intent-scoped arm remains local Runner state; the following collect cycle reuses the next G002 sharedCycleFrame and crops the fixed window-relative saturation ROI in memory.",
+      "consumer": "WindowObservationSampler samples FlyingSaturationLocalMechanics; NOT_FLYING submits exactly one InputAction.pressAltC through InputSequences for the bound context.",
+      "ordering": "moving-frame Changshou map-label hit -> arm only -> next shared-frame collect tick -> definitive saturation state -> at most one serialized exact-window Alt+C",
+      "contracts": [
+        {
+          "path": "src/test/java/com/bot/dhxy/window/observation/WindowObservationTerminalFrameContractTest.java",
+          "command": "focused G057 Client connectivity/ordering contract",
+          "proves": [
+            "the moving-frame map-label hit only arms and does not send input in the same collect tick",
+            "the following collect tick consumes a definitive NOT_FLYING result and sends one Alt+C",
+            "the same intent cannot send Alt+C twice"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "business rule gate", "result": "PASS"},
+    {"name": "client production compile", "result": "PASS", "command": "mvn -q -DskipTests compile"},
+    {"name": "focused connectivity contract", "result": "PASS 1/1", "command": "javac -proc:none + junit-platform-console-standalone 1.10.2 --select-method ghostKingChangshouFlightAssistWaitsForNextTickAndPressesAltCOnlyOnce"},
+    {"name": "two supplied live-frame Changshou map-label replay", "result": "PASS", "detail": "ground score=0.9928; flying score=0.9943; threshold=0.85; marked evidence archived under images/test-cases/guiwang/g057"},
+    {"name": "two supplied live-frame saturation calculation", "result": "PASS", "detail": "ground meanS=0.3679; flying meanS=0.0437; raw and marked evidence archived under images/test-cases/guiwang/g057"},
+    {"name": "aggregate test debt", "result": "BLOCKED OUTSIDE CARD", "detail": "Maven testCompile misses TurnContractFixtures.LocalPathingStartProofMechanics; full isolated legacy class has four pre-existing shared-frame count/invalidation assertion failures"},
+    {"name": "fresh runtime", "result": "PENDING"}
+  ]
+}

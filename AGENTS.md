@@ -104,6 +104,8 @@ Use the `dev` branch unless the user explicitly says otherwise.
 
 The user is actively debugging and expects direct, practical changes. Do not hide behind vague explanations. When making changes, explain exactly which file and logic changed.
 
+> **Current no-test override (2026-08-11):** Do not create or run any test of any kind unless the user later explicitly authorizes that specific test or test family. This includes unit, integration, contract, replay, image/testcase, runtime, application, UI, capture, and input tests. This override suspends every standing or automatic test exception below, including the G016 exception. A request to fix, compile, review, or hand off code is not test authorization. State plainly that the change is untested when handing it off.
+
 Important behavior constraints:
 
 1. Do not casually rewrite or bypass user-validated business logic.
@@ -151,10 +153,8 @@ Important behavior constraints:
      unreachable. A business-method return-value test alone does not satisfy this requirement.
    - The work card must cite the controlling Markdown section and name the executable contract. A migration cannot be
      marked reviewed merely because the new code and the document look individually reasonable.
-   - The user has explicitly approved this retained project-wide connectivity/ordering test family under G016. These
-     contracts are therefore a standing exception to no-local-test mode and do not need a new per-test permission each
-     time a cross-boundary business rule is touched. The exception covers connectivity and ordering only; it does not
-     authorize agents to invent business behavior or add unrelated test suites.
+   - The historical G016 standing exception is suspended by the current no-test override above. Do not create or run
+     connectivity/ordering contracts unless the user explicitly re-authorizes that specific test scope.
 
 3. Do not delete useful comments unless necessary.
    - Previous work accidentally removed some of the user's comments. Avoid repeating this.
@@ -185,10 +185,8 @@ Important behavior constraints:
    - If a task normally would require a testcase replay, record the runtime screenshot/log evidence that should be reviewed instead.
    - **Explicit-test exception:** when the user explicitly requests a named test, image/replay test, integration test, source guard, or a retained test suite, create/use only that requested scope and keep it in the repository unless the user later asks to remove it. Before starting the affected application/server or handing the build to the user, the responsible agent must run that explicitly requested test successfully against the current code. It may not bypass that required test with `-DskipTests`, an enforcer skip, a stale jar, or an IDE-only build.
    - Existing misleading cloud/NPC/dialog/brain tests remain removed by default; do not reintroduce them unless the user explicitly requests them.
-   - **G016 standing exception:** focused business-rule connectivity/ordering contracts required by rules 2B and the
-     traceability manifest are explicitly user-approved retained tests. They must be run for the touched card even when
-     the user does not repeat the request. This exception does not enable broad unit-test expansion or tests that replace
-     runtime visual evidence.
+   - **G016 is currently suspended:** focused business-rule connectivity/ordering contracts must not be created or run
+     without new, explicit user authorization for the specific test scope.
 
 8. Java compile gate is mandatory.
    - This is separate from local tests. No-local-test mode does not allow handing off uncompiled Java.

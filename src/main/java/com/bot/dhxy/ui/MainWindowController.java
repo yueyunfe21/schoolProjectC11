@@ -191,10 +191,12 @@ public class MainWindowController {
     private TextField xiuluoRunCountField;
     private TextField xinshouTrainingRunCountField;
     private TextField catchGhostRunCountField;
+    private TextField ghostKingRunCountField;
     private ComboBox<Integer> wuhuanRunCountComboBox;
     private TextField fivefoldRunCountField;
     private CheckBox summonSkillCleanEnabledCheckBox;
     private CheckBox taskStartupPreparationEnabledCheckBox;
+    private CheckBox doubleExperienceClaimEnabledCheckBox;
     private CheckBox xiuluoMaintenanceRunImmediatelyCheckBox;
     private CheckBox xiuluoHealPetMaintenanceEnabledCheckBox;
     private CheckBox xiuluoRepairEquipmentMaintenanceEnabledCheckBox;
@@ -256,6 +258,7 @@ public class MainWindowController {
         summaries.put(TaskType.XINSHOU, "1小时");
         summaries.put(TaskType.XINSHOU_TRAINING, "1次");
         summaries.put(TaskType.CATCH_GHOST, "1次");
+        summaries.put(TaskType.GHOST_KING, "1次");
         summaries.put(TaskType.WILD_BATTLE, "无限");
         summaries.put(TaskType.TIANTING, "1轮");
         summaries.put(TaskType.AUTO_BATTLE, "无限");
@@ -420,6 +423,7 @@ public class MainWindowController {
         xiuluoRunCountField = buildTaskRunCountField(botProperties.getXiuluoMaxRuns());
         xinshouTrainingRunCountField = buildTaskRunCountField(botProperties.getXinshouTrainingMaxRuns());
         catchGhostRunCountField = buildTaskRunCountField(botProperties.getCatchGhostMaxRuns());
+        ghostKingRunCountField = buildTaskRunCountField(botProperties.getGhostKingMaxRuns());
         wuhuanRunCountComboBox = buildWuhuanRunCountComboBox(botProperties.getWuhuanMaxRuns());
         fivefoldRunCountField = buildTaskRunCountField(botProperties.getFivefoldMaxRuns());
         syncTaskCountSummariesFromProperties();
@@ -427,6 +431,8 @@ public class MainWindowController {
         summonSkillCleanEnabledCheckBox.setSelected(botProperties.isSummonSkillCleanEnabled());
         taskStartupPreparationEnabledCheckBox = new CheckBox("任务启动前置检查");
         taskStartupPreparationEnabledCheckBox.setSelected(botProperties.isTaskStartupPreparationEnabled());
+        doubleExperienceClaimEnabledCheckBox = new CheckBox("领取双倍");
+        doubleExperienceClaimEnabledCheckBox.setSelected(botProperties.isDoubleExperienceClaimEnabled());
         xiuluoMaintenanceRunImmediatelyCheckBox = new CheckBox("修罗启动维护");
         xiuluoMaintenanceRunImmediatelyCheckBox.setSelected(botProperties.isXiuluoMaintenanceRunImmediatelyOnStart());
         summonSkillIntervalMinutesComboBox = buildSummonSkillIntervalComboBox(botProperties.getSummonSkillCleanIntervalMs());
@@ -584,15 +590,18 @@ public class MainWindowController {
         int xiuluoRuns = readRunCountField(xiuluoRunCountField);
         int xinshouTrainingRuns = readRunCountField(xinshouTrainingRunCountField);
         int catchGhostRuns = readRunCountField(catchGhostRunCountField);
+        int ghostKingRuns = readRunCountField(ghostKingRunCountField);
         int wuhuanRuns = normalizeWuhuanRunCount(wuhuanRunCountComboBox.getValue());
         int fivefoldRuns = readRunCountField(fivefoldRunCountField);
         botProperties.setXiuluoMaxRuns(xiuluoRuns);
         botProperties.setXinshouTrainingMaxRuns(xinshouTrainingRuns);
         botProperties.setCatchGhostMaxRuns(catchGhostRuns);
+        botProperties.setGhostKingMaxRuns(ghostKingRuns);
         botProperties.setWuhuanMaxRuns(wuhuanRuns);
         botProperties.setFivefoldMaxRuns(fivefoldRuns);
         botProperties.setSummonSkillCleanEnabled(summonSkillCleanEnabledCheckBox.isSelected());
         botProperties.setTaskStartupPreparationEnabled(taskStartupPreparationEnabledCheckBox.isSelected());
+        botProperties.setDoubleExperienceClaimEnabled(doubleExperienceClaimEnabledCheckBox.isSelected());
         botProperties.setXiuluoMaintenanceRunImmediatelyOnStart(xiuluoMaintenanceRunImmediatelyCheckBox.isSelected());
         botProperties.setSummonSkillCleanIntervalMs(normalizeSummonSkillIntervalMinutes(
                 summonSkillIntervalMinutesComboBox.getValue()) * 60_000L);
@@ -619,9 +628,11 @@ public class MainWindowController {
         addWindowLog("设置已应用：修罗=" + botProperties.getXiuluoMaxRuns()
                 + " 江湖历练=" + botProperties.getXinshouTrainingMaxRuns()
                 + " 抓鬼=" + botProperties.getCatchGhostMaxRuns()
+                + " 鬼王=" + botProperties.getGhostKingMaxRuns()
                 + " 五环=" + botProperties.getWuhuanMaxRuns()
                 + " 五倍=" + botProperties.getFivefoldMaxRuns()
                 + " 前置检查=" + (botProperties.isTaskStartupPreparationEnabled() ? "开" : "关")
+                + " 领取双倍=" + (botProperties.isDoubleExperienceClaimEnabled() ? "开" : "关")
                 + " 修罗启动维护=" + (botProperties.isXiuluoMaintenanceRunImmediatelyOnStart() ? "开" : "关")
                 + " 三技能=" + (botProperties.isSummonSkillCleanEnabled() ? "开" : "关")
                 + "/" + normalizeSummonSkillIntervalMinutes(botProperties.getSummonSkillCleanIntervalMs()) + "分钟"
@@ -681,6 +692,8 @@ public class MainWindowController {
                 formatTaskCountSummary(botProperties.getXinshouTrainingMaxRuns(), "次"));
         taskCountSummaries.put(TaskType.CATCH_GHOST,
                 formatTaskCountSummary(botProperties.getCatchGhostMaxRuns(), "次"));
+        taskCountSummaries.put(TaskType.GHOST_KING,
+                formatTaskCountSummary(botProperties.getGhostKingMaxRuns(), "次"));
         taskCountSummaries.put(TaskType.WUBEI, formatTaskCountSummary(botProperties.getFivefoldMaxRuns(), "次"));
         taskCountSummaries.put(TaskType.WUHuan_V2, formatTaskCountSummary(botProperties.getWuhuanMaxRuns(), "轮"));
         taskCountSummaries.put(TaskType.WUHUAN_V3, formatTaskCountSummary(botProperties.getWuhuanMaxRuns(), "轮"));
@@ -747,6 +760,13 @@ public class MainWindowController {
                     catchGhostRunCountField.setText(String.valueOf(normalized));
                 }
                 taskCountSummaries.put(TaskType.CATCH_GHOST, formatTaskCountSummary(normalized, "次"));
+            }
+            case GHOST_KING -> {
+                botProperties.setGhostKingMaxRuns(normalized);
+                if (ghostKingRunCountField != null) {
+                    ghostKingRunCountField.setText(String.valueOf(normalized));
+                }
+                taskCountSummaries.put(TaskType.GHOST_KING, formatTaskCountSummary(normalized, "次"));
             }
             case WUHuan_V2, WUHUAN_V3 -> {
                 int wuhuanRuns = normalizeWuhuanRunCount(normalized);
@@ -1203,7 +1223,8 @@ public class MainWindowController {
                 new Label("抓鬼次数"), catchGhostRunCountField,
                 new Label("五环次数"), wuhuanRunCountComboBox,
                 new Label("五倍次数"), fivefoldRunCountField);
-        return buildSection("任务次数", firstRow);
+        FlowPane secondRow = buildControlRow(new Label("鬼王次数"), ghostKingRunCountField);
+        return buildSection("任务次数", firstRow, secondRow);
     }
 
     private Parent buildSettingsActionPanel() {
@@ -1251,7 +1272,8 @@ public class MainWindowController {
                 xiuluoRepairEquipmentIntervalMinutesComboBox,
                 new Label("分钟"),
                 leaderCommonBoxEnabledCheckBox,
-                memberCommonBoxEnabledCheckBox);
+                memberCommonBoxEnabledCheckBox,
+                doubleExperienceClaimEnabledCheckBox);
         return buildSection("任务维护", maintenanceRow);
     }
 
@@ -2060,7 +2082,7 @@ public class MainWindowController {
 
     private boolean isEditableTaskCount(TaskType taskType) {
         return switch (taskType) {
-            case XIULUO, XIULUO_V2, XINSHOU_TRAINING, CATCH_GHOST, WUHuan_V2, WUHUAN_V3, WUBEI, WILD_BATTLE, AUTO_BATTLE, TIANTING -> true;
+            case XIULUO, XIULUO_V2, XINSHOU_TRAINING, CATCH_GHOST, GHOST_KING, WUHuan_V2, WUHUAN_V3, WUBEI, WILD_BATTLE, AUTO_BATTLE, TIANTING -> true;
             case SLEEP_COMPUTER -> false;
             default -> false;
         };
@@ -2165,6 +2187,7 @@ public class MainWindowController {
             case XIULUO_V2 -> "fas-ghost";
             case XINSHOU_TRAINING -> "fas-graduation-cap";
             case CATCH_GHOST -> "fas-ghost";
+            case GHOST_KING -> "fas-crown";
             case WILD_BATTLE -> "fas-crosshairs";
             case TIANTING -> "fas-cloud";
             case AUTO_BATTLE -> "fas-infinity";
@@ -2180,6 +2203,7 @@ public class MainWindowController {
             case XIULUO_V2 -> "task-meta-xiuluo";
             case XINSHOU_TRAINING -> "task-meta-xiuluo";
             case CATCH_GHOST -> "task-meta-xiuluo";
+            case GHOST_KING -> "task-meta-xiuluo";
             case AUTO_BATTLE -> "task-meta-auto";
             case SLEEP_COMPUTER -> "task-meta-sleep";
             default -> "task-meta-default";
@@ -2194,6 +2218,7 @@ public class MainWindowController {
             case XIULUO_V2 -> "修罗";
             case XINSHOU_TRAINING -> "江湖历练";
             case CATCH_GHOST -> "抓鬼";
+            case GHOST_KING -> "鬼王";
             case WILD_BATTLE -> "野外战斗";
             case TIANTING -> "天庭";
             case AUTO_BATTLE -> "挂机";
@@ -3331,9 +3356,11 @@ public class MainWindowController {
         setNodeDisabled(xiuluoRunCountField, disabled);
         setNodeDisabled(xinshouTrainingRunCountField, disabled);
         setNodeDisabled(catchGhostRunCountField, disabled);
+        setNodeDisabled(ghostKingRunCountField, disabled);
         setNodeDisabled(wuhuanRunCountComboBox, disabled);
         setNodeDisabled(fivefoldRunCountField, disabled);
         setNodeDisabled(taskStartupPreparationEnabledCheckBox, disabled);
+        setNodeDisabled(doubleExperienceClaimEnabledCheckBox, disabled);
         setNodeDisabled(xiuluoMaintenanceRunImmediatelyCheckBox, disabled);
         setNodeDisabled(summonSkillCleanEnabledCheckBox, disabled);
         setNodeDisabled(summonSkillIntervalMinutesComboBox, disabled);
@@ -3492,7 +3519,8 @@ public class MainWindowController {
     private List<TaskType> selectableTaskTypes() {
         return List.of(TaskType.values()).stream()
                 .filter(taskType -> taskType != TaskType.UNKNOWN)
-                .filter(taskType -> taskType != TaskType.YIPIN_GUARD_TEST)
+                .filter(taskType -> taskType != TaskType.YIPIN_GUARD_TEST
+                        && taskType != TaskType.G056_DOUBLE_EXPERIENCE_ACCEPTANCE)
                 .filter(taskType -> taskType != TaskType.XIULUO)
                 .toList();
     }

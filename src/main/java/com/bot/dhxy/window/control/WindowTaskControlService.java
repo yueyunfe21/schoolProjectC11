@@ -8,6 +8,7 @@ import com.bot.dhxy.cloud.turn.protocol.TurnTaskCode;
 import com.bot.dhxy.cloud.turn.protocol.TurnTaskQueueFailurePolicy;
 import com.bot.dhxy.cloud.turn.protocol.TurnTaskStartAck;
 import com.bot.dhxy.cloud.turn.protocol.TurnTaskStartRequest;
+import com.bot.dhxy.cloud.turn.protocol.TurnTaskRuntimeSettings;
 import com.bot.dhxy.cloud.turn.protocol.TurnTaskTerminalResult;
 import com.bot.dhxy.cloud.turn.protocol.TurnWindowMetadata;
 import com.bot.dhxy.cloud.turn.protocol.TurnWindowRect;
@@ -26,6 +27,7 @@ import com.bot.dhxy.window.execution.WindowTaskSnapshot;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
+import com.bot.dhxy.window.model.WindowTaskRunProgress;
 import com.bot.dhxy.window.observation.StartupCombatGateService;
 import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
@@ -44,9 +46,11 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -57,6 +61,7 @@ import java.util.function.Supplier;
 public class WindowTaskControlService {
 
     private static final Duration REMOTE_START_ACK_TIMEOUT = Duration.ofSeconds(10L);
+
     private final MultiWindowTaskManager taskManager;
     private final TurnModeGuard turnModeGuard;
     private final CloudTurnSidecarLauncher sidecarLauncher;
@@ -68,6 +73,7 @@ public class WindowTaskControlService {
     private final AtomicBoolean remoteStartInFlight = new AtomicBoolean(false);
     private final AtomicLong remoteStartEpoch = new AtomicLong(0L);
     private final Object remoteStartLifecycleMonitor = new Object();
+    private final Map<String, String> remoteTerminalRecoveryPending = new ConcurrentHashMap<>();
 
     @Autowired
     public WindowTaskControlService(MultiWindowTaskManager taskManager,
@@ -247,7 +253,7 @@ public class WindowTaskControlService {
                     TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE, queue, teamSessionKey,
                     new LocalTeamRolePreflightService.Preflight(
                             leaderWindowId, LocalTeamRolePreflightService.Role.SOLO, null, false, null),
-                    startEpoch, 0L, TaskStartupMode.NORMAL, leaderWindowId));
+                    startEpoch, 0L, TaskStartupMode.NORMAL, leaderWindowId, null));
             List<CompletableFuture<WindowTaskCommandDetail>> memberStarts = ids.stream()
                     .filter(windowId -> !leaderWindowId.equals(windowId))
                     .map(windowId -> CompletableFuture.supplyAsync(() -> startOneRemote(
@@ -255,13 +261,88 @@ public class WindowTaskControlService {
                             TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE, queue, teamSessionKey,
                             new LocalTeamRolePreflightService.Preflight(
                                     windowId, LocalTeamRolePreflightService.Role.SOLO, null, false, null),
-                            startEpoch, 0L, TaskStartupMode.NORMAL, leaderWindowId)))
+                            startEpoch, 0L, TaskStartupMode.NORMAL, leaderWindowId, null)))
                     .toList();
             details.addAll(memberStarts.stream().map(CompletableFuture::join).toList());
             int successCount = (int) details.stream().filter(WindowTaskCommandDetail::isSuccess).count();
             log.info("Start explicit Yipin Guard test: leaderWindowId={} windows={} successCount={}",
                     leaderWindowId, ids, successCount);
             return buildResult(ids.size(), successCount, "一品侍卫测试启动完成", details);
+        } finally {
+            remoteStartInFlight.set(false);
+        }
+    }
+
+    /** Starts the one-shot G056 acceptance for one exact leader window. */
+    public WindowTaskCommandResult startG056DoubleExperienceAcceptance(String windowId) {
+        return startG056DoubleExperienceAcceptance(List.of(windowId), windowId);
+    }
+
+    /**
+     * Starts a real G056 team acceptance: members enter their production AUTO_BATTLE queue first,
+     * then the exact leader runs the one-shot maintenance chain that opens the game broadcast.
+     */
+    public WindowTaskCommandResult startG056DoubleExperienceAcceptance(Collection<String> windowIds,
+                                                                       String leaderWindowId) {
+        List<String> ids = normalizeWindowIds(windowIds);
+        if (ids.isEmpty() || leaderWindowId == null || !ids.contains(leaderWindowId)) {
+            return WindowTaskCommandResult.empty("G056验收缺少精确队长窗口", getSnapshots());
+        }
+        List<String> activeWindows = ids.stream()
+                .filter(windowId -> turnModeGuard.remoteState(windowId).registered())
+                .toList();
+        if (!activeWindows.isEmpty()) {
+            return remoteStartRejected(ids, "G056验收窗口已有任务运行：" + activeWindows);
+        }
+        long startEpoch = beginRemoteStart();
+        if (startEpoch < 0L) {
+            return remoteStartRejected(ids, "已有启动流程正在进行");
+        }
+        try {
+            CloudTurnSidecarLauncher.Readiness readiness =
+                    sidecarLauncher.ensureReady(() -> isRemoteStartCancelled(startEpoch));
+            if (!readiness.ready()) {
+                return remoteStartUnavailable(ids, readiness.message());
+            }
+            String teamSessionKey = "g056-double-experience-" + UUID.randomUUID();
+            List<WindowTaskCommandDetail> details = new ArrayList<>();
+            List<String> startedMembers = new ArrayList<>();
+            for (String memberWindowId : ids) {
+                if (leaderWindowId.equals(memberWindowId)) {
+                    continue;
+                }
+                WindowTaskCommandDetail member = startOneRemote(
+                        turnModeGuard.deviceId(), memberWindowId, List.of(TurnTaskCode.AUTO_BATTLE), List.of(0),
+                        TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE,
+                        WindowTaskQueue.single(TaskType.AUTO_BATTLE), teamSessionKey,
+                        new LocalTeamRolePreflightService.Preflight(
+                                memberWindowId, LocalTeamRolePreflightService.Role.MEMBER, null, false, null),
+                        startEpoch, 0L, TaskStartupMode.NORMAL, leaderWindowId, null);
+                details.add(member);
+                if (member.isSuccess()) {
+                    startedMembers.add(memberWindowId);
+                }
+            }
+            if (startedMembers.size() != ids.size() - 1) {
+                stopRemoteWindows(startedMembers);
+                return buildResult(ids.size(), startedMembers.size(),
+                        "G056队员广播消费者启动失败", details);
+            }
+
+            WindowTaskCommandDetail leader = startOneRemote(
+                    turnModeGuard.deviceId(), leaderWindowId,
+                    List.of(TurnTaskCode.G056_DOUBLE_EXPERIENCE_ACCEPTANCE), List.of(1),
+                    TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE,
+                    WindowTaskQueue.single(TaskType.G056_DOUBLE_EXPERIENCE_ACCEPTANCE), teamSessionKey,
+                    new LocalTeamRolePreflightService.Preflight(
+                            leaderWindowId, LocalTeamRolePreflightService.Role.LEADER, null, false, null),
+                    startEpoch, 0L, TaskStartupMode.NORMAL, leaderWindowId, null);
+            details.add(leader);
+            if (!leader.isSuccess()) {
+                stopRemoteWindows(startedMembers);
+            }
+            int successCount = (int) details.stream().filter(WindowTaskCommandDetail::isSuccess).count();
+            return buildResult(ids.size(), successCount, "G056领双队伍验收启动完成", details);
         } finally {
             remoteStartInFlight.set(false);
         }
@@ -481,7 +562,7 @@ public class WindowTaskControlService {
                 details.add(startOneRemote(deviceId, windowId, List.of(code), toTaskMaxRuns(List.of(code)),
                         TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE, queue, teamSessionKey,
                         preflightByWindow.getOrDefault(windowId, unknownPreflight(windowId)), startEpoch,
-                        roleResolutionDeadlineNanos, startupMode, null));
+                        roleResolutionDeadlineNanos, startupMode, null, null));
             }
             List<CompletableFuture<WindowTaskCommandDetail>> startFutures = new ArrayList<>();
             for (String windowId : startOrder) {
@@ -508,7 +589,7 @@ public class WindowTaskControlService {
                         deviceId, windowId, List.of(code), toTaskMaxRuns(List.of(code)),
                         TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE, queue, teamSessionKey,
                         preflightByWindow.getOrDefault(windowId, unknownPreflight(windowId)), startEpoch,
-                        roleResolutionDeadlineNanos, startupMode, null)));
+                        roleResolutionDeadlineNanos, startupMode, null, null)));
             }
             details.addAll(startFutures.stream().map(CompletableFuture::join).toList());
             int successCount = (int) details.stream().filter(WindowTaskCommandDetail::isSuccess).count();
@@ -589,7 +670,7 @@ public class WindowTaskControlService {
             details.add(startOneRemote(
                     deviceId, windowId, taskCodes, taskMaxRuns, failurePolicy, queue,
                     teamSessionKey, preflightByWindow.getOrDefault(windowId, unknownPreflight(windowId)),
-                    startEpoch, roleResolutionDeadlineNanos, startupMode, null));
+                    startEpoch, roleResolutionDeadlineNanos, startupMode, null, null));
         }
         List<CompletableFuture<WindowTaskCommandDetail>> startFutures = new ArrayList<>();
         for (String windowId : startOrder) {
@@ -604,7 +685,7 @@ public class WindowTaskControlService {
             startFutures.add(CompletableFuture.supplyAsync(() -> startOneRemote(
                     deviceId, windowId, taskCodes, taskMaxRuns, failurePolicy, queue,
                     teamSessionKey, preflightByWindow.getOrDefault(windowId, unknownPreflight(windowId)),
-                    startEpoch, roleResolutionDeadlineNanos, startupMode, null)));
+                    startEpoch, roleResolutionDeadlineNanos, startupMode, null, null)));
         }
         details.addAll(startFutures.stream().map(CompletableFuture::join).toList());
         int successCount = (int) details.stream().filter(WindowTaskCommandDetail::isSuccess).count();
@@ -648,13 +729,22 @@ public class WindowTaskControlService {
                                                    long startEpoch,
                                                    long roleResolutionDeadlineNanos,
                                                    TaskStartupMode startupMode,
-                                                   String explicitLeaderWindowId) {
+                                                   String explicitLeaderWindowId,
+                                                   TurnTaskRuntimeSettings retainedRuntimeSettings) {
         if (isRemoteStartCancelled(startEpoch)) {
             return WindowTaskCommandDetail.failed(windowId, "远程启动已被暂停或停止");
         }
         WindowTaskRunner runner = taskManager.getRunner(windowId).orElse(null);
         if (runner == null) {
             return WindowTaskCommandDetail.failed(windowId, "窗口不存在");
+        }
+        WindowRuntimeContext context = runner.getWindowContext();
+        WindowTaskRunProgress resumeProgress = resolvePauseResumeProgress(
+                startupMode, taskCodes, taskMaxRuns, context.getPausedTaskRunProgress());
+        List<Integer> taskInitialCompletedRuns = toTaskInitialCompletedRuns(
+                taskCodes, resumeProgress);
+        if (startupMode != TaskStartupMode.PAUSE_RESUME) {
+            context.clearPausedTaskRunProgress("cold task start");
         }
         TurnModeGuard.RemoteLoopState previous = turnModeGuard.remoteState(windowId);
         if (previous.registered()) {
@@ -673,21 +763,48 @@ public class WindowTaskControlService {
         // This is deliberately before startRemote(); markRemoteStarted() runs after ACK and must not erase the
         // newly captured startup screen state.
         runner.prepareRemoteFreshStart("new remote task start pending Cloud acknowledgement");
-        WindowRuntimeContext context = runner.getWindowContext();
         Supplier<TurnWindowMetadata> metadataSupplier = explicitLeaderWindowId == null
                 ? new RemoteTurnMetadataSupplier(deviceId, context, bindingRefreshService,
                         teamSessionKey, teamPreflight, startupMode)
                 : new RemoteTurnMetadataSupplier(deviceId, context, bindingRefreshService, teamSessionKey,
                         context.getWindowId().equals(explicitLeaderWindowId) ? "LEADER" : "MEMBER",
                         explicitLeaderWindowId, !context.getWindowId().equals(explicitLeaderWindowId), startupMode);
+        TurnTaskRuntimeSettings runtimeSettings = retainedRuntimeSettings == null
+                ? buildRuntimeSettingsSnapshot(botProperties)
+                : retainedRuntimeSettings;
+        log.info("Remote task runtime settings: windowId={} healPetMs={} repairMs={} maintenanceImmediate={} "
+                        + "summonClean={}/{} startupPreparation={} doubleExperienceClaim={} leaderBox={} memberBox={} "
+                        + "supply=playerHp:{}/{} playerMp:{}/{} petHp:{}/{} petMp:{}/{}",
+                windowId,
+                runtimeSettings.healPetMaintenanceIntervalMs(),
+                runtimeSettings.repairEquipmentMaintenanceIntervalMs(),
+                runtimeSettings.maintenanceRunImmediatelyOnStart(),
+                runtimeSettings.summonSkillCleanEnabled(), runtimeSettings.summonSkillCleanIntervalMs(),
+                runtimeSettings.taskStartupPreparationEnabled(),
+                runtimeSettings.doubleExperienceClaimEnabled(),
+                runtimeSettings.leaderCommonBoxEnabled(), runtimeSettings.memberCommonBoxEnabled(),
+                runtimeSettings.playerHpSupplyEnabled(), runtimeSettings.playerHpSupplyThreshold(),
+                runtimeSettings.playerMpSupplyEnabled(), runtimeSettings.playerMpSupplyThreshold(),
+                runtimeSettings.petHpSupplyEnabled(), runtimeSettings.petHpSupplyThreshold(),
+                runtimeSettings.petMpSupplyEnabled(), runtimeSettings.petMpSupplyThreshold());
         TurnTaskStartRequest startRequest = new TurnTaskStartRequest(
-                "remote-turn-" + UUID.randomUUID(), taskCodes, taskMaxRuns, failurePolicy);
+                "remote-turn-" + UUID.randomUUID(), taskCodes, taskMaxRuns, taskInitialCompletedRuns, failurePolicy,
+                runtimeSettings);
+        log.info("Remote task initial progress: windowId={} startupMode={} taskCodes={} initialCompletedRuns={}",
+                windowId, startupMode, taskCodes, taskInitialCompletedRuns);
+        RemoteTerminalRecoveryPlan recoveryPlan = new RemoteTerminalRecoveryPlan(
+                deviceId, windowId, List.copyOf(taskCodes), List.copyOf(taskMaxRuns), failurePolicy, queue,
+                teamSessionKey, teamPreflight, startEpoch, roleResolutionDeadlineNanos,
+                explicitLeaderWindowId, runtimeSettings);
         try {
             WindowTurnLoop loop = turnModeGuard.startRemote(deviceId, windowId, metadataSupplier, startRequest);
             if (isRemoteStartCancelled(startEpoch)) {
                 turnModeGuard.stopRemote(windowId);
                 return WindowTaskCommandDetail.failed(windowId, "远程启动已被暂停或停止");
             }
+            CompletableFuture<Void> startProjection = loop.startAcknowledgement().thenAccept(startAck -> projectAcknowledgedRemoteStart(
+                    runner, context, loop, queue, teamPreflight, explicitLeaderWindowId,
+                    startEpoch, startRequest.startRequestId(), startAck, recoveryPlan, resumeProgress, 1));
             if (!loop.awaitStartAcknowledged(REMOTE_START_ACK_TIMEOUT)) {
                 Throwable failure = loop.lastFailure();
                 if (loop.isRunning()) {
@@ -703,20 +820,7 @@ public class WindowTaskControlService {
                 }
                 return WindowTaskCommandDetail.failed(windowId, "远程启动未确认：" + reason);
             }
-            synchronized (remoteStartLifecycleMonitor) {
-                if (isRemoteStartCancelled(startEpoch)) {
-                    turnModeGuard.stopRemote(windowId);
-                    return WindowTaskCommandDetail.failed(windowId, "远程启动已被暂停或停止");
-                }
-                WindowTaskQueue effectiveQueue = projectEffectiveQueue(queue,
-                        loop.acceptedStartAck().orElseThrow(
-                                () -> new IllegalStateException("Cloud确认启动但未保留start ACK")));
-                runner.markRemoteStarted(effectiveQueue);
-                context.setRole(acknowledgedWindowRole(windowId, teamPreflight, explicitLeaderWindowId));
-            }
-            RemoteTaskHandle startedHandle = runner.getRemoteTaskHandle();
-            loop.taskTerminalResult().thenAccept(
-                    terminal -> projectRemoteTerminal(runner, startedHandle, terminal));
+            startProjection.join();
             return WindowTaskCommandDetail.success(windowId, "Cloud已确认远程任务启动");
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
@@ -728,10 +832,99 @@ public class WindowTaskControlService {
         }
     }
 
+    /**
+     * Projects one exact Cloud start ACK without blocking the batch-start caller. A local projection exception is
+     * retried with the same bounded per-window policy; it never stops the already-live Turn loop.
+     */
+    private void projectAcknowledgedRemoteStart(WindowTaskRunner runner,
+                                                WindowRuntimeContext context,
+                                                WindowTurnLoop loop,
+                                                WindowTaskQueue requestedQueue,
+                                                LocalTeamRolePreflightService.Preflight teamPreflight,
+                                                String explicitLeaderWindowId,
+                                                long startEpoch,
+                                                String startRequestId,
+                                                TurnTaskStartAck startAck,
+                                                RemoteTerminalRecoveryPlan recoveryPlan,
+                                                WindowTaskRunProgress resumeProgress,
+                                                int attempt) {
+        if (remoteStartEpoch.get() != startEpoch || !loop.isRunning()) {
+            log.info("Ignore late Cloud start ACK after cancellation/replacement: windowId={} startRequestId={} epoch={}",
+                    context.getWindowId(), startRequestId, startEpoch);
+            return;
+        }
+        try {
+            WindowTaskQueue effectiveQueue = projectEffectiveQueue(requestedQueue, startAck);
+            synchronized (remoteStartLifecycleMonitor) {
+                if (remoteStartEpoch.get() != startEpoch || !loop.isRunning()) {
+                    return;
+                }
+                WindowTaskRunProgress effectiveProgress = resumeProgress != null
+                        && resumeProgress.getTaskType() == effectiveQueue.firstTaskType()
+                        ? resumeProgress
+                        : null;
+                runner.markRemoteStarted(effectiveQueue, effectiveProgress);
+                context.setRole(acknowledgedWindowRole(
+                        context.getWindowId(), teamPreflight, explicitLeaderWindowId));
+            }
+            RemoteTaskHandle startedHandle = runner.getRemoteTaskHandle();
+            loop.taskTerminalResult().thenAccept(
+                    terminal -> projectRemoteTerminal(runner, startedHandle, loop, terminal, recoveryPlan));
+            log.info("Cloud start ACK projected asynchronously: windowId={} startRequestId={} attempt={}",
+                    context.getWindowId(), startRequestId, attempt);
+        } catch (RuntimeException failure) {
+            if (remoteStartEpoch.get() != startEpoch || !loop.isRunning()) {
+                return;
+            }
+            long retryDelayMs = WindowTurnLoop.failureRetryDelayMs(context.getWindowId(), attempt);
+            log.error("Cloud start ACK local projection failed; retained and retrying: windowId={} "
+                            + "startRequestId={} attempt={} retryDelayMs={} type={} message={}",
+                    context.getWindowId(), startRequestId, attempt, retryDelayMs,
+                    failure.getClass().getName(), failure.getMessage(), failure);
+            CompletableFuture.delayedExecutor(retryDelayMs, TimeUnit.MILLISECONDS).execute(
+                    () -> projectAcknowledgedRemoteStart(
+                            runner, context, loop, requestedQueue, teamPreflight, explicitLeaderWindowId,
+                            startEpoch, startRequestId, startAck, recoveryPlan, resumeProgress, attempt + 1));
+        }
+    }
+
+    /**
+     * Freeze the current JavaFX-backed settings for one exact remote start.
+     *
+     * <p>The returned value travels with the start request. Cloud binds it to the task run instead
+     * of reading or mutating a process-global configuration bean.</p>
+     *
+     * @param botProperties live Client configuration already updated by the JavaFX settings page.
+     * @return immutable snapshot of every UI-editable setting whose behavior is owned by Cloud.
+     */
+    static TurnTaskRuntimeSettings buildRuntimeSettingsSnapshot(BotProperties botProperties) {
+        Objects.requireNonNull(botProperties, "botProperties");
+        return new TurnTaskRuntimeSettings(
+                botProperties.isSummonSkillCleanEnabled(),
+                botProperties.getSummonSkillCleanIntervalMs(),
+                botProperties.getXiuluoHealPetMaintenanceIntervalMs(),
+                botProperties.getXiuluoRepairEquipmentMaintenanceIntervalMs(),
+                botProperties.isXiuluoMaintenanceRunImmediatelyOnStart(),
+                botProperties.isLeaderCommonBoxEnabled(),
+                botProperties.isMemberCommonBoxEnabled(),
+                botProperties.isTaskStartupPreparationEnabled(),
+                botProperties.isDoubleExperienceClaimEnabled(),
+                botProperties.isPlayerHpSupplyEnabled(),
+                botProperties.getPlayerHpSupplyThreshold(),
+                botProperties.isPlayerMpSupplyEnabled(),
+                botProperties.getPlayerMpSupplyThreshold(),
+                botProperties.isPetHpSupplyEnabled(),
+                botProperties.getPetHpSupplyThreshold(),
+                botProperties.isPetMpSupplyEnabled(),
+                botProperties.getPetMpSupplyThreshold());
+    }
+
     private void projectRemoteTerminal(
             WindowTaskRunner runner,
             RemoteTaskHandle expectedHandle,
-            TurnTaskTerminalResult terminal) {
+            WindowTurnLoop loop,
+            TurnTaskTerminalResult terminal,
+            RemoteTerminalRecoveryPlan recoveryPlan) {
         if (runner.getRemoteTaskHandle() != expectedHandle) {
             log.info("Ignore stale remote terminal after task replacement: windowId={} startRequestId={} status={}",
                     runner.getWindowContext().getWindowId(), terminal.startRequestId(), terminal.status());
@@ -739,15 +932,93 @@ public class WindowTaskControlService {
         }
         if (terminal.status() == TurnTaskTerminalResult.Status.FAILED
                 || terminal.status() == TurnTaskTerminalResult.Status.SKIPPED) {
-            String reason = terminal.reason() == null || terminal.reason().isBlank()
-                    ? ""
-                    : "，原因：" + terminal.reason();
-            runner.markRemoteFailed(new IllegalStateException(
-                    "Cloud任务终止：" + terminal.status() + " (" + terminal.startRequestId() + ")" + reason));
+            String windowId = runner.getWindowContext().getWindowId();
+            RemoteTerminalRecoveryPlan remainingPlan = recoveryPlan.remainingFrom(loop.recoverableQueueIndex());
+            if (remoteStartEpoch.get() != recoveryPlan.startEpoch()) {
+                log.info("Ignore recoverable terminal after explicit cancellation/replacement: windowId={} "
+                                + "startRequestId={} status={} epoch={}",
+                        windowId, terminal.startRequestId(), terminal.status(), recoveryPlan.startEpoch());
+                return;
+            }
+            String previousRecoveryStartRequestId = remoteTerminalRecoveryPending.put(
+                    windowId, terminal.startRequestId());
+            if (terminal.startRequestId().equals(previousRecoveryStartRequestId)) {
+                log.info("Recoverable Cloud terminal already has a pending restart: windowId={} startRequestId={} "
+                                + "status={}",
+                        windowId, terminal.startRequestId(), terminal.status());
+                return;
+            }
+            long retryDelayMs = WindowTurnLoop.failureRetryDelayMs(windowId, 1);
+            log.warn("Recoverable Cloud terminal retained; restarting exact window task: windowId={} "
+                            + "startRequestId={} status={} reason={} recoveryQueue={} retryDelayMs={}",
+                    windowId, terminal.startRequestId(), terminal.status(), terminal.reason(),
+                    remainingPlan.taskCodes(), retryDelayMs);
+            CompletableFuture.delayedExecutor(retryDelayMs, TimeUnit.MILLISECONDS).execute(
+                    () -> recoverRemoteTerminal(remainingPlan, terminal, 1));
             return;
         }
         runner.markRemoteStopped("Cloud任务终止：" + terminal.status()
                 + " (" + terminal.startRequestId() + ")");
+    }
+
+    /**
+     * Replace a recoverable terminal Cloud run without exposing an abnormal/stopped window between runs.
+     *
+     * @param recoveryPlan immutable task, role, team and UI-setting snapshot from the accepted run
+     * @param terminal terminal being recovered; used only for correlated diagnostics
+     * @param attempt consecutive restart attempt starting at one
+     */
+    private void recoverRemoteTerminal(RemoteTerminalRecoveryPlan recoveryPlan,
+                                       TurnTaskTerminalResult terminal,
+                                       int attempt) {
+        String windowId = recoveryPlan.windowId();
+        if (!terminal.startRequestId().equals(remoteTerminalRecoveryPending.get(windowId))) {
+            log.info("Skip superseded recoverable-terminal restart: windowId={} startRequestId={} status={}",
+                    windowId, terminal.startRequestId(), terminal.status());
+            return;
+        }
+        if (remoteStartEpoch.get() != recoveryPlan.startEpoch()) {
+            remoteTerminalRecoveryPending.remove(windowId, terminal.startRequestId());
+            log.info("Cancel recoverable-terminal restart after explicit lifecycle change: windowId={} "
+                            + "startRequestId={} status={} epoch={}",
+                    windowId, terminal.startRequestId(), terminal.status(), recoveryPlan.startEpoch());
+            return;
+        }
+        try {
+            TurnModeGuard.RemoteLoopState previous = turnModeGuard.remoteState(windowId);
+            if (previous.registered() && !turnModeGuard.awaitAndRemoveStoppedRemote(windowId)) {
+                throw new IllegalStateException("terminal remote loop disappeared before exact removal");
+            }
+            WindowTaskCommandDetail restarted = startOneRemote(
+                    recoveryPlan.deviceId(), windowId, recoveryPlan.taskCodes(), recoveryPlan.taskMaxRuns(),
+                    recoveryPlan.failurePolicy(), recoveryPlan.queue(), recoveryPlan.teamSessionKey(),
+                    recoveryPlan.teamPreflight(), recoveryPlan.startEpoch(),
+                    recoveryPlan.roleResolutionDeadlineNanos(), TaskStartupMode.PAUSE_RESUME,
+                    recoveryPlan.explicitLeaderWindowId(), recoveryPlan.runtimeSettings());
+            if (!restarted.isSuccess()) {
+                throw new IllegalStateException(restarted.getMessage());
+            }
+            remoteTerminalRecoveryPending.remove(windowId, terminal.startRequestId());
+            log.info("Recoverable Cloud terminal restart submitted: windowId={} previousStartRequestId={} "
+                            + "status={} attempt={}",
+                    windowId, terminal.startRequestId(), terminal.status(), attempt);
+        } catch (RuntimeException recoveryFailure) {
+            if (remoteStartEpoch.get() != recoveryPlan.startEpoch()) {
+                remoteTerminalRecoveryPending.remove(windowId, terminal.startRequestId());
+                return;
+            }
+            if (!terminal.startRequestId().equals(remoteTerminalRecoveryPending.get(windowId))) {
+                return;
+            }
+            long retryDelayMs = WindowTurnLoop.failureRetryDelayMs(windowId, attempt + 1);
+            log.error("Recoverable Cloud terminal restart failed; window remains owned and will retry: "
+                            + "windowId={} previousStartRequestId={} status={} attempt={} retryDelayMs={} "
+                            + "type={} message={}",
+                    windowId, terminal.startRequestId(), terminal.status(), attempt, retryDelayMs,
+                    recoveryFailure.getClass().getName(), recoveryFailure.getMessage(), recoveryFailure);
+            CompletableFuture.delayedExecutor(retryDelayMs, TimeUnit.MILLISECONDS).execute(
+                    () -> recoverRemoteTerminal(recoveryPlan, terminal, attempt + 1));
+        }
     }
 
     public WindowTaskCommandResult pauseRemoteWindows(Collection<String> windowIds) {
@@ -863,7 +1134,9 @@ public class WindowTaskControlService {
             case XINSHOU -> TurnTaskCode.XINSHOU;
             case XINSHOU_TRAINING -> TurnTaskCode.XINSHOU_TRAINING;
             case CATCH_GHOST -> TurnTaskCode.CATCH_GHOST;
+            case GHOST_KING -> TurnTaskCode.GHOST_KING;
             case YIPIN_GUARD_TEST -> TurnTaskCode.YIPIN_GUARD_TEST;
+            case G056_DOUBLE_EXPERIENCE_ACCEPTANCE -> TurnTaskCode.G056_DOUBLE_EXPERIENCE_ACCEPTANCE;
             case WILD_BATTLE -> TurnTaskCode.WILD_BATTLE;
             case TIANTING -> TurnTaskCode.TIANTING;
             case AUTO_BATTLE -> TurnTaskCode.AUTO_BATTLE;
@@ -892,7 +1165,9 @@ public class WindowTaskControlService {
             case XINSHOU -> TaskType.XINSHOU;
             case XINSHOU_TRAINING -> TaskType.XINSHOU_TRAINING;
             case CATCH_GHOST -> TaskType.CATCH_GHOST;
+            case GHOST_KING -> TaskType.GHOST_KING;
             case YIPIN_GUARD_TEST -> TaskType.YIPIN_GUARD_TEST;
+            case G056_DOUBLE_EXPERIENCE_ACCEPTANCE -> TaskType.G056_DOUBLE_EXPERIENCE_ACCEPTANCE;
             case WILD_BATTLE -> TaskType.WILD_BATTLE;
             case TIANTING -> TaskType.TIANTING;
             case AUTO_BATTLE -> TaskType.AUTO_BATTLE;
@@ -906,7 +1181,9 @@ public class WindowTaskControlService {
             case XIULUO_V2 -> botProperties.getXiuluoMaxRuns();
             case XINSHOU_TRAINING -> botProperties.getXinshouTrainingMaxRuns();
             case CATCH_GHOST -> botProperties.getCatchGhostMaxRuns();
+            case GHOST_KING -> botProperties.getGhostKingMaxRuns();
             case YIPIN_GUARD_TEST -> 1;
+            case G056_DOUBLE_EXPERIENCE_ACCEPTANCE -> 1;
             case WUHUAN_V2 -> botProperties.getWuhuanMaxRuns();
             case WUHUAN_V3 -> botProperties.getWuhuanMaxRuns();
             case XINSHOU -> 1;
@@ -925,7 +1202,11 @@ public class WindowTaskControlService {
 
     private void synchronizeRemoteRuntimeStates() {
         for (WindowTaskRunner runner : taskManager.getAllRunners()) {
-            TurnModeGuard.RemoteLoopState state = turnModeGuard.remoteState(runner.getWindowContext().getWindowId());
+            String windowId = runner.getWindowContext().getWindowId();
+            if (remoteTerminalRecoveryPending.containsKey(windowId)) {
+                continue;
+            }
+            TurnModeGuard.RemoteLoopState state = turnModeGuard.remoteState(windowId);
             if (!state.registered()) {
                 continue;
             }
@@ -1049,6 +1330,21 @@ public class WindowTaskControlService {
         }
         Map<String, LocalTeamRolePreflightService.Preflight> retained =
                 retainedPauseResumePreflights(contexts, taskTypes);
+        retained = localTeamRolePreflightService.attachConfirmedLeaderAnchorGroups(
+                contexts, retained, () -> Thread.currentThread().isInterrupted());
+        retained.values().stream()
+                .filter(preflight -> preflight.groupHash() != null)
+                .collect(java.util.stream.Collectors.groupingBy(
+                        LocalTeamRolePreflightService.Preflight::groupHash))
+                .forEach((groupHash, group) -> {
+                    long leaders = group.stream()
+                            .filter(preflight -> preflight.role() == LocalTeamRolePreflightService.Role.LEADER)
+                            .count();
+                    if (leaders != 1L) {
+                        throw new IllegalStateException(
+                                "暂停热恢复同队分组不自洽：groupHash=" + groupHash + " leaders=" + leaders);
+                    }
+                });
         log.info("Pause-resume retained lifecycle accepted: windows={} roles={} tasks={}",
                 windowIds,
                 retained.entrySet().stream()
@@ -1065,7 +1361,6 @@ public class WindowTaskControlService {
             throw new IllegalStateException("暂停热恢复没有保留的窗口身份");
         }
         Map<String, LocalTeamRolePreflightService.Preflight> retained = new LinkedHashMap<>();
-        boolean teamAuthorityRequired = false;
         for (WindowRuntimeContext context : contexts) {
             if (context == null || context.getWindowId() == null || context.getWindowId().isBlank()) {
                 throw new IllegalStateException("暂停热恢复存在无效窗口身份");
@@ -1095,29 +1390,53 @@ public class WindowTaskControlService {
                         ? LocalTeamRolePreflightService.Role.LEADER
                         : LocalTeamRolePreflightService.Role.MEMBER;
             }
-            teamAuthorityRequired |= requiresUniqueLeader(taskType);
             retained.put(windowId, new LocalTeamRolePreflightService.Preflight(
                     windowId, role, null, false, null));
-        }
-        if (teamAuthorityRequired) {
-            long leaderCount = retained.values().stream()
-                    .filter(preflight -> preflight.role() == LocalTeamRolePreflightService.Role.LEADER)
-                    .count();
-            boolean includesSolo = retained.values().stream()
-                    .anyMatch(preflight -> preflight.role() == LocalTeamRolePreflightService.Role.SOLO);
-            if (leaderCount != 1L || includesSolo) {
-                throw new IllegalStateException(
-                        "暂停热恢复组队权限不自洽：要求唯一 LEADER，actualLeaders=" + leaderCount);
-            }
         }
         return Map.copyOf(retained);
     }
 
     private static boolean requiresUniqueLeader(TaskType taskType) {
         return switch (taskType) {
-            case WUBEI, XIULUO_V2, XINSHOU_TRAINING, CATCH_GHOST, TIANTING -> true;
+            case WUBEI, XIULUO_V2, XINSHOU_TRAINING, CATCH_GHOST, GHOST_KING, TIANTING -> true;
             default -> false;
         };
+    }
+
+    /** Accept a pause counter only for the same task and unchanged finite total. */
+    static WindowTaskRunProgress resolvePauseResumeProgress(
+            TaskStartupMode startupMode,
+            List<TurnTaskCode> taskCodes,
+            List<Integer> taskMaxRuns,
+            WindowTaskRunProgress pausedProgress) {
+        if (startupMode != TaskStartupMode.PAUSE_RESUME || pausedProgress == null
+                || taskCodes == null || taskMaxRuns == null || taskCodes.size() != taskMaxRuns.size()) {
+            return null;
+        }
+        for (int index = 0; index < taskCodes.size(); index++) {
+            Integer maxRuns = taskMaxRuns.get(index);
+            if (maxRuns != null && maxRuns > 0
+                    && pausedProgress.getTaskType() == fromTurnTaskCode(taskCodes.get(index))
+                    && pausedProgress.getTotalRuns() == maxRuns
+                    && pausedProgress.getCompletedRuns() <= maxRuns) {
+                return pausedProgress;
+            }
+        }
+        return null;
+    }
+
+    /** Build the queue-aligned initial counter list; one pause snapshot may seed only one queue element. */
+    static List<Integer> toTaskInitialCompletedRuns(
+            List<TurnTaskCode> taskCodes, WindowTaskRunProgress resumeProgress) {
+        List<Integer> initialCompletedRuns = new ArrayList<>(taskCodes.size());
+        boolean applied = false;
+        for (TurnTaskCode taskCode : taskCodes) {
+            boolean matches = !applied && resumeProgress != null
+                    && resumeProgress.getTaskType() == fromTurnTaskCode(taskCode);
+            initialCompletedRuns.add(matches ? resumeProgress.getCompletedRuns() : 0);
+            applied |= matches;
+        }
+        return List.copyOf(initialCompletedRuns);
     }
 
     private TaskStartupMode awaitColdStartCombatExit(List<String> windowIds,
@@ -1140,6 +1459,7 @@ public class WindowTaskControlService {
             List<String> windowIds, String teamSessionKey, long startEpoch, long roleResolutionDeadlineNanos) {
         Map<String, LocalTeamRolePreflightService.Preflight> knownRoles = new LinkedHashMap<>();
         List<WindowRuntimeContext> contexts = new ArrayList<>();
+        List<WindowRuntimeContext> allContexts = new ArrayList<>();
         for (String windowId : windowIds) {
             TaskType taskType = taskManager.getSnapshot(windowId)
                     .map(WindowTaskSnapshot::getSelectedTaskType)
@@ -1149,19 +1469,26 @@ public class WindowTaskControlService {
                 case WUHuan_V2, WUHUAN_V3, XINSHOU -> LocalTeamRolePreflightService.Role.SOLO;
                 default -> null;
             };
+            WindowRuntimeContext context = taskManager.getRunner(windowId)
+                    .map(WindowTaskRunner::getWindowContext)
+                    .orElse(null);
+            if (context != null) {
+                allContexts.add(context);
+            }
             if (fixedRole != null) {
                 knownRoles.put(windowId, new LocalTeamRolePreflightService.Preflight(
                         windowId, fixedRole, null, false, null));
                 log.info("skip local team-role panel probe for fixed task role: windowId={} taskType={} role={}",
                         windowId, taskType, fixedRole);
-            } else {
-                taskManager.getRunner(windowId).ifPresent(runner -> contexts.add(runner.getWindowContext()));
+            } else if (context != null) {
+                contexts.add(context);
             }
         }
         try {
             knownRoles.putAll(localTeamRolePreflightService.prepareBatch(
                     contexts, teamSessionKey, () -> isRemoteStartCancelled(startEpoch), roleResolutionDeadlineNanos));
-            return Map.copyOf(knownRoles);
+            return localTeamRolePreflightService.attachConfirmedLeaderAnchorGroups(
+                    allContexts, knownRoles, () -> isRemoteStartCancelled(startEpoch));
         } catch (LocalTeamRolePreflightService.PreflightTimeoutException timeout) {
             throw timeout;
         } catch (RuntimeException failure) {
@@ -1189,6 +1516,7 @@ public class WindowTaskControlService {
 
     private void cancelPendingRemoteStarts(String reason) {
         long cancelledEpoch = remoteStartEpoch.incrementAndGet();
+        remoteTerminalRecoveryPending.clear();
         log.warn("Remote start lifecycle invalidated: reason={} epoch={}", reason, cancelledEpoch);
     }
 
@@ -1239,6 +1567,50 @@ public class WindowTaskControlService {
             case LEADER, SOLO -> WindowRole.LEADER;
             case MEMBER -> WindowRole.MEMBER;
         };
+    }
+
+    /** Immutable authority and UI-setting snapshot used only to replace a recoverable Cloud terminal run. */
+    private record RemoteTerminalRecoveryPlan(
+            String deviceId,
+            String windowId,
+            List<TurnTaskCode> taskCodes,
+            List<Integer> taskMaxRuns,
+            TurnTaskQueueFailurePolicy failurePolicy,
+            WindowTaskQueue queue,
+            String teamSessionKey,
+            LocalTeamRolePreflightService.Preflight teamPreflight,
+            long startEpoch,
+            long roleResolutionDeadlineNanos,
+            String explicitLeaderWindowId,
+            TurnTaskRuntimeSettings runtimeSettings) {
+
+        /**
+         * Returns the monotonic queue suffix beginning at the exact failed child. Successful predecessors are
+         * permanently removed from the recovery submission, so a later task failure can never replay them.
+         */
+        private RemoteTerminalRecoveryPlan remainingFrom(int queueIndex) {
+            if (queueIndex <= 0) {
+                return this;
+            }
+            if (queueIndex >= taskCodes.size()
+                    || taskMaxRuns.size() != taskCodes.size()) {
+                throw new IllegalStateException("invalid remote recovery queue checkpoint: index=" + queueIndex
+                        + " taskCodes=" + taskCodes.size() + " maxRuns=" + taskMaxRuns.size()
+                        + " queue=" + queue.getTaskTypes().size());
+            }
+            List<TurnTaskCode> remainingTaskCodes = List.copyOf(taskCodes.subList(queueIndex, taskCodes.size()));
+            List<Integer> remainingTaskMaxRuns = List.copyOf(
+                    taskMaxRuns.subList(queueIndex, taskMaxRuns.size()));
+            WindowTaskQueue remainingQueue = new WindowTaskQueue(
+                    remainingTaskCodes.stream()
+                            .map(WindowTaskControlService::fromTurnTaskCode)
+                            .toList(),
+                    queue.getFailurePolicy());
+            return new RemoteTerminalRecoveryPlan(
+                    deviceId, windowId, remainingTaskCodes, remainingTaskMaxRuns, failurePolicy, remainingQueue,
+                    teamSessionKey, teamPreflight, startEpoch, roleResolutionDeadlineNanos,
+                    explicitLeaderWindowId, runtimeSettings);
+        }
     }
 
     enum StartLifecycle {

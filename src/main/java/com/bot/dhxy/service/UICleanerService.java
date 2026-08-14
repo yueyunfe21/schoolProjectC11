@@ -101,6 +101,95 @@ public class UICleanerService {
                 || findImageInCachedRegion(screenPath, "images/template/map/checkbox_unchecked.png", rect, 0.95) != null;
     }
 
+    /**
+     * Reads whether a world/local-map overlay is visible in an already captured exact-window frame.
+     *
+     * @param frame full window-relative frame; ownership stays with the caller.
+     * @param source diagnostic source only; this probe never sends input.
+     * @return {@code TRUE} when the map title or map checkbox is visible, {@code FALSE} after a
+     *         complete scan, or {@code null} when the frame/template evidence is unavailable.
+     */
+    public Boolean probeMapWindowPresent(BufferedImage frame, String source) {
+        if (frame == null) {
+            return null;
+        }
+        try {
+            BufferedImage title = ImageIO.read(new File("images/template/map/world_map_title.png"));
+            if (title == null || title.getWidth() > frame.getWidth() || title.getHeight() > frame.getHeight()) {
+                if (title != null) {
+                    title.flush();
+                }
+                return null;
+            }
+            try {
+                if (ImageFinder.find(frame, title, 0.8) != null) {
+                    log.info("UI map read-only probe present: source={} evidence=world-map-title", source);
+                    return true;
+                }
+            } finally {
+                title.flush();
+            }
+
+            int[] absoluteRect = coordinateHelper.getScaledRect(
+                    MAP_POPUP_RECT_X_OFFSET, MAP_POPUP_RECT_Y_OFFSET,
+                    MAP_POPUP_RECT_WIDTH, MAP_POPUP_RECT_HEIGHT);
+            int[] frameRect = new int[]{
+                    tracker.getWindowBaseX(), tracker.getWindowBaseY(),
+                    tracker.getWindowBaseX() + frame.getWidth(),
+                    tracker.getWindowBaseY() + frame.getHeight()
+            };
+            BufferedImage mapFooter = ImagePreprocessor.cropAbsoluteRect(frame, frameRect, absoluteRect);
+            if (mapFooter == null) {
+                return null;
+            }
+            try {
+                for (String templatePath : List.of(
+                        "images/template/map/checkbox_checked.png",
+                        "images/template/map/checkbox_unchecked.png")) {
+                    BufferedImage checkbox = ImageIO.read(new File(templatePath));
+                    if (checkbox == null || checkbox.getWidth() > mapFooter.getWidth()
+                            || checkbox.getHeight() > mapFooter.getHeight()) {
+                        if (checkbox != null) {
+                            checkbox.flush();
+                        }
+                        return null;
+                    }
+                    try {
+                        if (ImageFinder.find(mapFooter, checkbox, 0.95) != null) {
+                            log.info("UI map read-only probe present: source={} evidence={}", source, templatePath);
+                            return true;
+                        }
+                    } finally {
+                        checkbox.flush();
+                    }
+                }
+            } finally {
+                mapFooter.flush();
+            }
+            return false;
+        } catch (IOException | RuntimeException failure) {
+            log.warn("UI map read-only probe unavailable: source={} cause={}",
+                    source, failure.toString());
+            return null;
+        }
+    }
+
+    /**
+     * Closes only a currently visible map overlay and leaves business dialogs/generic windows alone.
+     *
+     * @param source diagnostic source written to the cleanup log.
+     * @return true when a visible map was closed; false when no map was visible or input failed.
+     */
+    public boolean closeMapIfPresent(String source) {
+        CleanupPass cleanupPass = CleanupPass.start();
+        if (!isWorldMapOpened(cleanupPass)) {
+            return false;
+        }
+        boolean closed = closeMapWindow(cleanupPass);
+        log.info("UI map-only cleanup finished: source={} closed={}", source, closed);
+        return closed;
+    }
+
     private Point findImageInCachedRegion(String screenPath, String templatePath, int[] rect, double matchRate) {
         try {
             BufferedImage frame = ImageIO.read(new File(screenPath));

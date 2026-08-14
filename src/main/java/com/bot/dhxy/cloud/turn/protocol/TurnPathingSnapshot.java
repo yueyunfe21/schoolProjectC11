@@ -10,8 +10,8 @@ package com.bot.dhxy.cloud.turn.protocol;
  * or intent-mismatched snapshot is ignored, not treated as business truth. {@code state} is the local
  * pathing state name (for example {@code NONE}/{@code ACTIVE}/{@code ARRIVED}/{@code STOPPED_AWAY}/
  * {@code UNKNOWN}); coordinates are logical in-game map coordinates; timestamps are wall-clock
- * milliseconds. {@code movementObservedAtMs} is {@code 0} until the local detector has proven real
- * movement for the current intent, so a terminal state without it must not be read as "arrived".</p>
+ * milliseconds. {@code coordinateMovementObserved} is Runner's latched verdict that at least one
+ * logical coordinate changed during this exact intent; no derived movement timestamp is transported.</p>
  *
  * @param state local pathing state name.
  * @param intent the pathing intent this snapshot observes, or null when idle.
@@ -19,7 +19,7 @@ package com.bot.dhxy.cloud.turn.protocol;
  * @param currentX last observed logical X, nullable.
  * @param currentY last observed logical Y, nullable.
  * @param locationChangedAtMs wall-clock time the observed map/coordinate last changed.
- * @param movementObservedAtMs wall-clock time real movement was proven for the current intent, or 0.
+ * @param coordinateMovementObserved whether Runner observed any logical-coordinate movement.
  * @param updatedAtMs wall-clock time of the latest observation.
  * @param dialogBlocking whether a fresh dialog needs task attention for this route.
  * @param dialogBlockingReason diagnostic reason for the dialog-blocking observation.
@@ -32,7 +32,7 @@ public record TurnPathingSnapshot(
         Integer currentX,
         Integer currentY,
         long locationChangedAtMs,
-        long movementObservedAtMs,
+        boolean coordinateMovementObserved,
         long updatedAtMs,
         boolean dialogBlocking,
         String dialogBlockingReason,

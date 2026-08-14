@@ -129,7 +129,7 @@ class BagServiceGuardedAdmissionTest {
     }
 
     private static BagService bagServiceWith(InputSequences inputSequences) {
-        return new BagService(inputSequences, null, null, null, null, null, null);
+        return new BagService(inputSequences, null, null, null, null, null, null, null);
     }
 
     /**
@@ -143,7 +143,7 @@ class BagServiceGuardedAdmissionTest {
         private int closeCalls;
 
         private OpenTrackingBagService(InputSequences inputSequences, Point openAnchor) {
-            super(inputSequences, null, null, null, null, null, null);
+            super(inputSequences, null, null, null, null, null, null, null);
             this.openAnchor = openAnchor;
         }
 

@@ -58,6 +58,9 @@ public class BotProperties {
      */
     private boolean taskStartupPreparationEnabled = false;
 
+    /** Whether normal task runs may detect low double-experience time and claim another session. */
+    private boolean doubleExperienceClaimEnabled = true;
+
     /**
      * Game-task run count limits surfaced by the JavaFX Settings page.
      * A value <= 0 means "keep running until manually stopped" for task code that supports it.
@@ -77,6 +80,7 @@ public class BotProperties {
     private int xiuluoMaxRuns = 1;
     private int xinshouTrainingMaxRuns = 1;
     private int catchGhostMaxRuns = 1;
+    private int ghostKingMaxRuns = 1;
 
     /**
      * UI map-survey target name used by the manual map-template/camera-boundary tools.

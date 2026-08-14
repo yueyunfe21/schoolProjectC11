@@ -27,6 +27,7 @@ public final class TurnProtocolValidator {
         if (request.taskStartRequest() != null) {
             requireTaskStartRequest(request.taskStartRequest());
             requireTaskStartWindowAuthority(request.window());
+            requireTaskResumeProgressConsistency(request.taskStartRequest(), request.window());
         }
         if (request.mapSurveyCommand() != null) {
             require(request.taskStartRequest() == null && request.continuation() == null,
@@ -152,6 +153,9 @@ public final class TurnProtocolValidator {
         if (command.mapName() != null) {
             requireText(command.mapName(), "mapSurveyCommand.mapName");
         }
+        if (command.operation() == TurnMapSurveyCommand.Operation.G051_WORLD_MAP_CANDIDATE_ACCEPTANCE) {
+            requireText(command.mapName(), "mapSurveyCommand.mapName");
+        }
     }
 
     private static void requireMapSurveyResult(TurnMapSurveyResult result) {
@@ -160,6 +164,8 @@ public final class TurnProtocolValidator {
         requireText(result.message(), "mapSurveyResult.message");
         require((result.projectedX() == null) == (result.projectedY() == null),
                 "mapSurveyResult projected coordinates must be both present or both absent");
+        require(result.evidenceJson() == null || result.evidenceJson().length() <= 2 * 1024 * 1024,
+                "mapSurveyResult evidenceJson exceeds 2 MiB");
     }
 
     private static void requireContinuationRequest(TurnContinuationRequest continuation) {
@@ -385,8 +391,12 @@ public final class TurnProtocolValidator {
                                 && input.clickDelayMs() == null && input.queueHoldMs() == null,
                         "key input has unexpected fields");
             }
-            case TEXT_INPUT -> {
+            case TEXT_INPUT, ASCII_TEXT_INPUT -> {
                 requireText(input.text(), "input.text");
+                if (action == TurnInputAction.ASCII_TEXT_INPUT) {
+                    require(input.text().matches("[a-z0-9]+"),
+                            "ASCII_TEXT_INPUT accepts only lowercase a-z and 0-9");
+                }
                 require(input.x() == null && input.y() == null && input.endX() == null && input.endY() == null
                                 && input.scrollDelta() == null && input.key() == null
                                 && input.clickDelayMs() == null && input.queueHoldMs() == null,
@@ -459,6 +469,9 @@ public final class TurnProtocolValidator {
         require(call.operation() == TurnLocalOperation.XINSHOU_MECHANICAL_ACTION
                         || call.xinshouMechanical() == null,
                 "only XINSHOU_MECHANICAL_ACTION may contain xinshou mechanical arguments");
+        require(call.operation() == TurnLocalOperation.MAP_LABEL_TEMPLATE_SAVE
+                        || call.mapLabelTemplate() == null,
+                "only MAP_LABEL_TEMPLATE_SAVE may contain mapLabelTemplate arguments");
         return switch (call.operation()) {
             case BAG_RETURN_ITEM -> {
                 require(call.bag() != null && call.ui() == null && call.giveItem() == null && call.quest() == null,
@@ -508,6 +521,23 @@ public final class TurnProtocolValidator {
                         "TASK_TRACKER_CAPTURE_PANEL requires only taskTracker arguments");
                 requireText(call.taskTracker().source(), "localService.taskTracker.source");
                 yield 1;
+            }
+            case MAP_LABEL_TEMPLATE_SAVE -> {
+                require(call.bag() == null && call.ui() == null && call.giveItem() == null
+                                && call.quest() == null && call.wholeTaskRuntime() == null
+                                && call.metric() == null && call.taskTracker() == null
+                                && call.xinshouDrag() == null && call.xinshouTrackerChain() == null
+                                && call.xinshouMechanical() == null && call.mapLabelTemplate() != null,
+                        "MAP_LABEL_TEMPLATE_SAVE requires only mapLabelTemplate arguments");
+                requireText(call.mapLabelTemplate().mapName(),
+                        "localService.mapLabelTemplate.mapName");
+                requireText(call.mapLabelTemplate().pngBase64(),
+                        "localService.mapLabelTemplate.pngBase64");
+                require(call.mapLabelTemplate().mapName().length() <= 32,
+                        "localService.mapLabelTemplate.mapName exceeds 32 characters");
+                require(call.mapLabelTemplate().pngBase64().length() <= 512 * 1024,
+                        "localService.mapLabelTemplate.pngBase64 exceeds 512 KiB");
+                yield 0;
             }
             case XINSHOU_TRACKER_LINK_CHAIN -> {
                 require(call.bag() == null && call.ui() == null && call.giveItem() == null
@@ -579,10 +609,16 @@ public final class TurnProtocolValidator {
                   WHOLE_TASK_RETURN_HOME_REPLAY_ARM,
                   WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM,
                   WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME,
+                  WHOLE_TASK_DOUBLE_EXPERIENCE_BROADCAST_CLICK,
                   XIULUO_ACCEPT_DIALOG_TEMPLATE,
                   JIANGHU_LILIAN_ACCEPT_DIALOG_TEMPLATE,
                   CATCH_GHOST_ACCEPT_DIALOG_TEMPLATE,
-                  CATCH_GHOST_CANCEL_DIALOG_TEMPLATE -> {
+                   CATCH_GHOST_CANCEL_DIALOG_TEMPLATE,
+                   GHOST_KING_ACCEPT_DIALOG_TEMPLATE,
+                   GHOST_KING_CANCEL_DIALOG_TEMPLATE,
+                    TEAM_RETURN_PANEL_OPEN,
+                    TEAM_RETURN_PANEL_PROBE,
+                    TEAM_RETURN_PANEL_CLOSE -> {
                 require(call.bag() == null && call.ui() == null && call.giveItem() == null
                                 && call.quest() == null && call.wholeTaskRuntime() != null,
                         call.operation() + " requires only wholeTaskRuntime arguments");
@@ -895,9 +931,9 @@ public final class TurnProtocolValidator {
             case WHOLE_TASK_PENDING_ROUTE_OUTCOME_REPLACE -> {
                 require(a.routeOutcome() != null,
                         "WHOLE_TASK_PENDING_ROUTE_OUTCOME_REPLACE requires a routeOutcome payload");
-                require("YELLOW_DESTINATION_MINI_MAP".equals(a.routeOutcome().routeMode()),
-                        "WHOLE_TASK_PENDING_ROUTE_OUTCOME_REPLACE.routeOutcome.routeMode must be "
-                                + "YELLOW_DESTINATION_MINI_MAP");
+                require("YELLOW_DESTINATION_MINI_MAP".equals(a.routeOutcome().routeMode())
+                                || "LEGACY_GREEN_LINK".equals(a.routeOutcome().routeMode()),
+                        "WHOLE_TASK_PENDING_ROUTE_OUTCOME_REPLACE.routeOutcome.routeMode must be a closed route mode");
                 requireText(a.routeOutcomeReplacementReason(),
                         "WHOLE_TASK_PENDING_ROUTE_OUTCOME_REPLACE.routeOutcomeReplacementReason");
             }
@@ -910,8 +946,9 @@ public final class TurnProtocolValidator {
                 require("XIULUO_V2".equalsIgnoreCase(a.taskCode())
                                 || "XINSHOU_TRAINING".equalsIgnoreCase(a.taskCode())
                                 || "CATCH_GHOST".equalsIgnoreCase(a.taskCode())
+                                || "GHOST_KING".equalsIgnoreCase(a.taskCode())
                                 || "WUBEI".equalsIgnoreCase(a.taskCode()),
-                        "WHOLE_TASK_RETURN_HOME_REPLAY_ARM supports only XIULUO_V2/XINSHOU_TRAINING/CATCH_GHOST/WUBEI");
+                        "WHOLE_TASK_RETURN_HOME_REPLAY_ARM supports only XIULUO_V2/XINSHOU_TRAINING/CATCH_GHOST/GHOST_KING/WUBEI");
             }
             case WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM -> {
                 requireText(a.taskCode(), "WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM.taskCode");
@@ -924,9 +961,10 @@ public final class TurnProtocolValidator {
                 require("XIULUO_V2".equalsIgnoreCase(a.taskCode())
                                 || "XINSHOU_TRAINING".equalsIgnoreCase(a.taskCode())
                                 || "CATCH_GHOST".equalsIgnoreCase(a.taskCode())
+                                || "GHOST_KING".equalsIgnoreCase(a.taskCode())
                                 || "TIANTING".equalsIgnoreCase(a.taskCode())
                                 || "WUBEI".equalsIgnoreCase(a.taskCode()),
-                        "WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM supports only XIULUO_V2/XINSHOU_TRAINING/CATCH_GHOST/TIANTING/WUBEI");
+                        "WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM supports only XIULUO_V2/XINSHOU_TRAINING/CATCH_GHOST/GHOST_KING/TIANTING/WUBEI");
             }
             case WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME -> {
                 requireText(a.intentId(), "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME.intentId");
@@ -982,9 +1020,16 @@ public final class TurnProtocolValidator {
                  XIULUO_ACCEPT_DIALOG_TEMPLATE,
                  JIANGHU_LILIAN_ACCEPT_DIALOG_TEMPLATE,
                  CATCH_GHOST_ACCEPT_DIALOG_TEMPLATE,
-                 CATCH_GHOST_CANCEL_DIALOG_TEMPLATE -> {
+                  CATCH_GHOST_CANCEL_DIALOG_TEMPLATE,
+                  GHOST_KING_ACCEPT_DIALOG_TEMPLATE,
+                  GHOST_KING_CANCEL_DIALOG_TEMPLATE,
+                   WHOLE_TASK_DOUBLE_EXPERIENCE_BROADCAST_CLICK -> {
                 // source-only operations: no additional payload fields required.
             }
+            case TEAM_RETURN_PANEL_OPEN,
+                 TEAM_RETURN_PANEL_PROBE,
+                 TEAM_RETURN_PANEL_CLOSE ->
+                    requireText(a.teamReturnTaskRunId(), operation + ".teamReturnTaskRunId");
             default -> throw new IllegalArgumentException(
                     "non-whole-task operation routed to requireWholeTaskRuntime: " + operation);
         }
@@ -1005,7 +1050,7 @@ public final class TurnProtocolValidator {
         SCHEDULE_OBSERVATION_RUN,
         REPLAY_OBSERVATION_RUN, REPLAY_BUSINESS_TASK_RUN, EXPECTED_CLAIM_ID,
         EXPECTED_OBSERVATION_RUN, EXPECTED_BUSINESS_TASK_RUN, EXPECTED_ATTEMPT_ID,
-        RECOVERY_TASK_RUN, RECOVERY_ROUND, RECOVERY_ATTEMPT,
+        RECOVERY_TASK_RUN, RECOVERY_ROUND, RECOVERY_ATTEMPT, TEAM_RETURN_TASK_RUN,
         NPC_ARRIVAL_FIFO, DIALOG_FOLLOW_UP_CLICK
     }
 
@@ -1053,6 +1098,7 @@ public final class TurnProtocolValidator {
         if (a.recoveryAttemptId() != null) present.add(WtField.RECOVERY_ATTEMPT);
         if (a.npcArrivalFifo() != null) present.add(WtField.NPC_ARRIVAL_FIFO);
         if (a.dialogFollowUpClick() != null) present.add(WtField.DIALOG_FOLLOW_UP_CLICK);
+        if (a.teamReturnTaskRunId() != null) present.add(WtField.TEAM_RETURN_TASK_RUN);
         return present;
     }
 
@@ -1102,8 +1148,14 @@ public final class TurnProtocolValidator {
                  WHOLE_TASK_STARTUP_FLYING_STATE_CONSUME, XIULUO_ACCEPT_DIALOG_TEMPLATE,
                  JIANGHU_LILIAN_ACCEPT_DIALOG_TEMPLATE,
                  CATCH_GHOST_ACCEPT_DIALOG_TEMPLATE,
-                 CATCH_GHOST_CANCEL_DIALOG_TEMPLATE ->
-                    EnumSet.noneOf(WtField.class);
+                  CATCH_GHOST_CANCEL_DIALOG_TEMPLATE,
+                  GHOST_KING_ACCEPT_DIALOG_TEMPLATE,
+                  GHOST_KING_CANCEL_DIALOG_TEMPLATE,
+                   WHOLE_TASK_DOUBLE_EXPERIENCE_BROADCAST_CLICK ->
+                     EnumSet.noneOf(WtField.class);
+            case TEAM_RETURN_PANEL_OPEN,
+                 TEAM_RETURN_PANEL_PROBE,
+                 TEAM_RETURN_PANEL_CLOSE -> EnumSet.of(WtField.TEAM_RETURN_TASK_RUN);
             default -> throw new IllegalArgumentException(
                     "non-whole-task operation routed to allowedWholeTaskFields: " + operation);
         };
@@ -1124,8 +1176,9 @@ public final class TurnProtocolValidator {
                 require("XIULUO_V2".equalsIgnoreCase(bag.retainedReplayTaskCode())
                                 || "XINSHOU_TRAINING".equalsIgnoreCase(bag.retainedReplayTaskCode())
                                 || "CATCH_GHOST".equalsIgnoreCase(bag.retainedReplayTaskCode())
+                                || "GHOST_KING".equalsIgnoreCase(bag.retainedReplayTaskCode())
                             || "WUBEI".equalsIgnoreCase(bag.retainedReplayTaskCode()),
-                    "retained replay supports only XIULUO_V2/XINSHOU_TRAINING/CATCH_GHOST/WUBEI");
+                    "retained replay supports only XIULUO_V2/XINSHOU_TRAINING/CATCH_GHOST/GHOST_KING/WUBEI");
             require(bag.intent() == TurnBagOperationArguments.ReturnItemIntent.USE_CACHED_RETURN_ITEM
                             || bag.intent() == TurnBagOperationArguments.ReturnItemIntent.FIND_AND_USE_TASK_PAGE,
                     "retained replay requires a return-item use intent");
@@ -1254,19 +1307,55 @@ public final class TurnProtocolValidator {
                     "taskStartRequest.taskMaxRuns must not be null");
             require(request.taskMaxRuns().size() == request.taskCodes().size(),
                     "taskStartRequest.taskMaxRuns size must equal taskCodes size");
+            require(request.taskInitialCompletedRuns() != null,
+                    "taskStartRequest.taskInitialCompletedRuns must not be null");
+            require(request.taskInitialCompletedRuns().size() == request.taskCodes().size(),
+                    "taskStartRequest.taskInitialCompletedRuns size must equal taskCodes size");
             Integer maxRuns = request.taskMaxRuns().get(index);
+            Integer initialCompletedRuns = request.taskInitialCompletedRuns().get(index);
             require(maxRuns != null,
                     "taskStartRequest.taskMaxRuns[" + index + "] must not be null");
+            require(initialCompletedRuns != null && initialCompletedRuns >= 0,
+                    "taskStartRequest.taskInitialCompletedRuns[" + index + "] must be nonnegative");
+            require(maxRuns <= 0 || initialCompletedRuns <= maxRuns,
+                    "taskStartRequest.taskInitialCompletedRuns[" + index + "] must not exceed taskMaxRuns");
             switch (taskCode) {
-                case WUBEI, XIULUO_V2, XINSHOU_TRAINING, CATCH_GHOST, WILD_BATTLE, AUTO_BATTLE, TIANTING -> require(maxRuns >= 0,
+                case WUBEI, XIULUO_V2, XINSHOU_TRAINING, CATCH_GHOST, GHOST_KING, WILD_BATTLE, AUTO_BATTLE, TIANTING -> require(maxRuns >= 0,
                         "taskStartRequest.taskMaxRuns[" + index + "] must be >= 0 for " + taskCode);
                 case WUHUAN_V2, WUHUAN_V3 -> require(maxRuns == 1 || maxRuns == 2,
                         "taskStartRequest.taskMaxRuns[" + index + "] must be 1 or 2 for " + taskCode);
-                case XINSHOU, SLEEP_COMPUTER, YIPIN_GUARD_TEST -> require(maxRuns == 1,
+                case XINSHOU, SLEEP_COMPUTER, YIPIN_GUARD_TEST, G056_DOUBLE_EXPERIENCE_ACCEPTANCE -> require(maxRuns == 1,
                         "taskStartRequest.taskMaxRuns[" + index + "] must be 1 for " + taskCode);
             }
         }
         require(request.failurePolicy() != null, "taskStartRequest.failurePolicy must not be null");
+        requireTaskRuntimeSettings(request.runtimeSettings());
+    }
+
+    private static void requireTaskResumeProgressConsistency(
+            TurnTaskStartRequest request, TurnWindowMetadata window) {
+        boolean carriesProgress = request.taskInitialCompletedRuns().stream().anyMatch(value -> value > 0);
+        require(!carriesProgress || TaskStartupMode.PAUSE_RESUME.name().equals(window.startupMode()),
+                "taskStartRequest.taskInitialCompletedRuns may be positive only for PAUSE_RESUME");
+    }
+
+    private static void requireTaskRuntimeSettings(TurnTaskRuntimeSettings settings) {
+        require(settings != null, "taskStartRequest.runtimeSettings must not be null");
+        require(settings.summonSkillCleanIntervalMs() >= 0L,
+                "taskStartRequest.runtimeSettings.summonSkillCleanIntervalMs must not be negative");
+        require(settings.healPetMaintenanceIntervalMs() >= 0L,
+                "taskStartRequest.runtimeSettings.healPetMaintenanceIntervalMs must not be negative");
+        require(settings.repairEquipmentMaintenanceIntervalMs() >= 0L,
+                "taskStartRequest.runtimeSettings.repairEquipmentMaintenanceIntervalMs must not be negative");
+        requireSupplyThreshold(settings.playerHpSupplyThreshold(), "playerHpSupplyThreshold");
+        requireSupplyThreshold(settings.playerMpSupplyThreshold(), "playerMpSupplyThreshold");
+        requireSupplyThreshold(settings.petHpSupplyThreshold(), "petHpSupplyThreshold");
+        requireSupplyThreshold(settings.petMpSupplyThreshold(), "petMpSupplyThreshold");
+    }
+
+    private static void requireSupplyThreshold(int threshold, String field) {
+        require(threshold == 30 || threshold == 50 || threshold == 70,
+                "taskStartRequest.runtimeSettings." + field + " must be 30, 50, or 70");
     }
 
     /**

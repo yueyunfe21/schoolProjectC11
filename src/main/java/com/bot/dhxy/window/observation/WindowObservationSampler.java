@@ -19,6 +19,7 @@ import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.dialog.DialogOperation;
 import com.bot.dhxy.model.job.XiuluoGreenChainSchedule;
 import com.bot.dhxy.service.DialogService;
@@ -36,12 +37,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.imageio.ImageIO;
+import java.awt.Color;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HexFormat;
@@ -59,8 +62,8 @@ import java.util.function.Consumer;
  * {@code IN_COMBAT}/{@code COMBAT_EXITED} mechanical edges, including miss hysteresis and the local visible-mini-map
  * fail-closed gate; Cloud only updates the parked task from those edges. The sampler never interprets business
  * phases or publishes ready events. Its only input-producing
- * exception is the pre-existing, separately gated local-kanda atomic click path in
- * {@link #sampleXiuluoLocalKanda(long, List)}.
+ * exceptions are the pre-existing, separately gated local-kanda atomic click path in
+ * {@link #sampleXiuluoLocalKanda(long, List)} and G057's exact-intent Ghost King flight assist.
  */
 public final class WindowObservationSampler {
 
@@ -108,20 +111,15 @@ public final class WindowObservationSampler {
     private static final int PATHING_COORDINATE_STRIP_WIDTH = 178;
     private static final int PATHING_COORDINATE_STRIP_HEIGHT = 35;
     /*
-     * Movement detection compares ONLY the digits between the coordinate brackets, not the whole
-     * strip. On the full 178x35 strip a final-glide step changes just one or two glyphs (~2% of
-     * pixels), which slipped under the old 5% ratio: the sampler declared "stationary" while the
-     * character was still sliding the last tiles into the arrival tolerance ring, so ARRIVED and
-     * the CR273 terminal frame fired on a pre-settle screen and the Cloud clicked a shifted scene
-     * (2026-07-27 16:34 hwnd-30F14C4). Inside this 45x12 digit box a single digit change is
-     * ~7% of pixels and a one-tile step ~22%, above the unchanged 5% ratio, while a truly idle
-     * window diffs at exactly 0%.
-     * The OCR upload keeps the full strip (Cloud needs the map name); only the diff is narrowed.
+     * Movement detection compares only the coordinate digits. The horizontal range is derived from
+     * the bracket pair in each complete strip because map names and one-to-three digit coordinates
+     * change its absolute position and width. The vertical digit band remains stable in the 178x35
+     * strip. Brackets and map-name pixels must never become movement evidence.
      */
-    private static final int PATHING_MOVEMENT_DIFF_X = 118;
-    private static final int PATHING_MOVEMENT_DIFF_Y = 70;
-    private static final int PATHING_MOVEMENT_DIFF_WIDTH = 45;
+    private static final int PATHING_MOVEMENT_DIFF_TOP = 11;
     private static final int PATHING_MOVEMENT_DIFF_HEIGHT = 12;
+    private static final int COORD_BRACKET_MIN_WIDTH = 30;
+    private static final int COORD_BRACKET_MAX_WIDTH = 80;
     private final WindowRuntimeContext context;
     private final WindowTaskContextHolder contextHolder;
     private final GameClientTracker tracker;
@@ -135,6 +133,7 @@ public final class WindowObservationSampler {
     private final XinshouAnchorLocalMechanics xinshouAnchorMechanics;
     private final WuhuanPresenceLocalMechanics wuhuanPresenceMechanics;
     private final UnknownPhasePresenceLocalMechanics unknownPhasePresenceMechanics;
+    private final FlyingSaturationLocalMechanics flyingSaturationMechanics;
     private final XinshouRunnerAutoCombatState xinshouAutoCombatState;
     private final DialogFramePresenceMechanics dialogFramePresenceMechanics = new DialogFramePresenceMechanics();
     /** Last Cloud-acknowledged content per new-player ROI key; sampler-thread confined. */
@@ -184,7 +183,12 @@ public final class WindowObservationSampler {
     private long coordinateFramesCaptured;
     /** Coordinate-strip captures/encodes that produced no frame for Cloud recognition. */
     private long coordinateFramesUnavailable;
-    /** Previous exact-HWND coordinate strip for the current local pathing intent. Runner-thread confined. */
+    /** Current and previous full map-name/coordinate strips, each cropped once from one G002 shared frame. */
+    private BufferedImage sharedPositionStripFrame;
+    private long sharedPositionStripCapturedAtMs;
+    private BufferedImage previousSharedPositionStripFrame;
+    private long previousSharedPositionStripCapturedAtMs;
+    /** Previous nested coordinate-digit crop for the current local pathing intent. Runner-thread confined. */
     private BufferedImage localPathingFrame;
     private String localPathingIntentId;
     private String terminalCoordinateAcknowledgedIntentId;
@@ -201,7 +205,7 @@ public final class WindowObservationSampler {
     private long localPathingRecognizedChangedAtMs;
     private long localPathingLastSampleAtMs;
     private long localPathingLastChangedAtMs;
-    private long localPathingMovementObservedAtMs;
+    private boolean localPathingCoordinateMovementObserved;
     /** Monotonic stationary-evidence generation; advanced on intent/movement/verdict invalidation. */
     private long localPathingGeneration;
     private long nextTerminalFrameId = 1L;
@@ -218,6 +222,10 @@ public final class WindowObservationSampler {
     private String lastWuhuanTitleSnapshotKey;
     private String lastWuhuanDialogInterestId;
     private String lastWuhuanTerminalKey;
+    /** Exact Ghost King tracker intent armed after its first in-motion Changshou map-label hit. */
+    private String pendingGhostKingChangshouFlightIntentId;
+    /** Last intent whose definitive flight state was consumed; prevents repeated Alt+C on later ticks. */
+    private String handledGhostKingChangshouFlightIntentId;
 
     public WindowObservationSampler(WindowRuntimeContext context,
                                     WindowTaskContextHolder contextHolder,
@@ -292,12 +300,14 @@ public final class WindowObservationSampler {
         this.xinshouAnchorMechanics = new XinshouAnchorLocalMechanics(tracker, coordinateHelper);
         this.wuhuanPresenceMechanics = new WuhuanPresenceLocalMechanics(coordinateHelper);
         this.unknownPhasePresenceMechanics = new UnknownPhasePresenceLocalMechanics(coordinateHelper);
+        this.flyingSaturationMechanics = new FlyingSaturationLocalMechanics(coordinateHelper);
         this.xinshouAutoCombatState = xinshouAutoCombatState;
         this.returnHomeReplayCoordinator = returnHomeReplayCoordinator;
         this.combatSignalMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
         this.xinshouAnchorMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
         this.wuhuanPresenceMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
         this.unknownPhasePresenceMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
+        this.flyingSaturationMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
     }
 
     /** Enables the pre-terminal-frame scene guard; without this the sampler stays observation-only. */
@@ -328,6 +338,241 @@ public final class WindowObservationSampler {
             sharedCycleFrame = frame;
             sharedCycleFrameRect = rect;
         }
+    }
+
+    /**
+     * Crops the complete map-name/coordinate strip once for this shared-frame cycle. Movement diff,
+     * Cloud location recognition and pre-combat cache refresh must all reuse these exact pixels.
+     *
+     * @param capturedAtMs wall-clock time of the current shared frame, in epoch milliseconds.
+     */
+    private void refreshSharedPositionStripFrame(long capturedAtMs) {
+        if (previousSharedPositionStripFrame != null) {
+            previousSharedPositionStripFrame.flush();
+        }
+        previousSharedPositionStripFrame = sharedPositionStripFrame;
+        previousSharedPositionStripCapturedAtMs = sharedPositionStripCapturedAtMs;
+        sharedPositionStripFrame = cropSharedCycleFrame(coordinateHelper.getScaledRect(
+                PATHING_COORDINATE_STRIP_X, PATHING_COORDINATE_STRIP_Y,
+                PATHING_COORDINATE_STRIP_WIDTH, PATHING_COORDINATE_STRIP_HEIGHT));
+        sharedPositionStripCapturedAtMs = sharedPositionStripFrame == null ? 0L : capturedAtMs;
+    }
+
+    /**
+     * Derives the coordinate-digit movement box from the already-cropped complete position strip.
+     * The bracket pair is located from this exact frame; failure returns no movement evidence.
+     */
+    private static BufferedImage cropMovementDigits(BufferedImage positionStrip) {
+        if (positionStrip == null) {
+            return null;
+        }
+        CoordinateBracketSpan span = findCoordinateBracketSpan(positionStrip);
+        if (span == null) {
+            return null;
+        }
+        double scaleX = positionStrip.getWidth() / (double) PATHING_COORDINATE_STRIP_WIDTH;
+        double scaleY = positionStrip.getHeight() / (double) PATHING_COORDINATE_STRIP_HEIGHT;
+        int bracketPadding = Math.max(1, (int) Math.round(2 * scaleX));
+        int left = span.leftMaxX() + bracketPadding;
+        int rightExclusive = span.rightMinX() - Math.max(1, (int) Math.round(scaleX));
+        int top = (int) Math.round(PATHING_MOVEMENT_DIFF_TOP * scaleY);
+        int width = rightExclusive - left;
+        int height = Math.max(1, (int) Math.round(PATHING_MOVEMENT_DIFF_HEIGHT * scaleY));
+        if (left < 0 || top < 0 || width <= 0 || height <= 0
+                || left + width > positionStrip.getWidth()
+                || top + height > positionStrip.getHeight()) {
+            return null;
+        }
+        return copyImage(positionStrip.getSubimage(left, top, width, height));
+    }
+
+    /** Finds the rightmost structurally valid [digits,digits] envelope in the complete strip. */
+    private static CoordinateBracketSpan findCoordinateBracketSpan(BufferedImage positionStrip) {
+        BufferedImage clean = cleanCoordinateText(positionStrip);
+        try {
+            List<CoordinateGlyphBox> glyphs = segmentCoordinateGlyphs(clean);
+            double scaleX = positionStrip.getWidth() / (double) PATHING_COORDINATE_STRIP_WIDTH;
+            double scaleY = positionStrip.getHeight() / (double) PATHING_COORDINATE_STRIP_HEIGHT;
+            int maxBracketWidth = Math.max(2, (int) Math.ceil(6 * scaleX));
+            int minBracketHeight = Math.max(2, (int) Math.floor(8 * scaleY));
+            int maxBracketHeight = Math.max(minBracketHeight, (int) Math.ceil(16 * scaleY));
+            int minSpanWidth = Math.max(2, (int) Math.floor(COORD_BRACKET_MIN_WIDTH * scaleX));
+            int maxSpanWidth = Math.max(minSpanWidth, (int) Math.ceil(COORD_BRACKET_MAX_WIDTH * scaleX));
+            int maxVerticalDelta = Math.max(2, (int) Math.ceil(3 * scaleY));
+            List<CoordinateGlyphBox> leftBrackets = glyphs.stream()
+                    .filter(box -> box.width() <= maxBracketWidth
+                            && box.height() >= minBracketHeight
+                            && box.height() <= maxBracketHeight
+                            && isBracketShape(clean, box, true))
+                    .sorted(Comparator.comparingInt(CoordinateGlyphBox::minX))
+                    .toList();
+            List<CoordinateGlyphBox> rightBrackets = glyphs.stream()
+                    .filter(box -> box.width() <= maxBracketWidth
+                            && box.height() >= minBracketHeight
+                            && box.height() <= maxBracketHeight
+                            && isBracketShape(clean, box, false))
+                    .sorted(Comparator.comparingInt(CoordinateGlyphBox::minX))
+                    .toList();
+
+            CoordinateBracketSpan best = null;
+            for (CoordinateGlyphBox left : leftBrackets) {
+                for (CoordinateGlyphBox right : rightBrackets) {
+                    if (right.minX() <= left.maxX()) {
+                        continue;
+                    }
+                    int spanWidth = right.maxX() - left.minX() + 1;
+                    if (spanWidth < minSpanWidth || spanWidth > maxSpanWidth
+                            || Math.abs(left.minY() - right.minY()) > maxVerticalDelta
+                            || Math.abs(left.maxY() - right.maxY()) > maxVerticalDelta
+                            || !hasCoordinateCommaAndDigits(glyphs, left, right, scaleX, scaleY)) {
+                        continue;
+                    }
+                    CoordinateBracketSpan candidate = new CoordinateBracketSpan(
+                            left.minX(), left.maxX(), right.minX(), right.maxX());
+                    if (best == null
+                            || candidate.rightMinX() > best.rightMinX()
+                            || (candidate.rightMinX() == best.rightMinX()
+                            && candidate.leftMinX() < best.leftMinX())) {
+                        best = candidate;
+                    }
+                }
+            }
+            return best;
+        } finally {
+            clean.flush();
+        }
+    }
+
+    /** Distinguishes square brackets from narrow map-name strokes and the digit 1. */
+    private static boolean isBracketShape(BufferedImage clean,
+                                          CoordinateGlyphBox box,
+                                          boolean leftBracket) {
+        int requiredHorizontal = Math.max(2, (int) Math.ceil(box.width() * 0.66D));
+        if (countWhitePixelsOnRow(clean, box.minX(), box.maxX(), box.minY()) < requiredHorizontal
+                || countWhitePixelsOnRow(clean, box.minX(), box.maxX(), box.maxY()) < requiredHorizontal) {
+            return false;
+        }
+        int edgeX = leftBracket ? box.minX() : box.maxX();
+        int oppositeX = leftBracket ? box.maxX() : box.minX();
+        int requiredVertical = Math.max(2, (int) Math.ceil(box.height() * 0.70D));
+        int allowedOpposite = Math.max(2, (int) Math.ceil(Math.max(1, box.height() - 2) * 0.35D));
+        return countWhitePixelsOnColumn(clean, edgeX, box.minY(), box.maxY()) >= requiredVertical
+                && countWhitePixelsOnColumn(clean, oppositeX, box.minY() + 1, box.maxY() - 1)
+                <= allowedOpposite;
+    }
+
+    private static int countWhitePixelsOnRow(BufferedImage clean, int fromX, int toX, int y) {
+        int count = 0;
+        for (int x = fromX; x <= toX; x++) {
+            if ((clean.getRGB(x, y) & 0xFFFFFF) == 0xFFFFFF) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static int countWhitePixelsOnColumn(BufferedImage clean, int x, int fromY, int toY) {
+        int count = 0;
+        for (int y = fromY; y <= toY; y++) {
+            if ((clean.getRGB(x, y) & 0xFFFFFF) == 0xFFFFFF) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static boolean hasCoordinateCommaAndDigits(List<CoordinateGlyphBox> glyphs,
+                                                       CoordinateGlyphBox left,
+                                                       CoordinateGlyphBox right,
+                                                       double scaleX,
+                                                       double scaleY) {
+        int maxCommaWidth = Math.max(1, (int) Math.ceil(4 * scaleX));
+        int maxCommaHeight = Math.max(2, (int) Math.ceil(5 * scaleY));
+        int commaMinY = left.minY() + Math.max(2, (int) Math.floor(6 * scaleY));
+        for (CoordinateGlyphBox comma : glyphs) {
+            if (comma.minX() <= left.maxX() || comma.maxX() >= right.minX()
+                    || comma.minY() < commaMinY
+                    || comma.width() > maxCommaWidth || comma.height() > maxCommaHeight) {
+                continue;
+            }
+            boolean hasLeftDigits = glyphs.stream().anyMatch(box ->
+                    box.minX() > left.maxX() && box.maxX() < comma.minX() && box.height() >= 2);
+            boolean hasRightDigits = glyphs.stream().anyMatch(box ->
+                    box.minX() > comma.maxX() && box.maxX() < right.minX() && box.height() >= 2);
+            if (hasLeftDigits && hasRightDigits) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static BufferedImage cleanCoordinateText(BufferedImage source) {
+        BufferedImage clean = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_BYTE_BINARY);
+        for (int y = 0; y < source.getHeight(); y++) {
+            for (int x = 0; x < source.getWidth(); x++) {
+                int rgb = source.getRGB(x, y);
+                int red = (rgb >> 16) & 0xFF;
+                int green = (rgb >> 8) & 0xFF;
+                int blue = rgb & 0xFF;
+                int max = Math.max(red, Math.max(green, blue));
+                int min = Math.min(red, Math.min(green, blue));
+                float[] hsb = Color.RGBtoHSB(red, green, blue, null);
+                boolean coordinatePixel = max >= 145 && min >= 100
+                        && hsb[1] <= 0.32F && hsb[2] >= 0.56F && max - min <= 85;
+                clean.setRGB(x, y, coordinatePixel ? 0xFFFFFF : 0x000000);
+            }
+        }
+        return clean;
+    }
+
+    private static List<CoordinateGlyphBox> segmentCoordinateGlyphs(BufferedImage clean) {
+        boolean[][] visited = new boolean[clean.getHeight()][clean.getWidth()];
+        List<CoordinateGlyphBox> glyphs = new ArrayList<>();
+        for (int y = 0; y < clean.getHeight(); y++) {
+            for (int x = 0; x < clean.getWidth(); x++) {
+                if (visited[y][x] || (clean.getRGB(x, y) & 0xFFFFFF) != 0xFFFFFF) {
+                    continue;
+                }
+                CoordinateGlyphBox box = floodFillCoordinateGlyph(clean, visited, x, y);
+                if (box.width() <= 18 && box.height() <= 18 && box.pixelCount() >= 2) {
+                    glyphs.add(box);
+                }
+            }
+        }
+        glyphs.sort(Comparator.comparingInt(CoordinateGlyphBox::minX));
+        return glyphs;
+    }
+
+    private static CoordinateGlyphBox floodFillCoordinateGlyph(BufferedImage clean,
+                                                               boolean[][] visited,
+                                                               int startX,
+                                                               int startY) {
+        List<int[]> points = new ArrayList<>();
+        points.add(new int[]{startX, startY});
+        visited[startY][startX] = true;
+        int minX = startX;
+        int minY = startY;
+        int maxX = startX;
+        int maxY = startY;
+        for (int i = 0; i < points.size(); i++) {
+            int[] point = points.get(i);
+            minX = Math.min(minX, point[0]);
+            minY = Math.min(minY, point[1]);
+            maxX = Math.max(maxX, point[0]);
+            maxY = Math.max(maxY, point[1]);
+            for (int direction = 0; direction < 4; direction++) {
+                int nextX = point[0] + (direction == 0 ? 1 : direction == 1 ? -1 : 0);
+                int nextY = point[1] + (direction == 2 ? 1 : direction == 3 ? -1 : 0);
+                if (nextX < 0 || nextY < 0 || nextX >= clean.getWidth() || nextY >= clean.getHeight()
+                        || visited[nextY][nextX]
+                        || (clean.getRGB(nextX, nextY) & 0xFFFFFF) != 0xFFFFFF) {
+                    continue;
+                }
+                visited[nextY][nextX] = true;
+                points.add(new int[]{nextX, nextY});
+            }
+        }
+        return new CoordinateGlyphBox(minX, minY, maxX, maxY, points.size());
     }
 
     BufferedImage cropSharedCycleFrame(int[] scaledRect) {
@@ -409,11 +654,11 @@ public final class WindowObservationSampler {
      * combat miss or produce an exit edge.
      */
     public SampleBatch collect(List<ObservationInterest> interests) {
-        return collect(interests, 0L, false);
+        return collect(interests, 0L, false, false);
     }
 
     public SampleBatch collect(List<ObservationInterest> interests, long observerSeq) {
-        return collect(interests, observerSeq, false);
+        return collect(interests, observerSeq, false, false);
     }
 
     /**
@@ -429,8 +674,26 @@ public final class WindowObservationSampler {
     public SampleBatch collect(List<ObservationInterest> interests,
                                long observerSeq,
                                boolean startupWuhuanPresence) {
+        return collect(interests, observerSeq, false, startupWuhuanPresence);
+    }
+
+    /**
+     * Collects one exact-window batch with independent startup duties.
+     *
+     * @param interests Cloud-issued observation duties; never interpreted as local business permission.
+     * @param observerSeq monotonic sequence that will identify the outgoing observation request.
+     * @param startupCombatObservation true while the runner owes Cloud its startup combat state and, after a
+     *                                 VISIBLE result, the first ABSENT exit frame; UNAVAILABLE proves neither.
+     * @param startupWuhuanPresence true only for a newly acknowledged 五环 run's first screen observation.
+     * @return mechanical facts, events and requested evidence from this one shared-frame cycle.
+     */
+    public SampleBatch collect(List<ObservationInterest> interests,
+                               long observerSeq,
+                               boolean startupCombatObservation,
+                               boolean startupWuhuanPresence) {
         List<ObservationInterest> safeInterests = interests == null ? List.of() : interests;
-        return contextHolder.callWith(context, () -> collectBound(safeInterests, observerSeq, startupWuhuanPresence));
+        return contextHolder.callWith(context, () -> collectBound(
+                safeInterests, observerSeq, startupCombatObservation, startupWuhuanPresence));
     }
 
     /** Whether the frozen 100ms WUBEI_ENTER_BATTLE preparation cadence currently applies. */
@@ -453,9 +716,14 @@ public final class WindowObservationSampler {
 
     private SampleBatch collectBound(List<ObservationInterest> interests,
                                      long observerSeq,
+                                     boolean startupCombatObservation,
                                      boolean startupWuhuanPresence) {
         long now = System.currentTimeMillis();
         refreshSharedCycleFrame();
+        refreshSharedPositionStripFrame(now);
+        // Consume only an arm created by an earlier shared-frame tick. The current frame may arm below.
+        sampleGhostKingChangshouFlightAssist();
+        armGhostKingChangshouFlightAssistFromMovingFrame();
         boolean forceXinshouRefresh = beginXinshouObservationCycle(interests, now);
         List<ObservationFact> facts = new ArrayList<>();
         if (pendingPositionFact != null) {
@@ -484,7 +752,7 @@ public final class WindowObservationSampler {
                 sampleTiantingDialogProbe(now, events, rois);
             }
         } catch (RuntimeException probeFailure) {
-            log.debug("Tianting dialog probe failed (no fact fabricated): windowId={} message={}",
+            log.debug("Task-local dialog probe failed (no fact fabricated): windowId={} message={}",
                     context.getWindowId(), probeFailure.getMessage());
         }
         maintainScenePresenceCache(now);
@@ -504,7 +772,9 @@ public final class WindowObservationSampler {
                     xinshouAutoCombatState.maintain(
                             context, taskRunId, localCombatGeneration, now);
                 }
-                if (interests.stream().anyMatch(i -> LocalCombatSignalMechanics.INTEREST_KEY.equals(i.interestKey()))) {
+                if (startupCombatObservation
+                        || interests.stream().anyMatch(
+                                i -> LocalCombatSignalMechanics.INTEREST_KEY.equals(i.interestKey()))) {
                     facts.add(new ObservationFact(ObservationFactType.COMBAT_SIGNAL, signal.wireValue(), now));
                 }
             } catch (RuntimeException sampleFailure) {
@@ -534,6 +804,23 @@ public final class WindowObservationSampler {
                 if (INTEREST_PREBATTLE_TIMER.equals(interest.interestKey())) {
                     samplePreBattleTimerEdge(now, events);
                     markSampled(interest.interestKey(), now);
+                } else if (FlyingSaturationLocalMechanics.TIANTING_DARK_THUNDER_INTEREST_KEY.equals(
+                        interest.interestKey())
+                        && context.getSelectedTaskType() == TaskType.TIANTING) {
+                    // This is deliberately interest-driven. Ordinary 天庭 frames never pay the
+                    // saturation cost; only a Cloud-confirmed 暗雷 attempt asks for this fact.
+                    FlyingSaturationLocalMechanics.Sample sample = flyingSaturationMechanics.sample();
+                    facts.add(new ObservationFact(
+                            ObservationFactType.TIANTING_DARK_THUNDER_FLIGHT_STATE,
+                            sample.state().name(), now));
+                    markSampled(interest.interestKey(), now);
+                    log.info("Tianting dark-thunder flight saturation queued: windowId={} taskRunId={} "
+                                    + "observerSeq={} state={} meanSaturation={} pixels={} detail={}",
+                            context.getWindowId(), taskRunId, observerSeq, sample.state(),
+                            Double.isFinite(sample.meanSaturation())
+                                    ? String.format(java.util.Locale.ROOT, "%.4f", sample.meanSaturation())
+                                    : "unavailable",
+                            sample.pixelCount(), interest.detail());
                 } else if (XinshouAnchorLocalMechanics.INTEREST_KEY.equals(interest.interestKey())) {
                     XinshouAnchorLocalMechanics.AnchorSample xinshou = xinshouAnchorMechanics.sample();
                     sampleXinshouFact(observerSeq,
@@ -1000,18 +1287,31 @@ public final class WindowObservationSampler {
         localCombatEntryPublished = false;
         boundExpectedCombatClaim = null;
         resetLocalPathingObservation();
+        if (sharedPositionStripFrame != null) {
+            sharedPositionStripFrame.flush();
+            sharedPositionStripFrame = null;
+        }
+        sharedPositionStripCapturedAtMs = 0L;
+        if (previousSharedPositionStripFrame != null) {
+            previousSharedPositionStripFrame.flush();
+            previousSharedPositionStripFrame = null;
+        }
+        previousSharedPositionStripCapturedAtMs = 0L;
         localPathingGeneration = 0L;
         nextTerminalFrameId = 1L;
         combatSignalMechanics.reset();
         xinshouAnchorMechanics.reset();
         wuhuanPresenceMechanics.reset();
         unknownPhasePresenceMechanics.reset();
+        flyingSaturationMechanics.reset();
         observedWuhuanTitlePresent = null;
         observedWuhuanDialogPresent = null;
         lastWuhuanTitleSnapshotKey = null;
         lastWuhuanDialogInterestId = null;
         lastWuhuanTerminalKey = null;
         pendingPositionFact = null;
+        pendingGhostKingChangshouFlightIntentId = null;
+        handledGhostKingChangshouFlightIntentId = null;
         if (xinshouAutoCombatState != null) {
             xinshouAutoCombatState.close(context, taskRunId);
         }
@@ -1029,14 +1329,10 @@ public final class WindowObservationSampler {
     }
 
     /**
-     * Restores the baseline local runner's stopped-pathing authority without moving map/OCR business
-     * recognition back to the Client. The small coordinate strip is captured from the exact bound HWND;
-     * pixel changes only decide when another coordinate recognition is useful. CR142 permits a
-     * targeted coordinate intent to request recognition after 600ms of stable pixels. The narrowed
-     * 45x12 digit ROI remains the cheap sampling
-     * trigger, but movement and STOPPED_AWAY follow the recognized-coordinate contract: the first coordinate
-     * establishes a baseline, changes remain ACTIVE, and only a later unchanged coordinate may satisfy
-     * the separate 2.2-second boundary.
+     * Owns the exact-intent movement and terminal facts. The complete 178x35 map-name/coordinate strip
+     * is cropped once from the G002 shared frame; the legacy 45x12 digit ROI is then cropped in memory.
+     * Any valid digit-frame change latches movement for this intent. Cloud-recognized map/X/Y remains
+     * terminal/cache evidence only and can never manufacture movement from stale logical coordinates.
      */
     private void refreshLocalPathingTerminal(long now) {
         WindowPathingSnapshot snapshot = context.getPathingSnapshot();
@@ -1062,20 +1358,16 @@ public final class WindowObservationSampler {
         if (newIntent) {
             resetLocalPathingObservation();
             localPathingIntentId = intent.getIntentId();
-            localPathingRecognizedMapName = snapshot.getCurrentMapName();
-            localPathingRecognizedX = snapshot.getCurrentX();
-            localPathingRecognizedY = snapshot.getCurrentY();
-            if (localPathingRecognizedX != null && localPathingRecognizedY != null) {
-                localPathingRecognizedChangedAtMs = intent.getCreatedAtMs();
+            if (previousSharedPositionStripFrame != null
+                    && previousSharedPositionStripCapturedAtMs > 0L
+                    && previousSharedPositionStripCapturedAtMs <= intent.getCreatedAtMs()) {
+                localPathingFrame = cropMovementDigits(previousSharedPositionStripFrame);
             }
             advanceLocalPathingGeneration();
             localPathingLastSampleAtMs = observedAtMs;
             localPathingLastChangedAtMs = observedAtMs;
         }
-        int[] rect = coordinateHelper.getScaledRect(
-                PATHING_MOVEMENT_DIFF_X, PATHING_MOVEMENT_DIFF_Y,
-                PATHING_MOVEMENT_DIFF_WIDTH, PATHING_MOVEMENT_DIFF_HEIGHT);
-        BufferedImage current = cropSharedCycleFrame(rect);
+        BufferedImage current = cropMovementDigits(sharedPositionStripFrame);
         if (current == null) {
             return;
         }
@@ -1083,6 +1375,7 @@ public final class WindowObservationSampler {
         boolean changed = localPathingFrame != null
                 && !ImageFinder.isMatch(localPathingFrame, current, LOCAL_PATHING_DIFF_RATIO);
         if (changed) {
+            localPathingCoordinateMovementObserved = true;
             advanceLocalPathingGeneration();
             localPathingLastChangedAtMs = observedAtMs;
             localPathingCoordinatePending = false;
@@ -1131,7 +1424,7 @@ public final class WindowObservationSampler {
                         ? "local runner stable; awaiting coordinate verdict"
                         : changed ? "local runner coordinate strip changed" : "local runner pathing active")
                 .locationChangedAtMs(localPathingLastChangedAtMs)
-                .movementObservedAtMs(localPathingMovementObservedAtMs)
+                .coordinateMovementObserved(localPathingCoordinateMovementObserved)
                 .updatedAtMs(observedAtMs)
                 .probeStartedAtMs(observedAtMs)
                 .probeFinishedAtMs(observedAtMs)
@@ -1156,7 +1449,7 @@ public final class WindowObservationSampler {
         localPathingIntentId = null;
         localPathingLastSampleAtMs = 0L;
         localPathingLastChangedAtMs = 0L;
-        localPathingMovementObservedAtMs = 0L;
+        localPathingCoordinateMovementObserved = false;
         localPathingCoordinatePending = false;
         localPathingCoordinateRequestedChangedAtMs = 0L;
         localPathingCoordinateRequestedAtMs = 0L;
@@ -1462,15 +1755,10 @@ public final class WindowObservationSampler {
             long responseLatencyMs = localPathingCoordinateRequestedAtMs <= 0L
                     ? 0L
                     : Math.max(0L, resolvedAtMs - localPathingCoordinateRequestedAtMs);
-            boolean hadRecognizedCoordinate = localPathingRecognizedX != null
-                    && localPathingRecognizedY != null;
             boolean recognizedLocationChanged = hasRecognizedPathingCoordinateChanged(
                     localPathingRecognizedX, localPathingRecognizedY,
                     result.coordinateX(), result.coordinateY());
             if (recognizedLocationChanged) {
-                if (hadRecognizedCoordinate) {
-                    localPathingMovementObservedAtMs = resolvedAtMs;
-                }
                 localPathingRecognizedMapName = result.mapName();
                 localPathingRecognizedX = result.coordinateX();
                 localPathingRecognizedY = result.coordinateY();
@@ -1491,7 +1779,7 @@ public final class WindowObservationSampler {
                         .currentY(result.coordinateY())
                         .message("local runner recognized coordinate changed; pathing remains active")
                         .locationChangedAtMs(localPathingRecognizedChangedAtMs)
-                        .movementObservedAtMs(localPathingMovementObservedAtMs)
+                        .coordinateMovementObserved(localPathingCoordinateMovementObserved)
                         .updatedAtMs(resolvedAtMs)
                         .probeFinishedAtMs(resolvedAtMs)
                         .probeInProgress(false)
@@ -1520,7 +1808,7 @@ public final class WindowObservationSampler {
                     .message(terminal == WindowPathingState.ARRIVED
                             ? "local runner confirmed arrival from recognized coordinate"
                             : "local runner confirmed stopped away from recognized coordinate")
-                    .movementObservedAtMs(localPathingMovementObservedAtMs)
+                    .coordinateMovementObserved(localPathingCoordinateMovementObserved)
                     .updatedAtMs(resolvedAtMs)
                     .probeFinishedAtMs(resolvedAtMs)
                     .probeInProgress(false)
@@ -1534,6 +1822,97 @@ public final class WindowObservationSampler {
                     result.mapName(), result.coordinateX(), result.coordinateY(),
                     stableMs, responseLatencyMs);
         }
+    }
+
+    /**
+     * G057 detects Changshou while the exact Ghost King tracker leg is still moving. It arms only;
+     * input is intentionally deferred until the next shared-frame collection tick.
+     */
+    private void armGhostKingChangshouFlightAssistFromMovingFrame() {
+        if (context.getSelectedTaskType() != TaskType.GHOST_KING) {
+            return;
+        }
+        WindowPathingSnapshot snapshot = context.getPathingSnapshot();
+        WindowPathingIntent intent = snapshot == null ? null : snapshot.getIntent();
+        if (intent == null
+                || (snapshot.getState() != WindowPathingState.ACTIVE
+                && snapshot.getState() != WindowPathingState.UNKNOWN)
+                || intent.getSource() == null
+                || !intent.getSource().startsWith("ghost-king:tracker-shortcut")
+                || Objects.equals(handledGhostKingChangshouFlightIntentId, intent.getIntentId())
+                || Objects.equals(pendingGhostKingChangshouFlightIntentId, intent.getIntentId())) {
+            return;
+        }
+        FlyingSaturationLocalMechanics.MapLabelSample mapLabel =
+                flyingSaturationMechanics.sampleChangshouMapLabel();
+        if (mapLabel.state() != FlyingSaturationLocalMechanics.MapLabelState.VISIBLE) {
+            return;
+        }
+        pendingGhostKingChangshouFlightIntentId = intent.getIntentId();
+        log.info("Ghost King Changshou map label matched during pathing; flight assist armed for next runner tick: "
+                        + "windowId={} taskRunId={} intentId={} source={} score={}",
+                context.getWindowId(), taskRunId, intent.getIntentId(), intent.getSource(),
+                String.format(java.util.Locale.ROOT, "%.4f", mapLabel.score()));
+    }
+
+    /**
+     * Consumes G057 on a later shared-frame tick. UNKNOWN retains the arm; a definitive state consumes it.
+     */
+    private void sampleGhostKingChangshouFlightAssist() {
+        String intentId = pendingGhostKingChangshouFlightIntentId;
+        if (intentId == null) {
+            return;
+        }
+        WindowPathingSnapshot snapshot = context.getPathingSnapshot();
+        WindowPathingIntent currentIntent = snapshot == null ? null : snapshot.getIntent();
+        if (currentIntent == null
+                || !Objects.equals(intentId, currentIntent.getIntentId())
+                || (snapshot.getState() != WindowPathingState.ACTIVE
+                && snapshot.getState() != WindowPathingState.UNKNOWN)) {
+            pendingGhostKingChangshouFlightIntentId = null;
+            log.info("Ghost King Changshou flight assist discarded after pathing changed: windowId={} "
+                            + "armedIntentId={} currentIntentId={} state={}",
+                    context.getWindowId(), intentId,
+                    currentIntent == null ? null : currentIntent.getIntentId(),
+                    snapshot == null ? null : snapshot.getState());
+            return;
+        }
+        FlyingSaturationLocalMechanics.Sample sample = flyingSaturationMechanics.sample();
+        log.info("Ghost King Changshou flight saturation sampled: windowId={} taskRunId={} intentId={} "
+                        + "state={} meanSaturation={} pixels={}",
+                context.getWindowId(), taskRunId, intentId, sample.state(),
+                Double.isFinite(sample.meanSaturation())
+                        ? String.format(java.util.Locale.ROOT, "%.4f", sample.meanSaturation())
+                        : "unavailable",
+                sample.pixelCount());
+        if (sample.state() == FlyingSaturationLocalMechanics.State.UNKNOWN) {
+            return;
+        }
+
+        pendingGhostKingChangshouFlightIntentId = null;
+        handledGhostKingChangshouFlightIntentId = intentId;
+        if (sample.state() == FlyingSaturationLocalMechanics.State.FLYING) {
+            log.info("Ghost King Changshou flight assist already flying; no input: windowId={} intentId={}",
+                    context.getWindowId(), intentId);
+            return;
+        }
+
+        boolean pressed;
+        try {
+            // InputActionQueue serializes every window. With FakerInput, PRESS_ALT_C is a focused
+            // keyboard transaction because Alt+C is not on the background Alt whitelist.
+            pressed = inputSequences.submitAndWait(
+                    "ghost-king:changshou-enable-flight",
+                    List.of(InputAction.pressAltC()));
+        } catch (RuntimeException inputFailure) {
+            pressed = false;
+            log.warn("Ghost King Changshou Alt+C failed: windowId={} intentId={} type={} message={}",
+                    context.getWindowId(), intentId, inputFailure.getClass().getSimpleName(),
+                    inputFailure.getMessage());
+        }
+        log.info("Ghost King Changshou flight assist Alt+C completed: windowId={} taskRunId={} intentId={} "
+                        + "focusedSerialized=true executed={}",
+                context.getWindowId(), taskRunId, intentId, pressed);
     }
 
     /**
@@ -1573,13 +1952,11 @@ public final class WindowObservationSampler {
                 context.getWindowId(), intent.getIntentId(), intent.getSource());
     }
 
-    /** Updates only this bound window's logical player location from a Cloud-recognized coordinate. */
+    /** Updates only this bound window's logical player location from this sampler's recognized full strip. */
     private void updateWindowPlayerLocation(ObservationAnalysisResult result, String source) {
-        PlayerCharacter me = context.getGameState().getMe();
-        me.setCurrentMapName(result.mapName());
-        me.setX(result.coordinateX());
-        me.setY(result.coordinateY());
         long observedAtMs = System.currentTimeMillis();
+        context.updateRecognizedPlayerLocation(
+                result.mapName(), result.coordinateX(), result.coordinateY(), observedAtMs, source);
         pendingPositionFact = new ObservationFact(
                 ObservationFactType.POSITION_SAMPLE,
                 new ObservationPositionValue(
@@ -1617,10 +1994,7 @@ public final class WindowObservationSampler {
         return WindowPathingState.ACTIVE;
     }
 
-    /**
-     * Runner movement proof is coordinate-only. A noisy map OCR result must not turn unchanged
-     * logical coordinates into movement, and a real map transition cannot preserve both X and Y.
-     */
+    /** Logical coordinate changes keep terminal classification ACTIVE; they are not movement proof. */
     static boolean hasRecognizedPathingCoordinateChanged(
             Integer previousX, Integer previousY, int currentX, int currentY) {
         return previousX == null
@@ -1702,7 +2076,7 @@ public final class WindowObservationSampler {
                         null,
                         null,
                         0L,
-                        0L,
+                        false,
                         false,
                         null,
                         0L);
@@ -1730,8 +2104,6 @@ public final class WindowObservationSampler {
                 Math.min(snapshot.getUpdatedAtMs(), mappedAtMs));
         long locationChangedAtMs = normalizeOptionalPathingTimestamp(
                 snapshot.getLocationChangedAtMs(), pathingStartedAtMs, pathingUpdatedAtMs);
-        long movementObservedAtMs = normalizeOptionalPathingTimestamp(
-                snapshot.getMovementObservedAtMs(), pathingStartedAtMs, pathingUpdatedAtMs);
         long dialogBlockingDetectedAtMs = snapshot.isDialogBlocking()
                 ? normalizeRequiredPathingTimestamp(
                         snapshot.getDialogBlockingDetectedAtMs(), pathingStartedAtMs, pathingUpdatedAtMs)
@@ -1756,7 +2128,7 @@ public final class WindowObservationSampler {
                 snapshot.getCurrentX(),
                 snapshot.getCurrentY(),
                 locationChangedAtMs,
-                movementObservedAtMs,
+                snapshot.isCoordinateMovementObserved(),
                 snapshot.isDialogBlocking(),
                 snapshot.isDialogBlocking() ? snapshot.getDialogBlockingReason() : null,
                 dialogBlockingDetectedAtMs,
@@ -1898,7 +2270,8 @@ public final class WindowObservationSampler {
         }
         if (interest.getTaskType() != TaskType.XIULUO_V2
                 && interest.getTaskType() != TaskType.XINSHOU_TRAINING
-                && interest.getTaskType() != TaskType.CATCH_GHOST) {
+                && interest.getTaskType() != TaskType.CATCH_GHOST
+                && interest.getTaskType() != TaskType.GHOST_KING) {
             return;
         }
         if (interest.getOperations() == null
@@ -1965,6 +2338,35 @@ public final class WindowObservationSampler {
                 sharedCycleFrame, sharedCycleFrameRect).isEmpty()) {
             log.info("Local-kanda probe miss: windowId={} task={} schedule={} template-match=none",
                     context.getWindowId(), interest.getTaskType(), schedule.identityText());
+            UICleanerService cleaner = uiCleanerService;
+            if (interest.getTaskType() == TaskType.GHOST_KING && cleaner != null && sharedCycleFrame != null) {
+                Boolean mapPresent = cleaner.probeMapWindowPresent(
+                        sharedCycleFrame, "ghost-king:local-kanda:" + schedule.getAttemptId());
+                if (Boolean.TRUE.equals(mapPresent)) {
+                    boolean closed = cleaner.closeMapIfPresent(
+                            "ghost-king:local-kanda:" + schedule.getAttemptId());
+                    clearScenePresenceCache();
+                    log.info("Local-kanda probe deferred for map cleanup: windowId={} task={} schedule={} closed={}",
+                            context.getWindowId(), interest.getTaskType(), schedule.identityText(), closed);
+                    return;
+                }
+            }
+            if (retryState == WindowRuntimeContext.XiuluoKandaRetryState.RETRY_AVAILABLE) {
+                events.add(new ObservationKeyEvent(
+                        "enter-battle-click-failed-" + schedule.getAttemptId(),
+                        ObservationKeyEventType.ENTER_BATTLE_CLICK_FAILED,
+                        now, null, schedule.getAttemptId(), schedule.getRound(), "local-kanda",
+                        "reason=template-gone-without-combat-after-executed-click",
+                        null, null, null, null));
+            } else if (retryState == WindowRuntimeContext.XiuluoKandaRetryState.AVAILABLE
+                    && context.tryClaimXiuluoMissingKandaAfterPathingTerminal(schedule)) {
+                events.add(new ObservationKeyEvent(
+                        "enter-battle-click-failed-" + schedule.getAttemptId(),
+                        ObservationKeyEventType.ENTER_BATTLE_CLICK_FAILED,
+                        now, null, schedule.getAttemptId(), schedule.getRound(), "local-kanda",
+                        "reason=template-never-appeared-after-pathing-terminal",
+                        null, null, null, null));
+            }
             return;
         }
         // Consume-time revalidation on a fresh frame plus binding/attempt/interest consistency re-checks.
@@ -2051,34 +2453,21 @@ public final class WindowObservationSampler {
     }
 
     /**
-     * Captures the exact small minimap-coordinate strip immediately before an already-confirmed
-     * local enter-battle click. Encoding/upload happens with the normal observation batch after
-     * the click, so coordinate recognition never blocks or reorders physical input.
+     * Reuses this cycle's complete position strip immediately before an already-confirmed local
+     * enter-battle click. Encoding/upload happens after the click and never requests another HWND capture.
      */
     private void capturePreCombatCoordinateFrame(List<ObservationRoi> rois) {
-        int[] rect = coordinateHelper.getScaledRect(
-                PATHING_COORDINATE_STRIP_X, PATHING_COORDINATE_STRIP_Y,
-                PATHING_COORDINATE_STRIP_WIDTH, PATHING_COORDINATE_STRIP_HEIGHT);
-        BufferedImage image = tracker.captureToMemory(
-                "observe:pre-combat-coordinate", rect[0], rect[1], rect[2], rect[3]);
-        if (image == null) {
+        byte[] pngBytes = encodePng(sharedPositionStripFrame);
+        if (pngBytes == null) {
             return;
         }
-        try {
-            ByteArrayOutputStream png = new ByteArrayOutputStream(4096);
-            ImageIO.write(image, "png", png);
-            rois.add(new ObservationRoi(
-                    PRE_COMBAT_COORDINATE_STRIP_ROI,
-                    PATHING_COORDINATE_STRIP_X,
-                    PATHING_COORDINATE_STRIP_Y,
-                    PATHING_COORDINATE_STRIP_WIDTH,
-                    PATHING_COORDINATE_STRIP_HEIGHT,
-                    png.toByteArray()));
-        } catch (IOException encodeFailure) {
-            log.debug("Pre-combat coordinate frame encode failed: windowId={}", context.getWindowId());
-        } finally {
-            image.flush();
-        }
+        rois.add(new ObservationRoi(
+                PRE_COMBAT_COORDINATE_STRIP_ROI,
+                PATHING_COORDINATE_STRIP_X,
+                PATHING_COORDINATE_STRIP_Y,
+                PATHING_COORDINATE_STRIP_WIDTH,
+                PATHING_COORDINATE_STRIP_HEIGHT,
+                pngBytes));
     }
 
     /**
@@ -2283,11 +2672,11 @@ public final class WindowObservationSampler {
     }
 
     /**
-     * G005: match the 天庭 dialog options on this cycle's shared frame and, on a hit, click locally.
+     * Match an explicitly armed 天庭/鬼王 dialog option on this cycle's shared frame and click locally.
      *
      * <p>The whole point of keeping these templates on the client is that a visible option needs no
-     * cloud round trip. Nothing happens until the task installs one explicit 天庭 probe interest, so
-     * this duty is inert for every other task and for 天庭's own quiet phases.</p>
+     * cloud round trip. Nothing happens until the task installs one explicit local-template interest,
+     * so this duty is inert for every other task and for quiet phases.</p>
      *
      * <p>A hit is re-matched on a fresh capture immediately before the click, the same guard the 修罗
      * 看打 probe uses: the shared frame may be up to one cycle old, and clicking a dialog that has
@@ -2298,7 +2687,6 @@ public final class WindowObservationSampler {
                                            List<ObservationRoi> rois) {
         WindowDialogInterest interest = context.getDialogInterest().orElse(null);
         if (interest == null
-                || interest.getTaskType() != TaskType.TIANTING
                 || interest.getOperations() == null
                 || !interest.isLocalTemplateProbeOnly()
                 || !interest.isProbeStartReached(now)
@@ -2310,7 +2698,7 @@ public final class WindowObservationSampler {
          * recovery set is armed only after the exact tracker click started no movement.
          */
         TiantingOptionSet optionSet = TiantingOptionSet.from(interest.getOperations());
-        if (optionSet == null) {
+        if (optionSet == null || !optionSet.supports(interest.getTaskType())) {
             return;
         }
         /*
@@ -2352,7 +2740,11 @@ public final class WindowObservationSampler {
              * has gone — the branch would then never start, and nothing in the log would say so. The
              * window is opened below by the very click that causes the option to appear.
              */
-            hit = context.isTiantingFengyaoPending()
+            boolean allowFengyaoFollowUp = context.isTiantingFengyaoPending()
+                    && optionSet != TiantingOptionSet.ACCEPT
+                    && optionSet != TiantingOptionSet.CANCEL
+                    && optionSet != TiantingOptionSet.YINYAO;
+            hit = allowFengyaoFollowUp
                     ? TiantingDialogLocalMechanics.matchFengyaoOption(shared)
                             .or(() -> optionSet.match(shared))
                             .orElse(null)
@@ -2420,7 +2812,11 @@ public final class WindowObservationSampler {
         try {
             // Revalidated against the same rule the shared frame was matched with, or a 封妖符 hit would
             // be dropped here as "the dialog changed".
-            validated = context.isTiantingFengyaoPending()
+            boolean allowFengyaoFollowUp = context.isTiantingFengyaoPending()
+                    && optionSet != TiantingOptionSet.ACCEPT
+                    && optionSet != TiantingOptionSet.CANCEL
+                    && optionSet != TiantingOptionSet.YINYAO;
+            validated = allowFengyaoFollowUp
                     ? TiantingDialogLocalMechanics.matchFengyaoOption(fresh)
                             .or(() -> optionSet.match(fresh))
                             .orElse(null)
@@ -2462,7 +2858,10 @@ public final class WindowObservationSampler {
              * a follow-up payload. Cloud will consume the refreshed prepared action on its next turn.
              */
             clicked = inputSequences.moveAndClickLeft(
-                    "tianting:dialog-option", optionX, optionY, 80, 150);
+                    optionSet == TiantingOptionSet.GHOST_KING_ACCEPT
+                            ? "ghost-king:dialog-option"
+                            : "tianting:dialog-option",
+                    optionX, optionY, 80, 150);
         } catch (RuntimeException inputFailure) {
             clicked = false;
         }
@@ -2495,7 +2894,8 @@ public final class WindowObservationSampler {
                 freshAcceptFrame.flush();
             }
         }
-        log.info("Tianting dialog option {}: windowId={} template={} score={} click=({}, {})",
+        log.info("{} dialog option {}: windowId={} template={} score={} click=({}, {})",
+                optionSet == TiantingOptionSet.GHOST_KING_ACCEPT ? "Ghost King" : "Tianting",
                 clicked ? "clicked" : "click failed", context.getWindowId(),
                 templateName(validated.templatePath()), validated.score(),
                 rect[0] + validated.roiOffsetX(), rect[1] + validated.roiOffsetY());
@@ -2521,18 +2921,23 @@ public final class WindowObservationSampler {
          * combat, tracker, everything, and never recovers. The cloud reader does not look at these fields
          * anyway; the window and run are already established by the observation-run binding.
          */
+        boolean ghostKingAccept = optionSet == TiantingOptionSet.GHOST_KING_ACCEPT;
         events.add(new ObservationKeyEvent(
-                "tianting-dialog-" + interest.getCreatedAtMs() + "-" + validated.actionKey(),
-                ObservationKeyEventType.TIANTING_DIALOG_CLICKED,
+                (ghostKingAccept ? "ghost-king-dialog-" : "tianting-dialog-")
+                        + interest.getCreatedAtMs() + "-" + validated.actionKey(),
+                ghostKingAccept
+                        ? ObservationKeyEventType.GHOST_KING_DIALOG_CLICKED
+                        : ObservationKeyEventType.TIANTING_DIALOG_CLICKED,
                 now,
                 null,
                 null,
                 0,
-                "tianting-dialog-option",
+                ghostKingAccept ? "ghost-king-dialog-option" : "tianting-dialog-option",
                 validated.actionKey()
                         + "|score=" + validated.score()
                         + "|executed=" + clicked
-                        + "|trackerChained=false"));
+                        + "|trackerChained=false"
+                        + "|probeCorrelation=" + interest.getSource()));
     }
 
     /** Encodes an already-captured observation ROI without requesting another window capture. */
@@ -2570,6 +2975,8 @@ public final class WindowObservationSampler {
     private enum TiantingOptionSet {
         /** 为民除害 on 李靖's dialog. */
         ACCEPT(DialogOperation.TIANTING_ACCEPT_TASK),
+        /** 取消任务 on 李靖's dialog, only after Cloud explicitly requests cancellation. */
+        CANCEL(DialogOperation.TIANTING_CANCEL_TASK),
         /** 使用引妖香 when its own narrow phase explicitly asks for it. */
         YINYAO(DialogOperation.TIANTING_YINYAO),
         /** The four resident combat-entry options. */
@@ -2581,8 +2988,12 @@ public final class WindowObservationSampler {
          * during a normal leg would answer a dialog the flow is not in.</p>
          */
         FENGYAO(DialogOperation.TIANTING_FENGYAO),
-        /** All seven known options after a tracker click starts no movement. */
-        RECOVERY(DialogOperation.TIANTING_RECOVERY_OPTION);
+        /** All ordinary non-post-combat options after a tracker click starts no movement. */
+        RECOVERY(DialogOperation.TIANTING_RECOVERY_OPTION),
+        /** Same recovery set after this accepted cycle already consumed 引妖香. */
+        RECOVERY_NO_YINYAO(DialogOperation.TIANTING_RECOVERY_OPTION_NO_YINYAO),
+        /** 鬼王在下愿为三; uses this mature shared-frame/fresh-frame click pipeline. */
+        GHOST_KING_ACCEPT(DialogOperation.GHOST_KING_ACCEPT_TASK);
 
         private final DialogOperation operation;
 
@@ -2609,13 +3020,23 @@ public final class WindowObservationSampler {
             return found;
         }
 
+        boolean supports(TaskType taskType) {
+            return this == GHOST_KING_ACCEPT
+                    ? taskType == TaskType.GHOST_KING
+                    : taskType == TaskType.TIANTING;
+        }
+
         Optional<TiantingDialogLocalMechanics.OptionHit> match(BufferedImage roi) {
             return switch (this) {
                 case ACCEPT -> TiantingDialogLocalMechanics.matchAcceptOption(roi);
+                case CANCEL -> TiantingDialogLocalMechanics.matchCancelOption(roi);
                 case YINYAO -> TiantingDialogLocalMechanics.matchYinyaoOption(roi);
                 case COMBAT -> TiantingDialogLocalMechanics.matchResidentOption(roi);
                 case FENGYAO -> TiantingDialogLocalMechanics.matchFengyaoOption(roi);
                 case RECOVERY -> TiantingDialogLocalMechanics.matchRecoveryOption(roi);
+                case RECOVERY_NO_YINYAO ->
+                        TiantingDialogLocalMechanics.matchRecoveryOptionWithoutYinyao(roi);
+                case GHOST_KING_ACCEPT -> TiantingDialogLocalMechanics.matchGhostKingAcceptOption(roi);
             };
         }
     }
@@ -2749,5 +3170,18 @@ public final class WindowObservationSampler {
     }
 
     private record XinshouFactVersion(String value, long observerSeq) {
+    }
+
+    private record CoordinateBracketSpan(int leftMinX, int leftMaxX, int rightMinX, int rightMaxX) {
+    }
+
+    private record CoordinateGlyphBox(int minX, int minY, int maxX, int maxY, int pixelCount) {
+        private int width() {
+            return maxX - minX + 1;
+        }
+
+        private int height() {
+            return maxY - minY + 1;
+        }
     }
 }

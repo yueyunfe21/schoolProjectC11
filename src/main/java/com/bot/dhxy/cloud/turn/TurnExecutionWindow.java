@@ -205,7 +205,7 @@ public final class TurnExecutionWindow {
                 snapshot.getCurrentX(),
                 snapshot.getCurrentY(),
                 snapshot.getLocationChangedAtMs(),
-                snapshot.getMovementObservedAtMs(),
+                snapshot.isCoordinateMovementObserved(),
                 snapshot.getUpdatedAtMs(),
                 snapshot.isDialogBlocking(),
                 snapshot.getDialogBlockingReason(),

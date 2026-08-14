@@ -10,7 +10,10 @@ import com.bot.dhxy.config.WindowIsolationProperties;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.input.action.InputAction;
+import com.bot.dhxy.input.action.InputActionType;
 import com.bot.dhxy.service.DialogService;
+import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.model.WindowPathingIntent;
@@ -218,23 +221,44 @@ class WindowObservationTerminalFrameContractTest {
         assertEquals(1, fixture.tracker.fullCaptureCount.get());
     }
 
+    @Test
+    void ghostKingChangshouFlightAssistWaitsForNextTickAndPressesAltCOnlyOnce() throws Exception {
+        Fixture fixture = fixture(ghostKingPathingIntent("ghost-king-flight-intent"));
+        fixture.context.setSelectedTaskType(TaskType.GHOST_KING);
+        fixture.tracker.changshouMapLabel = true;
+        fixture.tracker.groundedFlightRoi = true;
+        fixture.sampler.collect(List.of());
+        assertEquals(0, fixture.inputSequences.altCCount.get(),
+                "the moving-frame map-label hit may only arm the next runner tick");
+        fixture.sampler.collect(List.of());
+        assertEquals(1, fixture.inputSequences.altCCount.get());
+        fixture.sampler.collect(List.of());
+        assertEquals(1, fixture.inputSequences.altCCount.get(),
+                "one exact pathing intent must not toggle flight repeatedly");
+    }
+
     private static Fixture fixture(String intentId) {
+        return fixture(pathingIntent(intentId));
+    }
+
+    private static Fixture fixture(WindowPathingIntent intent) {
         WindowRuntimeContext context = new WindowRuntimeContext(WINDOW, new GameContext());
         context.setNativeBinding(new WindowNativeBinding(HWND, "title", "class", 7L, 0, 0, 1024, 768));
-        context.markPathingStarted(pathingIntent(intentId));
+        context.markPathingStarted(intent);
         WindowTaskContextHolder holder = new WindowTaskContextHolder(new WindowIsolationProperties());
         PatternTracker tracker = new PatternTracker();
         CoordinateHelper coordinateHelper = new CoordinateHelper(tracker, null);
+        RecordingInputSequences inputSequences = new RecordingInputSequences();
         WindowObservationSampler sampler = new WindowObservationSampler(
                 context,
                 holder,
                 tracker,
                 coordinateHelper,
                 new DialogService(tracker, coordinateHelper),
-                new InputSequences(null),
+                inputSequences,
                 TASK_RUN,
                 false);
-        return new Fixture(context, sampler, tracker);
+        return new Fixture(context, sampler, tracker, inputSequences);
     }
 
     private static void armStableCandidate(Fixture fixture) throws Exception {
@@ -242,7 +266,7 @@ class WindowObservationTerminalFrameContractTest {
         long now = System.currentTimeMillis();
         setField(fixture.sampler, "localPathingLastSampleAtMs", 0L);
         setField(fixture.sampler, "localPathingLastChangedAtMs", now - 700L);
-        setField(fixture.sampler, "localPathingMovementObservedAtMs", now - 700L);
+        setField(fixture.sampler, "localPathingCoordinateMovementObserved", true);
     }
 
     private static WindowPathingIntent pathingIntent(String intentId) {
@@ -258,6 +282,19 @@ class WindowObservationTerminalFrameContractTest {
                 .build();
     }
 
+    private static WindowPathingIntent ghostKingPathingIntent(String intentId) {
+        return WindowPathingIntent.builder()
+                .intentId(intentId)
+                .source("ghost-king:tracker-shortcut:1:0")
+                .targetMapName("长寿村")
+                .targetX(38)
+                .targetY(31)
+                .tolerance(5)
+                .type(WindowPathingIntentType.TARGETED)
+                .createdAtMs(System.currentTimeMillis() - 5_000L)
+                .build();
+    }
+
     private static void setField(Object target, String name, Object value) throws Exception {
         Field field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
@@ -267,12 +304,15 @@ class WindowObservationTerminalFrameContractTest {
     private record Fixture(
             WindowRuntimeContext context,
             WindowObservationSampler sampler,
-            PatternTracker tracker) {
+            PatternTracker tracker,
+            RecordingInputSequences inputSequences) {
     }
 
     private static final class PatternTracker extends GameClientTracker {
         private final AtomicInteger fullCaptureCount = new AtomicInteger();
         private volatile int coordinateColor;
+        private volatile boolean changshouMapLabel;
+        private volatile boolean groundedFlightRoi;
 
         private PatternTracker() {
             super(null, null, null, null, null, null, null, null, null, null, null);
@@ -305,6 +345,36 @@ class WindowObservationTerminalFrameContractTest {
                         image.setRGB(x, y, ((x & 0xff) << 16) | ((y & 0xff) << 8) | ((x + y) & 0xff));
                     }
                 }
+                if (groundedFlightRoi) {
+                    for (int y = FlyingSaturationLocalMechanics.ROI_TOP;
+                         y < FlyingSaturationLocalMechanics.ROI_TOP + FlyingSaturationLocalMechanics.ROI_HEIGHT;
+                         y++) {
+                        for (int x = FlyingSaturationLocalMechanics.ROI_LEFT;
+                             x < FlyingSaturationLocalMechanics.ROI_LEFT + FlyingSaturationLocalMechanics.ROI_WIDTH;
+                             x++) {
+                            image.setRGB(x, y, 0x00644628);
+                        }
+                    }
+                }
+                if (changshouMapLabel) {
+                    try {
+                        BufferedImage label = ImageIO.read(
+                                FlyingSaturationLocalMechanics.CHANGSHOU_MAP_LABEL_TEMPLATE.toFile());
+                        var graphics = image.createGraphics();
+                        try {
+                            graphics.drawImage(
+                                    label,
+                                    FlyingSaturationLocalMechanics.MAP_LABEL_ROI_LEFT + 10,
+                                    FlyingSaturationLocalMechanics.MAP_LABEL_ROI_TOP + 8,
+                                    null);
+                        } finally {
+                            graphics.dispose();
+                        }
+                        label.flush();
+                    } catch (Exception loadFailure) {
+                        throw new IllegalStateException(loadFailure);
+                    }
+                }
             } else {
                 for (int y = 0; y < height; y++) {
                     for (int x = 0; x < width; x++) {
@@ -313,6 +383,23 @@ class WindowObservationTerminalFrameContractTest {
                 }
             }
             return image;
+        }
+    }
+
+    private static final class RecordingInputSequences extends InputSequences {
+        private final AtomicInteger altCCount = new AtomicInteger();
+
+        private RecordingInputSequences() {
+            super(null);
+        }
+
+        @Override
+        public boolean submitAndWait(String description, List<InputAction> actions) {
+            long presses = actions.stream()
+                    .filter(action -> action.getType() == InputActionType.PRESS_ALT_C)
+                    .count();
+            altCCount.addAndGet(Math.toIntExact(presses));
+            return true;
         }
     }
 

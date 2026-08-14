@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "card": "G062",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "pushedReference": "origin/dev"
+  },
+  "repositories": {},
+  "rules": ["BR-BAG-001"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/业务逻辑.md",
+    "docs/business-rules.json",
+    "docs/cr-dashboard-data.js",
+    "docs/云端迁移常见错误清单.md",
+    "docs/rule-traceability/G062.json",
+    "src/test/java/com/bot/dhxy/service/BagCunkuanAnchorReplayTest.java",
+    "src/main/java/com/bot/dhxy/core/GameClientTracker.java",
+    "src/main/java/com/bot/dhxy/driver/BoundWindowCaptureService.java",
+    "src/main/java/com/bot/dhxy/service/BagService.java",
+    "src/main/java/com/bot/dhxy/window/interaction/WindowFocusService.java"
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "包裹宏重复聚焦和物品格整窗捕获造成 62.657 秒延迟；首次 G062 修复又错误把可移动包裹锚点写成窗口固定 ROI，18:23 首次热键开包后误判并被第二次热键关包。",
+    "userDecision": "用户批准恢复验证过的动态定位：无缓存整窗寻找真实锚点并按窗口缓存；有缓存才用缓存 ROI，miss 时整窗重定位。物品格继续走基于真实锚点的小 ROI。",
+    "decisionRecordedAt": "2026-08-12",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G062"
+  },
+  "connectivity": [],
+  "verification": [
+    {"name": "business rule gate", "result": "PASS", "command": "node scripts/check-business-rule-gate.js --card G062"},
+    {"name": "client production compile", "result": "PASS", "command": "mvn -q -DskipTests compile"},
+    {"name": "movable bag anchor replay", "result": "PASS", "command": "javac isolated BagCunkuanAnchorReplayTest; mvn -q surefire:test -Dtest=BagCunkuanAnchorReplayTest"},
+    {"name": "touched-file diff check", "result": "PASS", "command": "git diff --check -- <G062 touched files>"},
+    {"name": "fresh runtime", "result": "PENDING"}
+  ]
+}

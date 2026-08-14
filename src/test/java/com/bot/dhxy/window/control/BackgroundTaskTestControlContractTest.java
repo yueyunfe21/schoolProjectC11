@@ -19,8 +19,19 @@ class BackgroundTaskTestControlContractTest {
 
         assertTrue(source.contains("public WindowTaskCommandResult startWuhuanTest()"));
         assertTrue(source.contains("public WindowTaskCommandResult startTiantingTest()"));
+        assertTrue(source.contains("public WindowTaskCommandResult startCatchGhostTest()"));
+        assertTrue(source.contains("public WindowTaskCommandResult startGhostKingTest()"));
         assertTrue(source.contains("startTest(TaskType.WUHuan_V2, maxRuns)"));
         assertTrue(source.contains("startTest(TaskType.TIANTING, maxRuns)"));
+        assertTrue(source.contains("startTest(TaskType.CATCH_GHOST, maxRuns)"));
+        assertTrue(source.contains("startTest(TaskType.GHOST_KING, maxRuns)"));
+        assertTrue(source.contains("botProperties.setCatchGhostMaxRuns(maxRuns)"));
+        assertTrue(source.contains("botProperties.setGhostKingMaxRuns(maxRuns)"));
+        assertTrue(source.contains("gameUiSettingsStore.loadInto(botProperties)"));
+        assertTrue(source.contains("doubleExperience={}"));
+        assertTrue(source.contains("healPetIntervalMs={} repairEquipmentIntervalMs={}"));
+        assertTrue(source.contains("case \"start-catch-ghost\" -> result = ControlResult.from(startCatchGhostTest(maxRuns))"));
+        assertTrue(source.contains("case \"start-ghost-king\" -> result = ControlResult.from(startGhostKingTest(maxRuns))"));
         assertTrue(source.contains("registrationService.scanRegisterAndStartIndependentWindows(taskType)"));
         assertTrue(source.contains("windowTaskControlService.pauseAll()"));
         assertTrue(source.contains("windowTaskControlService.resumeAll()"));
@@ -47,6 +58,8 @@ class BackgroundTaskTestControlContractTest {
         assertTrue(script.contains("bot\\.background-test\\.enabled=true"));
         assertTrue(script.contains("[switch]$ElevatedHost"));
         assertTrue(script.contains("$startParameters[\"Verb\"] = \"RunAs\""));
+        assertTrue(script.contains("\"start-catch-ghost\""));
+        assertTrue(script.contains("\"start-ghost-king\""));
         assertTrue(script.contains("$hostFileInfo.LastWriteTimeUtc -lt $hostProcess.StartTime.ToUniversalTime().AddSeconds(-2)"));
     }
 }

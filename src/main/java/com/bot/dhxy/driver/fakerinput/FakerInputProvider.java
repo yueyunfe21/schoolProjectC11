@@ -35,7 +35,7 @@ public class FakerInputProvider implements InputProvider {
     private static final int MODIFIER_LEFT_ALT = 0x04;
     private static final int BUTTON_LEFT = 0x01;
     private static final int BUTTON_RIGHT = 0x02;
-    private static final int MOVE_MAX_ATTEMPTS = 3;
+    private static final int MOVE_ATTEMPTS_PER_WARNING = 20;
     private static final int MOVE_RETRY_DELAY_MS = 50;
 
     private static final byte KEY_A = 0x04;
@@ -218,6 +218,37 @@ public class FakerInputProvider implements InputProvider {
     }
 
     @Override
+    public void typeTextAscii(String text) {
+        if (text == null || text.isEmpty()) {
+            return;
+        }
+        inputCoordinator.runInput("fakerInput:typeTextAscii", () -> {
+            // Alt shortcuts run immediately before world-map ASCII input. Publish an explicit all-released
+            // HID state first so a missed/delayed Alt-up report can never turn a token such as "l" into Alt+L.
+            synchronized (this) {
+                heldModifiers = 0;
+                heldKeys.clear();
+                device.releaseAll();
+                TaskSleep.sleep(150);
+            }
+            for (int i = 0; i < text.length(); i++) {
+                char value = text.charAt(i);
+                byte usage;
+                if (value >= 'a' && value <= 'z') {
+                    usage = (byte) (0x04 + value - 'a');
+                } else if (value >= '1' && value <= '9') {
+                    usage = (byte) (0x1E + value - '1');
+                } else if (value == '0') {
+                    usage = 0x27;
+                } else {
+                    throw new IllegalArgumentException("FakerInput ASCII text accepts only lowercase a-z and 0-9");
+                }
+                pressKeyDirect(usage);
+            }
+        });
+    }
+
+    @Override
     public void scrollDown(int clicks) {
         scroll(-Math.max(0, clicks));
     }
@@ -328,18 +359,20 @@ public class FakerInputProvider implements InputProvider {
 
     private void pressKey(String label, byte key) {
         inputCoordinator.runInput("fakerInput:" + label, () -> {
-            synchronized (this) {
-                try {
-                    heldKeys.add(key);
-                    publishKeyboard();
-                    TaskSleep.sleep(60);
-                } finally {
-                    heldKeys.remove(key);
-                    publishKeyboard();
-                    TaskSleep.sleep(60);
-                }
-            }
+            pressKeyDirect(key);
         });
+    }
+
+    private synchronized void pressKeyDirect(byte key) {
+        try {
+            heldKeys.add(key);
+            publishKeyboard();
+            TaskSleep.sleep(60);
+        } finally {
+            heldKeys.remove(key);
+            publishKeyboard();
+            TaskSleep.sleep(60);
+        }
     }
 
     private synchronized void publishKeyboard() {
@@ -386,7 +419,9 @@ public class FakerInputProvider implements InputProvider {
         int absoluteX = normalizeAbsoluteCoordinate(targetX, screenWidth);
         int absoluteY = normalizeAbsoluteCoordinate(targetY, screenHeight);
         POINT current = new POINT();
-        for (int attempt = 1; attempt <= MOVE_MAX_ATTEMPTS; attempt++) {
+        int attempt = 0;
+        while (true) {
+            attempt++;
             synchronized (this) {
                 device.updateAbsoluteMouse(heldMouseButtons, absoluteX, absoluteY, 0);
             }
@@ -397,13 +432,36 @@ public class FakerInputProvider implements InputProvider {
             log.info("[INPUT_CURSOR_TRACE] backend=FAKER_INPUT mode=ABSOLUTE logical=({}, {}) physical=({}, {}) "
                             + "actual=({}, {}) normalized=({}, {}) primaryScreen=({}, {}) attempt={}/{}",
                     logicalX, logicalY, targetX, targetY, current.x, current.y, absoluteX, absoluteY,
-                    screenWidth, screenHeight, attempt, MOVE_MAX_ATTEMPTS);
+                    screenWidth, screenHeight, attempt, MOVE_ATTEMPTS_PER_WARNING);
             if (Math.abs(current.x - targetX) <= 1 && Math.abs(current.y - targetY) <= 1) {
                 return;
             }
+
+            // FakerInput's absolute report can converge in several physical steps or be displaced by a late
+            // report. Correct the observed residual through the same driver before issuing the next absolute
+            // anchor; the final <=1px gate remains unchanged.
+            int correctionX = targetX - current.x;
+            int correctionY = targetY - current.y;
+            synchronized (this) {
+                device.updateRelativeMouse(heldMouseButtons, correctionX, correctionY, 0, 0);
+            }
+            TaskSleep.sleep(MOVE_RETRY_DELAY_MS);
+            if (!User32.INSTANCE.GetCursorPos(current)) {
+                throw new IllegalStateException("FakerInput could not read the current cursor position");
+            }
+            log.info("[INPUT_CURSOR_TRACE] backend=FAKER_INPUT mode=RELATIVE_CORRECTION logical=({}, {}) "
+                            + "physical=({}, {}) actual=({}, {}) correction=({}, {}) attempt={}",
+                    logicalX, logicalY, targetX, targetY, current.x, current.y,
+                    correctionX, correctionY, attempt);
+            if (Math.abs(current.x - targetX) <= 1 && Math.abs(current.y - targetY) <= 1) {
+                return;
+            }
+            if (attempt % MOVE_ATTEMPTS_PER_WARNING == 0) {
+                log.warn("FakerInput cursor is still converging; retrying without dropping input: "
+                                + "target=({}, {}) actual=({}, {}) attempts={}",
+                        targetX, targetY, current.x, current.y, attempt);
+            }
         }
-        throw new IllegalStateException("FakerInput cursor move failed: target=(" + targetX + "," + targetY
-                + ") actual=(" + current.x + "," + current.y + ")");
     }
 
     static int normalizeAbsoluteCoordinate(int physicalPixel, int screenSpan) {

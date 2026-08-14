@@ -36,6 +36,8 @@ public enum ObservationFactType {
     UNKNOWN_PHASE_TITLE_PRESENCE,
     /** BR-DIALOG-001 dialog state paired with the title fact from the same observation cycle. */
     UNKNOWN_PHASE_DIALOG_PRESENCE,
+    /** On-demand local saturation classification for one confirmed 天庭暗雷 attempt. */
+    TIANTING_DARK_THUNDER_FLIGHT_STATE,
     /**
      * Client-local 天庭 dialog option outcome; the value names the matched option template and whether
      * the local click executed, so the Cloud learns what its window just answered without ever

@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 1,
+  "card": "G005",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "pushedReference": "origin/dev",
+    "cloudBranch": "dev",
+    "cloudCommit": "847410396b3fda1cc00174910401713ff30cede4",
+    "cloudPushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-TIANTING-004", "BR-TIANTING-003", "BR-TIANTING-007"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/business-rules.json",
+    "docs/rule-traceability/G005.json",
+    "docs/superpowers/plans/2026-07-29-g005-tianting-task.md",
+    "docs/天庭任务流程大MD.md",
+    "src/main/java/com/bot/dhxy/window/model/WindowPathingSnapshot.java",
+    "src/main/java/com/bot/dhxy/window/runtime/WindowRuntimeContext.java",
+    "src/main/java/com/bot/dhxy/window/observation/WindowObservationSampler.java",
+    "src/main/java/com/bot/dhxy/window/observation/TiantingDialogLocalMechanics.java",
+    "src/main/java/com/bot/dhxy/model/dialog/DialogOperation.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/ObservationDialogOperation.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnPathingSnapshot.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/ObservationPathingFact.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/ObservationProtocolValidator.java",
+    "src/test/java/com/bot/dhxy/window/observation/WindowObservationRunnerContractTest.java",
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/remote/CloudWholeTaskReadyEventState.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/dialog/DialogOperation.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/ObservationDialogOperation.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/TaskTrackerPanelService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/TaskTrackerPanelService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/window/model/WindowPathingSnapshot.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnPathingSnapshot.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/ObservationPathingFact.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/ObservationProtocolValidator.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/G017UnknownPhaseRecoveryPolicy.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java"},
+    {"repo": "cloud", "path": "src/test/java/com/bot/dhxy/task/tianting/TiantingSubtaskLoopContractTest.java"},
+    {"repo": "cloud", "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/G005TiantingDarkThunderThresholdReplayTest.java"},
+    {"repo": "cloud", "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/G038TiantingDarkThunderOcrPolicyTest.java"},
+    {"repo": "cloud", "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/TaskTrackerPanelServiceTiantingOcrClassificationTest.java"},
+    {"repo": "cloud", "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/G017UnknownPhaseRecoveryPolicyContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "当前实现只记住上一张 task box 是否为暗雷，变化一次后即失去暗雷历史，后续子任务仍会重复模板/OCR 分类。",
+    "userDecision": "一次李靖接任务周期中只允许识别一次暗雷；首次确认后后续不同 task box 全部跳过暗雷模板和 OCR，同一暗雷 task box 保持原分支，下一次成功接任务 title 才重置。2026-08-14 进一步裁决：不加多模板，暗雷图片阈值改为 0.65；已隔离 task-box OCR 包含单个‘暗’字也算暗雷，同时保留‘雷战’判据。",
+    "decisionRecordedAt": "2026-08-14",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G005"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-TIANTING-007",
+      "producer": "Client WindowObservationSampler 在引妖香专用或天庭 recovery 探针中 fresh 复核 yinyao.png，并且真实物理点击成功后上报 tianting.yinyao|executed=true。",
+      "transport": "TIANTING_YINYAO 或按周期选择的 TIANTING_RECOVERY_OPTION / TIANTING_RECOVERY_OPTION_NO_YINYAO interest；CloudWholeTaskReadyEventState 以 exact SlotKey 持久保存本接任务周期的引妖香 consumed latch。",
+      "consumer": "TiantingTask 消费成功 action 后置位 latch；战后 probe 和后续 recovery 在武装前读取 latch，已置位时分别跳过专用探针并改用排除引妖香的 recovery 集。",
+      "ordering": "fresh accepted title resets latch -> post-combat/no-movement may arm yinyao-capable probe -> fresh local click succeeds -> Cloud consumes exact action and latches -> later probes in same accepted cycle exclude yinyao -> next fresh accepted title alone resets",
+      "contracts": [
+        {
+          "repo": "client",
+          "path": "src/test/java/com/bot/dhxy/window/observation/TiantingDialogProbeContractTest.java",
+          "command": "isolated JUnit Console TiantingDialogProbeContractTest",
+          "proves": [
+            "普通 recovery 仍可命中引妖香",
+            "周期锁置位后的 recovery operation 排除引妖香但保留其他天庭业务选项"
+          ]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/task/tianting/TiantingSubtaskLoopContractTest.java",
+          "command": "isolated JUnit Console TiantingSubtaskLoopContractTest",
+          "proves": [
+            "只有真实消费 tianting.yinyao 才锁存",
+            "同周期后续战后 probe 被跳过且暂停恢复不重置",
+            "fresh accepted title 清锁并重新允许一次匹配"
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "BR-TIANTING-004",
+      "producer": "CloudWholeTaskObserver 对同一次 Tracker 分析的暗雷模板结果，或同 actionId/task-box/generation 的 definitive OCR 暗雷结果。",
+      "transport": "CloudWholeTaskReadyEventState 以 tenant/user/device/window SlotKey 保存 generation、暗雷已出现标记和原始 task-box fingerprint；该槽不随 observation run 注销，异步 OCR 携带 generation。",
+      "consumer": "CloudWholeTaskObserver 在分析前关闭后续暗雷模板/OCR；TiantingTask 点击前以 slot snapshot 和 task-box 原图比较保留当前暗雷或强制后续普通分支；awaitAcceptedTitle 成功后重置 generation。",
+      "ordering": "fresh accepted title resets generation and clears its old-generation prepared action -> next Tracker frame is reclassified under the new generation -> first dark template/OCR marks slot -> same task box remains dark -> later different task boxes skip template and OCR -> next fresh accepted title alone resets; stale generation OCR drops",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/task/tianting/TiantingSubtaskLoopContractTest.java",
+          "command": "isolated JUnit Console TiantingSubtaskLoopContractTest",
+          "proves": [
+            "template and OCR both mark the slot-scoped round latch",
+            "same task box remains DARK_THUNDER while later changed task boxes are ordinary",
+            "classification is skipped after the latch and pause/unregister does not erase it",
+            "only successful accepted title advances generation, discards the old-generation action and waits for fresh reclassification",
+            "stale OCR cannot publish or be consumed by the new generation"
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "BR-TIANTING-003",
+      "producer": "Client WindowObservationSampler 对 exact pathing intent 连续读取有效逻辑坐标；任意一次 X/Y 变化后锁存 coordinateMovementObserved。",
+      "transport": "WindowPathingSnapshot -> TurnPathingSnapshot / ObservationPathingFact；两仓同步 coordinateMovementObserved 字段合同，只传 Runner 的锁存布尔，不传派生移动时间戳。",
+      "consumer": "Cloud G017UnknownPhaseRecoveryPolicy、TiantingTask 和 TeamReturnService 只消费 coordinateMovementObserved，不按像素差、等待时长、最终坐标或任务分支重建移动真值。",
+      "ordering": "intent 注册并以当前/最后已知逻辑坐标建立本地基线 -> Runner 持续观察同 intent -> 任意坐标变化锁存 true -> 终态携带锁存事实 -> Cloud 才决定 MOVED 或 NO_MOVEMENT",
+      "contracts": [
+        {
+          "repo": "client",
+          "path": "src/test/java/com/bot/dhxy/window/observation/WindowObservationRunnerContractTest.java",
+          "command": "isolated JUnit Console WindowObservationRunnerContractTest",
+          "proves": [
+            "点击时已有逻辑坐标可作为 intent 内第一份比较基线",
+            "任意有效 X/Y 变化锁存 coordinateMovementObserved",
+            "地图 OCR 文本变化和像素差不能伪造移动"
+          ]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/G017UnknownPhaseRecoveryPolicyContractTest.java",
+          "command": "isolated JUnit Console G017UnknownPhaseRecoveryPolicyContractTest",
+          "proves": [
+            "exact terminal 只按 Runner 锁存布尔区分 MOVED/NO_MOVEMENT",
+            "暗雷不再绕过统一移动合同"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "G005 business-rule gate", "result": "PASS", "evidence": "node scripts/check-business-rule-gate.js --card G005"},
+    {"name": "Cloud production compile", "result": "PASS", "evidence": "mvn -q -DskipTests=false compile"},
+    {"name": "Client production compile", "result": "PASS", "evidence": "mvn -q -DskipTests=false compile"},
+    {"name": "Client Runner movement contract", "result": "PASS", "evidence": "isolated javac plus JUnit Console 1.10.2: WindowObservationRunnerContractTest 19/19 successful"},
+    {"name": "G005 connectivity contract", "result": "PASS", "evidence": "isolated javac plus JUnit Console 1.10.2: TiantingSubtaskLoopContractTest plus G017UnknownPhaseRecoveryPolicyContractTest 55/55 successful"},
+    {"name": "G005 threshold and OCR replay", "result": "PASS", "evidence": "Cloud production compile; isolated exact 0.6917 threshold replay, G038 OCR policy and Tracker OCR classification 6/6 successful; tracked TiantingSubtaskLoopContractTest new selectors 2/2 successful (full class 52/55, three pre-existing out-of-scope source-name drift failures)"},
+    {"name": "BR-TIANTING-007 client accepted-cycle yinyao contract", "result": "PASS", "evidence": "isolated JUnit Console 1.10.2: TiantingDialogLocalMechanicsTest plus TiantingDialogProbeContractTest 31/31 successful"},
+    {"name": "BR-TIANTING-007 cloud accepted-cycle yinyao contract", "result": "PASS", "evidence": "isolated JUnit Console 1.10.2: four relevant TiantingSubtaskLoopContractTest selectors 4/4 successful; full class retains unrelated pre-existing source-drift failures"},
+    {"name": "BR-TIANTING-007 wire parity", "result": "PASS", "evidence": "Client and Cloud ObservationDialogOperation.java SHA-256 3DD138A023CB02701F4BBA3719820C845C77E194396A7878C60428295AC3E80E"},
+    {"name": "standard named Maven test", "result": "BLOCKED_OUT_OF_SCOPE", "evidence": "aggregate testCompile is blocked by pre-existing unrelated stale test constructors/enums; production compile and isolated G005 contract pass"},
+    {"name": "fresh runtime", "result": "PENDING", "evidence": "restart Client and Cloud; in one accepted cycle consume yinyao once, verify later post-combat/recovery paths skip it, then verify the next fresh accepted title reopens exactly one opportunity; dark-thunder cycle checks remain required"}
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "card": "G053",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "pushedReference": "origin/dev",
+    "cloudBranch": "dev",
+    "cloudCommit": "847410396b3fda1cc00174910401713ff30cede4",
+    "cloudPushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-TIANTING-005"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/business-rules.json",
+    "docs/天庭任务流程大MD.md",
+    "docs/云端迁移常见错误清单.md",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G053.json",
+    "images/template/dialog/tianting/quxiao.png",
+    "images/test-cases/tianting/cancel-option/cancel-option-raw.png",
+    "images/test-cases/tianting/cancel-option/cancel-option-marked.png",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/ObservationDialogOperation.java",
+    "src/main/java/com/bot/dhxy/model/dialog/DialogOperation.java",
+    "src/main/java/com/bot/dhxy/window/observation/TiantingDialogLocalMechanics.java",
+    "src/main/java/com/bot/dhxy/window/observation/WindowObservationSampler.java",
+    "src/test/java/com/bot/dhxy/window/observation/TiantingDialogProbeContractTest.java",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/ObservationDialogOperation.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/dialog/DialogOperation.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/TaskTrackerPanelService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/tianting/TiantingDialogCatalog.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java"},
+    {"repo": "cloud", "path": "src/test/java/com/bot/dhxy/task/tianting/TiantingSubtaskLoopContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "既有错误恢复回李靖后仍复用 accept-only 探针，无法取消仍在 Tracker 上的旧天庭任务；accept 已点击但 title 未出现也只会重复接取。",
+    "userDecision": "错误回李靖时 fresh Tracker 有天庭 title 才取消、没有 title 直接接；接取结果不确定时先取消再重接；Client 只执行 Cloud 明确下达的互斥机械 operation。",
+    "decisionRecordedAt": "2026-08-11",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G053"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-TIANTING-005",
+      "producer": "Cloud TiantingTask fresh 读取 Tracker 或记录 accept-title timeout，并只安装 TIANTING_CANCEL_TASK / TIANTING_ACCEPT_TASK 之一。",
+      "transport": "ObservationInterest 携带单一 dialog operation；Client WindowObservationSampler 只运行对应单模板 matcher，实际点击后发布稳定 tianting.cancelTask/tianting.acceptTask。",
+      "consumer": "Cloud TiantingTask 消费 exact TIANTING_DIALOG_ANSWERED；cancel action 清除取消态并回 ACCEPT_TASK，accept action 仍以 fresh Tracker title 作为接取成功权威。",
+      "ordering": "error recovery -> ARRIVED -> fresh title -> cancel-only iff title present -> cancel action -> ACCEPT_TASK -> accept-only；title absent -> accept-only；accept-title timeout -> cancel-only once -> accept-only",
+      "contracts": [
+        {
+          "path": "src/test/java/com/bot/dhxy/window/observation/TiantingDialogProbeContractTest.java",
+          "command": "focused G053 Client connectivity contract",
+          "proves": [
+            "TIANTING_CANCEL_TASK maps only to quxiao.png and tianting.cancelTask",
+            "TIANTING_ACCEPT_TASK remains accept.png only",
+            "cancel is absent from resident and recovery option sets"
+          ]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/task/tianting/TiantingSubtaskLoopContractTest.java",
+          "command": "focused G053 Cloud ordering contract",
+          "proves": [
+            "error recovery reads fresh Tracker before selecting cancel-only versus accept-only",
+            "watchdog and G017 failure preserve cancellation-required state across RETURN_HOME and the round reset",
+            "the old quest-already-tracked shortcut is unavailable while failure cancellation is pending",
+            "cancel action returns to ACCEPT_TASK before ordinary accept",
+            "accept-title timeout cannot silently claim cancellation"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "business rule gate", "result": "PASS"},
+    {"name": "shared protocol byte identity", "result": "PASS", "detail": "ObservationDialogOperation.java SHA-256 4069A56BB6780239AF14E02372E51519C8F0541625787887B6F6D2B52E5F252A"},
+    {"name": "client production compile", "result": "PASS"},
+    {"name": "cloud production compile", "result": "PASS"},
+    {"name": "focused connectivity contracts", "result": "PASS", "detail": "Client 21/21; Cloud 48/48"},
+    {"name": "cancel template visual replay", "result": "PASS", "detail": "raw + marked click evidence under images/test-cases/tianting/cancel-option"},
+    {"name": "independent source review", "result": "PASS", "detail": "P0/P1/P2=0/0/0 after the cross-round failure gate repair"},
+    {"name": "standard named Maven tests", "result": "BLOCKED_BY_UNRELATED_EXISTING_TEST_DRIFT"},
+    {"name": "fresh runtime", "result": "PENDING"}
+  ]
+}

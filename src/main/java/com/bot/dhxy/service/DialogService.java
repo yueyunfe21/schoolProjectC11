@@ -44,6 +44,10 @@ public class DialogService {
     static final int XIULUO_ENTER_BATTLE_LOCAL_ROI_RIGHT = 305;
     static final int XIULUO_ENTER_BATTLE_LOCAL_ROI_BOTTOM = 397;
     static final double XIULUO_ENTER_BATTLE_LOCAL_MATCH_RATE = 0.82;
+    static final String CATCH_GHOST_ENTER_BATTLE_LOCAL_TEMPLATE =
+            "images/template/dialog/zhuagui/jinzhan.png";
+    static final String GHOST_KING_ENTER_BATTLE_LOCAL_TEMPLATE =
+            "images/template/dialog/guiwang/jinzhan.png";
     // 江湖历练“开打”模板的实测屏幕 ROI 是 (1513,544)-(1699,571)。以当前 1024x768 窗口
     // base=(1252,170) 换算为 (261,374,186,27)；它能完整容纳 61x20 的 kaida.png，且不改修罗 ROI。
     static final int XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_LEFT = 261;
@@ -334,10 +338,10 @@ public class DialogService {
     }
 
     /**
-     * Matches the task-owned local "看打" button on the bound window. Both 修罗 and 江湖历练 use
+     * Matches the task-owned local "看打/近战" button on the bound window. 修罗、江湖历练、抓鬼和鬼王 use
      * the same Runner probe/click lifecycle; only their button bitmap differs.
      *
-     * @param taskType task that owns the currently armed local probe; only 修罗/江湖历练 are valid.
+     * @param taskType task that owns the currently armed local probe.
      * @param source diagnostic source, never used to choose a window.
      * @param phase diagnostic probe phase.
      * @return fresh window-relative template hit converted to an absolute input point, or empty on a miss.
@@ -366,27 +370,28 @@ public class DialogService {
             BufferedImage fullWindowFrame,
             int[] fullWindowRect) {
         if (taskType != TaskType.XIULUO_V2 && taskType != TaskType.XINSHOU_TRAINING
-                && taskType != TaskType.CATCH_GHOST) {
+                && taskType != TaskType.CATCH_GHOST && taskType != TaskType.GHOST_KING) {
             return Optional.empty();
         }
-        String templatePath = taskType == TaskType.CATCH_GHOST
-                ? "images/template/dialog/zhuagui/jinzhan.png"
-                : taskType == TaskType.XINSHOU_TRAINING
-                ? "images/template/dialog/a3/kaida.png"
-                : XIULUO_ENTER_BATTLE_LOCAL_TEMPLATE;
-        boolean catchGhost = taskType == TaskType.CATCH_GHOST;
+        String templatePath = switch (taskType) {
+            case CATCH_GHOST -> CATCH_GHOST_ENTER_BATTLE_LOCAL_TEMPLATE;
+            case GHOST_KING -> GHOST_KING_ENTER_BATTLE_LOCAL_TEMPLATE;
+            case XINSHOU_TRAINING -> "images/template/dialog/a3/kaida.png";
+            default -> XIULUO_ENTER_BATTLE_LOCAL_TEMPLATE;
+        };
+        boolean catchGhostDialogRoi = taskType == TaskType.CATCH_GHOST || taskType == TaskType.GHOST_KING;
         boolean xinshouTraining = taskType == TaskType.XINSHOU_TRAINING;
         int[] rect = coordinateHelper.getScaledRect(
-                catchGhost ? CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_LEFT
+                catchGhostDialogRoi ? CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_LEFT
                         : xinshouTraining ? XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_LEFT
                         : XIULUO_ENTER_BATTLE_LOCAL_ROI_LEFT,
-                catchGhost ? CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_TOP
+                catchGhostDialogRoi ? CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_TOP
                         : xinshouTraining ? XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_TOP
                         : XIULUO_ENTER_BATTLE_LOCAL_ROI_TOP,
-                catchGhost ? CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_WIDTH
+                catchGhostDialogRoi ? CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_WIDTH
                         : xinshouTraining ? XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_WIDTH
                         : XIULUO_ENTER_BATTLE_LOCAL_ROI_RIGHT - XIULUO_ENTER_BATTLE_LOCAL_ROI_LEFT,
-                catchGhost ? CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_HEIGHT
+                catchGhostDialogRoi ? CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_HEIGHT
                         : xinshouTraining ? XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_HEIGHT
                         : XIULUO_ENTER_BATTLE_LOCAL_ROI_BOTTOM - XIULUO_ENTER_BATTLE_LOCAL_ROI_TOP);
         BufferedImage roi = cropBoundWindowFrame(fullWindowFrame, fullWindowRect, rect);

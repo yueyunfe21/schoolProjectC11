@@ -89,6 +89,9 @@ public interface InputProvider {
     /** Type Unicode text through the active input implementation. */
     void typeTextUnicode(String text);
 
+    /** Type lowercase ASCII letters/digits as physical keyboard usages; no clipboard or Unicode path. */
+    void typeTextAscii(String text);
+
     /** Scroll mouse wheel down by the given click count. */
     void scrollDown(int clicks);
 

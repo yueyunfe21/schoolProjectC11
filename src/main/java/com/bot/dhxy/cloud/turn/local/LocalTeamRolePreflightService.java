@@ -6,6 +6,7 @@ import com.bot.dhxy.driver.BoundWindowCaptureService;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.service.UICleanerService;
+import com.bot.dhxy.window.interaction.WindowFocusService;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.observation.DialogFramePresenceMechanics;
 import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
@@ -20,13 +21,19 @@ import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.ThreadLocalRandom;
@@ -56,15 +63,20 @@ public class LocalTeamRolePreflightService {
     private static final String MINIMAP_MAGNIFIER_TEMPLATE = "images/template/map/minimap_visible_anchor.png";
     private static final String DISMISS_TEAM_TEMPLATE = "images/template/team/jiesan.png";
     private static final String TRANSFER_LEADER_TEMPLATE = "images/template/team/transfer_leader_button.png";
+    private static final int TEAM_ANCHOR_X = 644;
+    private static final int TEAM_ANCHOR_Y = 91;
+    private static final int TEAM_ANCHOR_SIZE = 10;
     private static final double TEMPLATE_THRESHOLD = 0.85D;
     private static final long PANEL_PROBE_TIMEOUT_MS = 5_000L;
     private static final long PANEL_PROBE_INTERVAL_MS = 500L;
     private static final long DISMISS_SETTLE_MS = 220L;
+    private static final int TITLE_BAR_ACTIVATION_Y = 7;
 
     private final InputSequences inputSequences;
     private final InputProvider inputProvider;
     private final BoundWindowCaptureService captureService;
     private final WindowNativeBindingRefreshService bindingRefreshService;
+    private final WindowFocusService windowFocusService;
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final UICleanerService uiCleanerService;
     private final DialogFramePresenceMechanics dialogFramePresenceMechanics = new DialogFramePresenceMechanics();
@@ -93,8 +105,8 @@ public class LocalTeamRolePreflightService {
 
     /**
      * Resolves roles for a selected local batch. A single selected window retains the normal solo/grouped probe.
-     * A multi-window batch follows the local-team invariant: all panels are opened first, their leader templates
-     * are matched concurrently, and the first leader match makes every other selected window a member.
+     * A multi-window batch restores the historical same-team invariant: the exact {@code 10x10} team anchor is
+     * hashed before any panel input, and leader templates are resolved independently inside each equal-hash group.
      *
      * @param contexts exact selected window contexts
      * @param localTeamSessionKey batch identifier retained for the start contract
@@ -169,12 +181,12 @@ public class LocalTeamRolePreflightService {
 
     /**
      * Opens every team panel before matching. Physical key presses remain serialized by {@link InputSequences},
-     * while HWND captures and template matching deliberately run in parallel. The local product contract currently
-     * allows exactly one leader in this branch: the first matching window wins and all other selected windows are
-     * members. It intentionally does not infer a mixed solo/team batch.
+     * while HWND captures and template matching deliberately run in parallel. Equal raw anchor hashes establish
+     * same-team membership; a leader button may only assign members inside that exact hash group.
      */
     private Map<String, Preflight> detectGroupedBatch(List<WindowRuntimeContext> contexts, BooleanSupplier cancelled) {
         Map<String, ProbeTarget> targets = new LinkedHashMap<>();
+        Map<String, List<ProbeTarget>> targetsByGroup = new LinkedHashMap<>();
         try {
             for (WindowRuntimeContext context : contexts) {
                 if (cancelled.getAsBoolean()) {
@@ -184,35 +196,67 @@ public class LocalTeamRolePreflightService {
                 if (binding == null || !binding.hasNativeHandle() || !binding.hasGeometry()) {
                     throw new PreflightTimeoutException("本地队伍菜单无法读取窗口绑定，未启动任务");
                 }
+                String anchorHash = captureAnchorHash(binding);
+                if (anchorHash == null) {
+                    throw new PreflightTimeoutException("本地队伍头像锚点读取失败，未启动任务");
+                }
+                String groupHash = "anchor-" + anchorHash;
                 boolean opened = inputSequences.submitFrozenExactWindowExclusiveAndWait(
                         "team-role:local-panel-open:" + context.getWindowId(), context, binding, () -> {
-                            if (!cancelled.getAsBoolean()) {
-                                inputProvider.pressAltT();
+                            if (cancelled.getAsBoolean()
+                                    || !ensureForegroundForPhysicalShortcut(context, binding)) {
+                                return false;
                             }
-                            return !cancelled.getAsBoolean();
+                            inputProvider.pressAltT();
+                            return true;
                         }).isCompleted();
-                if (!opened || cancelled.getAsBoolean()) {
+                if (!opened) {
+                    throw new PreflightTimeoutException("本地队伍菜单无法激活目标窗口，未启动任务");
+                }
+                if (cancelled.getAsBoolean()) {
                     return Map.of();
                 }
-                targets.put(context.getWindowId(), new ProbeTarget(context, binding));
+                ProbeTarget target = new ProbeTarget(context, binding, groupHash);
+                targets.put(context.getWindowId(), target);
+                targetsByGroup.computeIfAbsent(groupHash, ignored -> new java.util.ArrayList<>()).add(target);
             }
 
-            AtomicReference<String> leaderWindowId = new AtomicReference<>();
+            Map<String, AtomicReference<String>> leaderByGroup = new LinkedHashMap<>();
+            targetsByGroup.keySet().forEach(groupHash ->
+                    leaderByGroup.put(groupHash, new AtomicReference<>()));
             List<CompletableFuture<Void>> probes = targets.values().stream()
-                    .map(target -> CompletableFuture.runAsync(() -> waitForLeaderMatch(target, leaderWindowId, cancelled)))
+                    .map(target -> CompletableFuture.runAsync(() -> waitForLeaderMatch(
+                            target, leaderByGroup.get(target.groupHash()), cancelled)))
                     .toList();
             CompletableFuture.allOf(probes.toArray(CompletableFuture[]::new)).join();
             if (cancelled.getAsBoolean()) {
                 return Map.of();
             }
-            String winner = leaderWindowId.get();
-            if (winner == null) {
+            Map<String, Preflight> results = new LinkedHashMap<>();
+            boolean leaderResolved = false;
+            for (Map.Entry<String, List<ProbeTarget>> entry : targetsByGroup.entrySet()) {
+                String groupHash = entry.getKey();
+                String winner = leaderByGroup.get(groupHash).get();
+                List<String> windowIds = entry.getValue().stream()
+                        .map(target -> target.context().getWindowId())
+                        .toList();
+                if (winner == null) {
+                    windowIds.forEach(windowId ->
+                            results.put(windowId, Preflight.completed(windowId, Role.MEMBER)));
+                    log.info("local anchor group has no selected leader; combat broadcast disabled: groupHash={} windows={}",
+                            groupHash, windowIds);
+                    continue;
+                }
+                leaderResolved = true;
+                Map<String, Role> roles = assignGroupedRoles(windowIds, winner);
+                roles.forEach((windowId, role) ->
+                        results.put(windowId, Preflight.completed(windowId, role, groupHash)));
+                log.info("local anchor group resolved: groupHash={} leaderWindowId={} memberCount={}",
+                        groupHash, winner, roles.size() - 1);
+            }
+            if (!leaderResolved) {
                 throw new PreflightTimeoutException("本地队伍菜单在 5 秒内未命中队长按钮，未启动任务");
             }
-            Map<String, Role> roles = assignGroupedRoles(targets.keySet().stream().toList(), winner);
-            Map<String, Preflight> results = new LinkedHashMap<>();
-            roles.forEach((windowId, role) -> results.put(windowId, Preflight.completed(windowId, role)));
-            log.info("local grouped team-role resolved: leaderWindowId={} memberCount={}", winner, roles.size() - 1);
             return Map.copyOf(results);
         } finally {
             // A losing probe never owns input. Closing is a short, serialized Alt+T sequence after all capture
@@ -253,11 +297,34 @@ public class LocalTeamRolePreflightService {
         }
         inputSequences.submitFrozenExactWindowExclusiveAndWait(
                 "team-role:local-panel-close:" + target.context().getWindowId(), target.context(), target.binding(), () -> {
+                    if (!ensureForegroundForPhysicalShortcut(target.context(), target.binding())) {
+                        return false;
+                    }
                     // This branch only runs after a grouped batch elected a leader. A second Alt+T closes the
                     // panel; a missed minimap template must never turn into a world right-click here.
                     inputProvider.pressAltT();
                     return !cancelled.getAsBoolean();
                 });
+    }
+
+    /**
+     * Guarantees that a driver shortcut cannot land on a different foreground window. The ordinary Windows
+     * focus API remains the first attempt in the input worker; when Windows rejects it, one physical title-bar
+     * click activates the same frozen HWND without sending gameplay input into the client area.
+     */
+    private boolean ensureForegroundForPhysicalShortcut(
+            WindowRuntimeContext context,
+            WindowNativeBinding binding) {
+        if (windowFocusService.isForeground(binding)) {
+            return true;
+        }
+        int x = binding.getX() + binding.getWidth() / 2;
+        int y = binding.getY() + TITLE_BAR_ACTIVATION_Y;
+        inputProvider.clickLeft(x, y, (int) DISMISS_SETTLE_MS);
+        boolean focused = windowFocusService.isForeground(binding);
+        log.info("local team-role physical foreground activation: windowId={} hwnd={} point=({}, {}) focused={}",
+                context.getWindowId(), binding.getNativeHandle(), x, y, focused);
+        return focused;
     }
 
     static Map<String, Role> assignGroupedRoles(List<String> windowIds, String leaderWindowId) {
@@ -267,6 +334,73 @@ public class LocalTeamRolePreflightService {
         Map<String, Role> roles = new LinkedHashMap<>();
         windowIds.forEach(windowId -> roles.put(windowId, windowId.equals(leaderWindowId) ? Role.LEADER : Role.MEMBER));
         return Map.copyOf(roles);
+    }
+
+    /**
+     * Attach historical raw-anchor groups to roles that were retained or fixed without opening the team panel.
+     * Only hashes containing a locally confirmed leader are published, so external-leader members keep their own
+     * combat detection and can never receive another team's broadcast.
+     *
+     * @param contexts exact selected window contexts
+     * @param preflights already resolved role facts keyed by window id
+     * @param cancelled true when the owning start command has been invalidated
+     * @return the same role facts with a group hash only for windows sharing a confirmed local leader anchor
+     */
+    public Map<String, Preflight> attachConfirmedLeaderAnchorGroups(
+            List<WindowRuntimeContext> contexts,
+            Map<String, Preflight> preflights,
+            BooleanSupplier cancelled) {
+        if (preflights == null || preflights.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> capturedGroupByWindow = new LinkedHashMap<>();
+        for (WindowRuntimeContext context : contexts == null ? List.<WindowRuntimeContext>of() : contexts) {
+            if (context == null || cancelled.getAsBoolean()) {
+                continue;
+            }
+            Preflight preflight = preflights.get(context.getWindowId());
+            if (preflight == null || preflight.role() == Role.SOLO || preflight.groupHash() != null) {
+                continue;
+            }
+            WindowNativeBinding binding = bindingRefreshService.refreshAndCommit(context).orElse(null);
+            String anchorHash = binding == null ? null : captureAnchorHash(binding);
+            if (anchorHash == null) {
+                log.warn("local team anchor unavailable; broadcast remains disabled: windowId={}",
+                        context.getWindowId());
+                continue;
+            }
+            capturedGroupByWindow.put(context.getWindowId(), "anchor-" + anchorHash);
+        }
+
+        return applyConfirmedLeaderAnchorGroups(preflights, capturedGroupByWindow);
+    }
+
+    static Map<String, Preflight> applyConfirmedLeaderAnchorGroups(
+            Map<String, Preflight> preflights,
+            Map<String, String> capturedGroupByWindow) {
+        Set<String> confirmedLeaderGroups = new LinkedHashSet<>();
+        preflights.values().stream()
+                .filter(preflight -> preflight.role() == Role.LEADER && preflight.groupHash() != null)
+                .map(Preflight::groupHash)
+                .forEach(confirmedLeaderGroups::add);
+        preflights.values().stream()
+                .filter(preflight -> preflight.role() == Role.LEADER)
+                .map(preflight -> capturedGroupByWindow.get(preflight.windowId()))
+                .filter(Objects::nonNull)
+                .forEach(confirmedLeaderGroups::add);
+
+        Map<String, Preflight> grouped = new LinkedHashMap<>();
+        preflights.forEach((windowId, preflight) -> {
+            String groupHash = preflight.groupHash() != null
+                    ? preflight.groupHash()
+                    : capturedGroupByWindow.get(windowId);
+            boolean publishGroup = groupHash != null && confirmedLeaderGroups.contains(groupHash)
+                    && preflight.role() != Role.SOLO;
+            grouped.put(windowId, publishGroup
+                    ? Preflight.completed(windowId, preflight.role(), groupHash)
+                    : Preflight.completed(windowId, preflight.role()));
+        });
+        return Map.copyOf(grouped);
     }
 
     /** No Cloud-OCR retry exists anymore; retained for the existing rejected-start call site. */
@@ -480,6 +614,37 @@ public class LocalTeamRolePreflightService {
                 .orElse(null);
     }
 
+    private String captureAnchorHash(WindowNativeBinding binding) {
+        BufferedImage anchor = captureService.captureRegion(binding, binding.getX(), binding.getY(),
+                        binding.getX() + TEAM_ANCHOR_X, binding.getY() + TEAM_ANCHOR_Y,
+                        binding.getX() + TEAM_ANCHOR_X + TEAM_ANCHOR_SIZE,
+                        binding.getY() + TEAM_ANCHOR_Y + TEAM_ANCHOR_SIZE)
+                .map(BoundWindowCaptureService.CaptureResult::image)
+                .orElse(null);
+        if (anchor == null) {
+            return null;
+        }
+        try {
+            return rawArgbSha256(anchor);
+        } finally {
+            anchor.flush();
+        }
+    }
+
+    static String rawArgbSha256(BufferedImage image) {
+        ByteBuffer pixels = ByteBuffer.allocate(image.getWidth() * image.getHeight() * Integer.BYTES);
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                pixels.putInt(image.getRGB(x, y));
+            }
+        }
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(pixels.array()));
+        } catch (NoSuchAlgorithmException unavailable) {
+            throw new IllegalStateException("SHA-256 unavailable", unavailable);
+        }
+    }
+
     private static boolean sleep(long millis, BooleanSupplier cancelled) {
         try {
             Thread.sleep(millis);
@@ -508,6 +673,10 @@ public class LocalTeamRolePreflightService {
         static Preflight completed(String windowId, Role role) {
             return new Preflight(windowId, role, null, false, null);
         }
+
+        static Preflight completed(String windowId, Role role, String groupHash) {
+            return new Preflight(windowId, role, groupHash, false, null);
+        }
     }
 
     private record Rect(int left, int top, int width, int height) {
@@ -524,5 +693,5 @@ public class LocalTeamRolePreflightService {
         }
     }
 
-    private record ProbeTarget(WindowRuntimeContext context, WindowNativeBinding binding) { }
+    private record ProbeTarget(WindowRuntimeContext context, WindowNativeBinding binding, String groupHash) { }
 }

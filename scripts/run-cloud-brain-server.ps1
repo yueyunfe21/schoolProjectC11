@@ -84,6 +84,7 @@ $visionMemoryPath = Join-Path $scopeRoot "vision_memory.json"
 
 $classesPath = Join-Path $BrainProjectPath "target\classes"
 $classpathFile = Join-Path $BrainProjectPath "target\dependency-classpath.txt"
+$sourceFingerprintFile = Join-Path $BrainProjectPath "target\cloud-runtime-source.sha256"
 $mainClassName = "com.yueyunfe.dhxy.cloudbrain.CloudBrainApplication"
 $mainClassFile = Join-Path $classesPath "com\yueyunfe\dhxy\cloudbrain\CloudBrainApplication.class"
 
@@ -132,6 +133,36 @@ function Format-Utc {
     return $Value.ToString("o")
 }
 
+function Get-CloudBrainSourceFingerprint {
+    param([string]$ProjectPath)
+
+    $projectRoot = [System.IO.Path]::GetFullPath($ProjectPath)
+    $javaTestPrefix = Join-Path $projectRoot "src\main\java\com\yueyunfe\dhxy\cloudbrain\test"
+    $inputs = @()
+    $pomPath = Join-Path $projectRoot "pom.xml"
+    if (Test-Path -LiteralPath $pomPath -PathType Leaf) {
+        $inputs += Get-Item -LiteralPath $pomPath
+    }
+    $sourceRoot = Join-Path $projectRoot "src\main"
+    if (Test-Path -LiteralPath $sourceRoot -PathType Container) {
+        $inputs += Get-ChildItem -LiteralPath $sourceRoot -Recurse -File -Force | Where-Object {
+            -not $_.FullName.StartsWith($javaTestPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+        }
+    }
+
+    $manifestLines = foreach ($inputFile in ($inputs | Sort-Object FullName)) {
+        $relativePath = $inputFile.FullName.Substring($projectRoot.Length).TrimStart('\').Replace('\', '/')
+        "$relativePath`t$(Get-FileSha256 -LiteralPath $inputFile.FullName)"
+    }
+    $manifestBytes = [System.Text.Encoding]::UTF8.GetBytes(($manifestLines -join "`n"))
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha256.ComputeHash($manifestBytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+    }
+}
+
 function Get-CloudBrainRuntimeState {
     param([string]$ProjectPath)
 
@@ -156,6 +187,12 @@ function Get-CloudBrainRuntimeState {
         ""
     }
     $pomUtc = (Get-Item -LiteralPath (Join-Path $ProjectPath "pom.xml")).LastWriteTimeUtc
+    $sourceFingerprint = Get-CloudBrainSourceFingerprint -ProjectPath $ProjectPath
+    $compiledSourceFingerprint = if (Test-Path -LiteralPath $sourceFingerprintFile -PathType Leaf) {
+        (Get-Content -LiteralPath $sourceFingerprintFile -Raw).Trim()
+    } else {
+        ""
+    }
 
     [pscustomobject]@{
         SourceMaxUtc = $sourceMaxUtc
@@ -165,6 +202,8 @@ function Get-CloudBrainRuntimeState {
         PomUtc = $pomUtc
         MainClassPresent = Test-Path -LiteralPath $mainClassFile -PathType Leaf
         ClasspathPresent = Test-Path -LiteralPath $classpathFile -PathType Leaf
+        SourceFingerprint = $sourceFingerprint
+        CompiledSourceFingerprint = $compiledSourceFingerprint
     }
 }
 
@@ -179,18 +218,16 @@ function Test-CloudBrainClassesStale {
         Write-Host "Cloud brain dependency classpath file is missing: $classpathFile"
         return $true
     }
-    if ($State.SourceMaxUtc -gt $State.ClassesMaxUtc) {
-        Write-Host "Cloud brain classes are stale; sourceMaxUtc=$(Format-Utc $State.SourceMaxUtc) classesMaxUtc=$(Format-Utc $State.ClassesMaxUtc)"
-        return $true
-    }
-    if ($State.PomUtc -gt $State.ClasspathUtc) {
-        Write-Host "Cloud brain dependency classpath is stale; pomUtc=$(Format-Utc $State.PomUtc) classpathUtc=$(Format-Utc $State.ClasspathUtc)"
+    if ([string]::IsNullOrWhiteSpace($State.CompiledSourceFingerprint) -or
+            $State.SourceFingerprint -ne $State.CompiledSourceFingerprint) {
+        Write-Host "Cloud brain runtime source fingerprint is stale; current=$($State.SourceFingerprint) compiled=$($State.CompiledSourceFingerprint)"
         return $true
     }
     return $false
 }
 
 function Invoke-CloudBrainClasspathPrepare {
+    $sourceFingerprintBeforeCompile = Get-CloudBrainSourceFingerprint -ProjectPath $BrainProjectPath
     Push-Location $BrainProjectPath
     try {
         & mvn -q compile dependency:build-classpath "-Dmdep.includeScope=runtime" "-Dmdep.outputFile=$classpathFile" "-Dmdep.pathSeparator=;"
@@ -201,6 +238,18 @@ function Invoke-CloudBrainClasspathPrepare {
     } finally {
         Pop-Location
     }
+
+    $sourceFingerprintAfterCompile = Get-CloudBrainSourceFingerprint -ProjectPath $BrainProjectPath
+    if ($sourceFingerprintBeforeCompile -ne $sourceFingerprintAfterCompile) {
+        throw "Cloud brain source changed while compiling; refuse to stamp or start mixed runtime classes"
+    }
+    $fingerprintDirectory = Split-Path -Parent $sourceFingerprintFile
+    New-Item -ItemType Directory -Path $fingerprintDirectory -Force | Out-Null
+    [System.IO.File]::WriteAllText(
+        $sourceFingerprintFile,
+        $sourceFingerprintAfterCompile,
+        [System.Text.UTF8Encoding]::new($false)
+    )
 }
 
 $state = Get-CloudBrainRuntimeState -ProjectPath $BrainProjectPath
@@ -210,7 +259,7 @@ if ($Rebuild -or (Test-CloudBrainClassesStale -State $state)) {
 }
 
 if (Test-CloudBrainClassesStale -State $state) {
-    throw "External dhxy-cloud-brain classes/resources are still stale after compile; sourceMaxUtc=$(Format-Utc $state.SourceMaxUtc) classesMaxUtc=$(Format-Utc $state.ClassesMaxUtc)"
+    throw "External dhxy-cloud-brain classes/resources are still stale after compile; currentFingerprint=$($state.SourceFingerprint) compiledFingerprint=$($state.CompiledSourceFingerprint)"
 }
 
 $dependencyClasspath = (Get-Content -LiteralPath $classpathFile -Raw).Trim()

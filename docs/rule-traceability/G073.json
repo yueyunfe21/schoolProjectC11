@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "card": "G073",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "pushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-WUHAN-004"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/业务逻辑.md",
+    "docs/business-rules.json",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G073.json",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/AutoCombatService.java"},
+    {"repo": "cloud", "path": "scripts/contracts/G073FiveRingRunnerRecoveryContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "五环已由 Runner 标记脱战后，旧恢复入口仍调用 FULL_RECOVERY Radar tick；战中任务栏 ROI 变化后还会再次调用 Radar 试图提前释放战斗状态。",
+    "userDecision": "五环战斗结束的恢复入口不能继续使用旧 Radar；ROI 变化后的二次 Radar 探测直接删除，统一等待 Runner 脱战。",
+    "decisionRecordedAt": "2026-08-13",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G073"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-WUHAN-004",
+      "producer": "Client Runner 发布 exact window/task-run COMBAT_EXITED 或更新 IN_COMBAT",
+      "transport": "Cloud coordinator 将 Runner 战斗边沿写入 exact GameContext",
+      "consumer": "FiveRingTaskV2 在 WAIT_PATHING 直接调用 recoverAfterClientCombatExit；战中 ROI 变化无 positive evidence 时只刷新基线并等待",
+      "ordering": "Runner IN_COMBAT -> panel/task ROI maintenance only -> Runner exit -> direct full recovery; newer Runner entry -> no recovery",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "scripts/contracts/G073FiveRingRunnerRecoveryContractTest.java",
+          "command": "javac -encoding UTF-8 -d target/g073-contract scripts/contracts/G073FiveRingRunnerRecoveryContractTest.java && java -cp target/g073-contract com.bot.dhxy.task.wuhuan.G073FiveRingRunnerRecoveryContractTest",
+          "proves": [
+            "五环 Runner 脱战后直接调用完整恢复",
+            "战后入口不再调用 Radar handleCombatTick",
+            "更新 Runner 入战阻止补给并继续等待",
+            "任务栏 ROI 变化不再调用 Radar 或主动释放战斗状态",
+            "无调用方的 probeWindowCombatStateReadOnly 接口已删除"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "five-ring Runner recovery source contract", "result": "PASS", "command": "isolated javac + java G073FiveRingRunnerRecoveryContractTest", "evidence": "G073_CONTRACT_EXIT=0"},
+    {"name": "isolated-output Cloud production compile", "result": "PASS", "command": "mvn -q -DskipTests=false -Dmaven.test.skip=false -Dproject.build.directory=target/g073-main-compile compile", "evidence": "G073_COMPILE_EXIT=0; active runtime target/classes was not overwritten"},
+    {"name": "business rule gate", "result": "PASS", "command": "node scripts/check-business-rule-gate.js --card G073", "evidence": "BUSINESS RULE GATE PASSED (G073)"},
+    {"name": "fresh runtime", "result": "PENDING"}
+  ]
+}

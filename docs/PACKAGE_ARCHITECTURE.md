@@ -1,5 +1,1579 @@
 # DHXY Package Architecture
 
+## G081 天庭暗雷按需饱和度飞行判定（2026-08-14）
+
+- **状态：** `SOURCE IMPLEMENTED / DUAL-REPO COMPILE PASSED / FRESH REQUIRED`。本卡只替换天庭暗雷腿停稳后的飞行
+  判定，不改变普通天庭、鬼王、抓鬼、其他任务、暗雷分类、Tracker、巡逻点或输入实现。
+- **用户定案：** Cloud 只有在当前腿已经被权威分类为暗雷并进入暗雷处理分支后，才登记临时
+  `tianting-dark-thunder-flight-saturation` interest。Client Runner 在该 interest 存在时复用 G002 exact-HWND
+  共享帧，调用 G057 已验证的窗口相对 `(688,71,67x38)` 饱和度分类器；普通 observation tick 不计算饱和度。
+- **动作规则：** fresh 事实为 `FLYING` 时执行一次既有 `Alt+C`，等待既有 `1500ms` 落地动画后直接巡逻，不再
+  打开 `Alt+U` 面板复查；`NOT_FLYING` 直接巡逻；`UNKNOWN` 保持临时 interest 并等待下一共享帧。确定结果、暗雷
+  attempt reset、换轮和任务退出都必须撤销 interest，避免后台持续采样。
+- **跨仓合同：** 两仓共享 `ObservationFactType` 新增
+  `TIANTING_DARK_THUNDER_FLIGHT_STATE`。Cloud 消费必须绑定当前 `businessTaskRunId`、`observationRunId`、
+  `windowId`、native `hwnd`，并拒绝 interest 登记前的 observer sequence 和旧 revision 事实。
+- **删除的旧路径：** 天庭暗雷不再调用 `NpcClickService.detectFlyingStateName(...)`，因此该分支不再执行
+  `Alt+U -> 350ms -> anchor capture -> Alt+U`，也不再在 `Alt+C` 后二次打开面板。其他调用者和该服务本体不改。
+- **基线与写集：** Client/治理 `D:\mavenProject\DHXY-cr271`
+  `dev@4da93bea737c20e73f177002383fbcbc94a790c9`；Cloud `D:\mavenProject\dhxy-cloud-brain`
+  `dev@847410396b3fda1cc00174910401713ff30cede4`。精确源码写集为 Client
+  `FlyingSaturationLocalMechanics.java`、`WindowObservationSampler.java`、共享 `ObservationFactType.java`，Cloud
+  同名共享枚举、`TiantingTask.java`、`TiantingDarkThunderPlan.java`；保护基线 `D:\mavenProject\DHXY` 不修改。
+- **验收：** 两仓生产编译、共享枚举 byte-identical、精确写集 `git diff --check` 必须通过；fresh 需看到 interest
+  只在确认暗雷后登记，随后产生并消费一条同窗 fresh 饱和度事实，确定结果立即撤销。`FLYING` 只出现一次
+  `Alt+C` 且不出现 `Alt+U`；`NOT_FLYING` 不发送飞行按键并直接进入既有巡逻。
+- **离线结果：** Client `mvn -q -DskipTests compile` PASS；Cloud `mvn -q -DskipTests=false compile` PASS；共享
+  枚举 byte-identical，精确写集 `git diff --check` PASS。按用户边界未启动 runtime/UI/input/tests；本卡保留
+  fresh gate。
+
+## G080 Runner 绿链单一移动判据与同帧位置缓存（2026-08-14）
+
+- **状态：** `P1 SOURCE REPAIRED / OFFLINE ACCEPTANCE PASSED / FRESH REQUIRED`。固定 `45x12` 横向框已删除；
+  生产 Runner 现在从同一完整位置图动态定位坐标括号，只裁括号内部完整 `X,Y` 数字。用户已确认实际 marked 图，
+  一至三位坐标的五张多地图生产 replay 通过；目标工作树固定为 `D:\mavenProject\DHXY-cr271`，
+  `D:\mavenProject\DHXY` 保护基线未改。
+- **现场根因：** 绿链点击后的 Runner 同时维护两套移动判据：共享帧内 `45x12` 坐标数字像素变化只负责
+  调度，而 `coordinateMovementObserved` 最终由 Cloud 返回的逻辑 X/Y 与新 intent 启动时继承的
+  `gameState/lastKnownPathingLocation` 比较得出。旧地图/坐标缓存因此会把新腿误判为已移动，也会把真实移动
+  误判为未移动。另有 pre-combat 坐标更新再次调用 `captureToMemory`，违反同一观察周期单次 HWND 抓图边界。
+- **用户定案：** 绿链点击后是否移动只认 Runner 的 exact-intent 图像变化；删除逻辑坐标/旧缓存作为移动证明的
+  分支。每个 G002 共享周期只从整窗共享帧裁一次窗口相对 `(46,59,178x35)` 的完整“地图名+坐标”图；在这张
+  内存图中动态定位左右括号，只裁括号内部完整 `X,Y` 数字，地图名与括号不得进入移动判据。子图任意一次超过
+  既有 `5%` 阈值的变化即锁存 `coordinateMovementObserved=true`，直到 exact intent 结束。
+- **缓存边界：** 地图名和 X/Y 缓存继续保留给导航、到达、NPC 与战斗恢复消费者，但只允许由同一张完整
+  `178x35` 图经现有 Cloud `PlayerStateLocationRecognizer` 的结构化结果更新；不得在新 intent 建立时把旧
+  `gameState` 或 `lastKnownPathingLocation` 填成当前腿基线，也不得用缓存变化证明本次移动。pre-combat/terminal
+  位置更新必须复用已裁出的同帧完整图，不得额外抓图。
+- **验收门：** 使用完整游戏窗口原图做离线 replay，必须同时交付：①原图；②标出完整 `178x35` ROI 与生产
+  动态数字裁剪的 marked 图；③完整位置图；④生产裁剪实际只含完整 `X,Y`，不含地图名/括号；⑤至少覆盖一至三位
+  坐标的多地图样本；⑥生产 `PlayerStateLocationRecognizer` 对同一完整 ROI 返回正确 `mapName/x/y`。任一项失败
+  均不得关闭 G080。
+- **基线：** Client `dev@4da93bea737c20e73f177002383fbcbc94a790c9`（与 upstream 一致）；Cloud
+  `dev@847410396b3fda1cc00174910401713ff30cede4`（与 upstream 一致）。两仓当前均有大量既存 dirty/untracked，
+  本卡只增量修改精确写集，不回滚、不覆盖、不清理、不提交。
+- **精确写集：** `WindowObservationSampler.java`、`WindowRuntimeContext.java`、Cloud 只读手工验收工具与证据图、
+  `docs/业务逻辑.md`、`docs/business-rules.json`、`docs/rule-traceability/G080.json`、本文件、
+  `docs/ACTIVE_WORK.md`、`docs/云端迁移常见错误清单.md`、`docs/cr-dashboard-data.js`。Cloud 生产识别器只读复用，
+  Cloud 生产识别器本体只读复用，不修改其算法。
+- **实现结果：** Runner 每个 G002 周期先从同一 exact-HWND 整窗共享帧裁一次完整 `178x35` 位置条，再从该内存图
+  按白色文字组件、左右括号形状、逗号与两侧数字结构动态裁出数字区；数字像素变化在 exact intent 内直接锁存
+  `coordinateMovementObserved=true`。新 intent 不再
+  从 `gameState/lastKnownPathingLocation` 继承移动基线，Cloud 返回的 `mapName/x/y` 只更新导航兼容缓存。pre-combat
+  位置证据复用该周期位置条，不再第二次 `captureToMemory`；Runner reset 同时清空当前/上一位置条，禁止跨运行继承旧帧。
+- **离线验收修复：** 输入 `images/temp/hwnd-AD816B4/latest_vision.png` 为完整 `1024x768` 游戏窗口；输出目录
+  `images/test-cases/runner-position/` 包含原图、`g080-position-marked.png`、完整位置条、两份数字子图和文字报告。
+  旧绝对裁剪 `(118,70,45x12)` 与新嵌套裁剪 `(72,11,45x12)` 虽然 `pixelIdentical=true`，但实际内容只有
+  `[86,1`，遗漏第二坐标末位 `7` 和右括号；因此该证据明确判 FAIL。基线 `4da93bea` 与引入提交 `2f083c14`
+  均确认当前 CR271 迁移线的 `45x12` 未被本卡改小，而是迁移实现本来就只截局部数字；但受保护业务基线
+  `D:\mavenProject\DHXY@696a12b0` 的 `MiniMapCoordinateReader` 并不使用固定 `45x12`：它先截完整
+  `(46,59,178x35)`，动态寻找左右括号，再只用 `leftBracket.maxX+2 .. rightBracket.minX-2` 读取括号之间的数字，
+  左括号和地图名均不进入坐标判据。此前把 CR271 当前框称为“原来 ROI”是错误基线比较。完整红框仍能让生产识别器正确返回
+  `长寿村外(86,17)`，但不能替蓝框的完整坐标验收。修复不得只按本图硬改为 `55`：地图名和一至三位坐标长度会变化，
+  本轮按该反证删除固定横向范围。编译后的生产 `WindowObservationSampler.cropMovementDigits(...)` 在用户确认图上
+  实际输出完整 `86,17`，不含地图名或括号；另以现有原图回放 `224,101`、`120,83`、`95,84`、`94,85`，五份
+  输出均完整且宽度随位数变化。证据为 `g080-position-marked.png`、`g080-position-digits-12x.png`、
+  `g080-production-multimap.png` 和 `g080-position-acceptance.txt`。Client `mvn -q -DskipTests compile` 通过；按本卡
+  当前门禁未运行测试。
+- **Fresh gate：** 实际点击一条 Tracker 绿链后，日志必须只由 Runner 数字图变化锁存本 intent 的 movement；不得出现旧
+  `mapName/x/y` 在 intent 建立时成为移动证明，不得因 pre-combat 位置更新新增 HWND capture。真实到达/停止仍须由既有
+  terminal 坐标识别完成，fresh 通过前 G080 不标记 CLOSED。
+
+## G079 鬼王/天庭复用修罗公共维护窗口且明确禁用盒子（2026-08-13）
+
+- **状态：** `P1 源码已修，Cloud production compile 通过，待 fresh`。公共 maintenance 与 G076 缓存计划消费者
+  已真实可达；人物/宝宝补给右键已从 `0ms` 改为明确按住 `100ms`。
+- **用户定案：** 鬼王、天庭不得创建任务私有的补给/三技能执行器，必须像修罗一样接入公共
+  `TaskMaintenanceService` maintenance 窗口。队员补血补蓝、三技能、左上状态等仍由现有 UI 开关和间隔决定；
+  任务只提供本任务的参数。鬼王与天庭均无通用盒子业务，任何维护窗口都不得开放 `COMMON_BOX`。
+- **当前差异：** 鬼王点 Tracker 绿链后已调用 `openTeamPathingMaintenanceWindow(...)`，但旧接口无任务能力参数，
+  因而错误开放 `COMMON_BOX`；天庭绿链成功后只调用 `openTeamFirstAidMaintenanceWindow(...)`，导致
+  `SUMMON_SKILL`、`LEFT_TOP_STATUS` 与真正的 pathing maintenance 窗口均未开放。G076 中“天庭保留窄窗口”的
+  旧讨论被本卡用户定案覆盖，不再作为实现依据。
+- **公共窗口边界：** 公共接口接收不可变参数对象，统一开放 `FIRST_AID`、`PATHING_WINDOW`、
+  `SUMMON_SKILL`、`LEFT_TOP_STATUS`，并仅按参数决定是否开放 `COMMON_BOX`。盒子默认关闭且是封闭白名单：只有
+  修罗、五倍显式 `commonBoxEnabled=true`；鬼王、天庭、抓鬼、江湖历练及其他当前任务均不得开放、检测或消费盒子。
+  `CommonBoxService` 支持表也只保留 `xiuluo_v2/wubei`，战后入口先核对支持表再决定是否发观察请求。
+- **医宝宝 NPC 参数边界：** 用户确认各任务的医宝宝 NPC 名字均为 `超级巫医`，`WUYI` tooltip 类型、
+  `npc_wuyi_tooltip.png` 与 `heal_pet_option.png` 模板也相同，只有地图和地图坐标不同。新增公共
+  `HealPetMaintenanceNpcProfile` 固定这些共享事实，任务只传 `key/source/map/x/y`；已无语义改动地接入修罗
+  `灵兽村(116,70)`、鬼王/抓鬼 `洛阳城(324,109)`、江湖历练 `东海渔村(150,9)`。用户确认五倍是合法例外，
+  继续使用宝象国 `沙拉买提(95,126)`，不得改成超级巫医。天庭超级巫医不支持 tooltip，当前明确不接队长主动
+  医宝宝 NPC 流程；这不影响天庭已接入的队员急救、三技能和左上状态公共 capability。
+- **天庭未来边界（暂缓）：** 若以后单独开启天庭医宝宝故事，只能使用经过实机/回放确认的任务专属 hardcoded
+  地图坐标或已验证记忆坐标，并以黄字目标作为允许的视觉路径；不得复用 `WUYI` tooltip 模板，也不得声称存在
+  tooltip fallback。坐标和最终点击点必须按视觉点击规则保存 testcase 并输出标注图后才能进入生产。
+- **G076 接续：** Runner 驱动的本地成员 FREE 分支必须在提前返回前接回现有公共消费者，顺序仍是盒子（若该
+  capability 与业务都存在）后急救。自身脱战 `+1500ms` 只截图并缓存，真实右键仍须等队长绿链成功、释放
+  task-turn、进入 PARK 且 capability 开放后再竞争公共 task-turn。
+- **实现与验证：** `G079SharedMaintenanceWindowContractTest`、G076、G074 三项 source contract 均 PASS；Cloud
+  `mvn -q -DskipTests=false compile` PASS，精确写集 `git diff --check` PASS。定向合同固定鬼王/天庭无盒子、
+  天庭宽维护、修罗/五倍显式盒子白名单、Runner FREE 分支消费者顺序及共享超级巫医 profile。fresh 仍须验证
+  `SUPPLY_NEEDED -> capability opened -> task-turn acquired -> cached plan consumed -> CLICK_RIGHT`，同时鬼王/天庭
+  不得出现 common-box 观察或消费。天庭主动医宝宝 NPC 不属于本卡 fresh gate，保持暂缓。
+- **2026-08-14 11:27 fresh 失败（P1）：** 当前“光牛的滑子”是 `hwnd-215137A`。该窗口于
+  `11:27:16.346` 以自身 exact Runner generation 11 确认脱战；`11:27:17.850-17.925` 截取窗口绝对
+  `(2301,237,198x17)` 状态条；`11:27:18.443` 收到人物法力补给动作，`11:27:18.540` 用
+  FakerInput 在绝对 `(2477,253)` 执行右键，换算窗口基准 `(1478,152)` 后为相对 `(999,101)`，正是
+  `playerMp=true/70` 的人物法力 70% 点。动作终端虽为 `COMPLETED`，用户现场确认蓝条没有补上；下一战
+  `11:29:18.370-18.542` 再次截条并于 `11:29:26.392` 对同一点再次右键，说明旧 fresh gate 只证明了消费者
+  与输入链可达，不能证明游戏效果。
+- **代码证据与根因：** `CloudPlayerStateFirstAidPort.executeTargets(...)` 构造 `CLICK_RIGHT` 时
+  `clickDelayMs=null`；Client `TurnInputActionMapper.requireClickTiming(...)` 将 null 变成 `0`，FakerInput 随即
+  连续发送 button-down/button-up，没有任何按住时间。更关键的是 `PlayerStateService.performCachedFirstAidPlanNow(...)`
+  只要协议动作终态为 `COMPLETED` 就立即 `checksDoneThisRound++` 并返回成功；没有在 800ms settle 后复拍同一
+  状态条、没有确认目标条恢复，也不会在游戏忽略右键时保留计划或补点。因此日志中的 `COMPLETED` 只表示驱动调用
+  完成，不表示人物法力已恢复；这是本轮“有 CLICK_RIGHT 但没补蓝且不重试”的确定代码原因。
+- **用户收窄与实现：** 用户确认本轮不增加 post-action 复拍/补点状态机，只修第一次右键为何失效。
+  `CloudPlayerStateFirstAidPort` 复用已有真实鼠标输入的 `100ms` hold 基线，为共享人物/宝宝 HP/MP
+  `CLICK_RIGHT` 显式填写 `clickDelayMs=100`；保留原 `800ms` target settle、safe move、公共 `FIRST_AID`
+  capability、task-turn 和一次检查额度。Cloud production compile 通过，`git diff --check` 通过。
+- **Fresh gate：** 同一低蓝窗口应看到 Client `InputAction{type=CLICK_RIGHT,...delayMs=100}`，并在游戏画面中实际补蓝；
+  不得再出现 `delayMs=0`。本轮不要求新增第二次状态条 capture。
+
+## G078 通用归队协调器缺失及战后死亡被任务框指纹错误压制（2026-08-13）
+
+- **状态：** `P1 fresh 失败，REPAIR REQUIRED`。静态 review 曾为 `PARENT APPROVED / P0/P1/P2=0`，但
+  2026-08-14 首轮天庭 fresh 已证明战后物理上下文仲裁会越过仍存在的任务 title/新鲜 Tracker，卡不得关闭。
+- **现场：** 2026-08-13 约 `21:58:27`，天庭队长 `hwnd-215137A / role=LEADER` 脱战后检测到
+  离队信号并打开 `TEAM_RETURN` capability，四个成员随后执行归队。队长在成员全部归队后关闭 capability，
+  日志明确记录 `team return signal cleared; resume=RUN_SUBTASKS`；整段没有任何 `PRESS_ALT_T`、
+  `GHOST_KING_TEAM_RETURN_PANEL_OPEN/PROBE` 或队伍面板本地判定记录。
+- **P1-1 架构缺口：** `TeamReturnService` 虽被修罗、五倍、天庭、抓鬼、江湖历练、鬼王和独立自动战斗共同
+  使用，但它只统一了底层观察/归队动作，没有统一队长侧完整生命周期。G067 的
+  `Alt+T -> not_returned_yet.png -> park/close` 栅栏只由 `GhostKingTask` 调用，Client/Cloud 协议名也仍是
+  `GHOST_KING_TEAM_RETURN_PANEL_*`；天庭等任务继续各自维护 `zhao.png`、PARK 和恢复 phase。这不是合法的
+  任务差异，而是共享能力只抽取了一半，导致同一条归队规则必须逐任务返修。
+- **P1-2 战后双门串联：** capability 清除后，Cloud 于 `21:59:02.247` 收到当前天庭 Tracker 的
+  `PREPARED_ACTION_READY`，但 `G013` 将其判为 `UNCHANGED`，日志连续出现
+  `ignoring unresolved post-combat tracker link: reason=UNCHANGED`。随后决策固定为
+  `PARK_IDLE / trackerLinkReady=false`。实际效果是归队 PARK 已解除，紧接着另一个互不知情的指纹门又把同一
+  战后流程 PARK；当前没有唯一的战后仲裁所有者。
+- **P1-3 死亡事实缺失：** 用户确认本轮角色进入战斗后死亡，脱战画面的地图已不同于进战地图。当前 G013 只比较
+  左侧任务框 fingerprint，没有把“进战前地图/脱战后地图变化或死亡复活”纳入事实，因此即使人物已经被复活到
+  另一地图，仍可把任务框文字相同解释为 `UNCHANGED`。本轮日志没有保存 exact 脱战地图帧，正是当前观察合同
+  没有采集该事实；`UNCHANGED` 只能证明任务文字相似，不能证明人物仍处于原执行上下文。
+- **拟议通用修复边界：** 新增一个真正共享的归队协调器，由它按 exact window/taskRun 独占管理
+  `IDLE -> TRIGGERED -> PANEL_OPEN -> WAITING -> COMPLETE`；`zhao.png` 只负责触发，协调器统一完成一次
+  `Alt+T`、本地完整面板探测、fail-closed PARK、关闭面板和完成事件。任务只提供“完成后恢复到哪个 phase”，不得
+  再自行维护归队锁、面板开关或 PARK。现有 `GHOST_KING_TEAM_RETURN_PANEL_*` 应泛化为
+  `TEAM_RETURN_PANEL_*` 并让所有需要归队的任务复用，而不是继续给天庭加一份同类代码。
+- **单一战后仲裁：** 进入战斗时锁存本轮 `combat generation + pre-combat map + task-box fingerprint`；exact Runner
+  确认脱战后只允许一个 post-combat arbiter 产生下一步。若地图相对进战前发生符合死亡/复活的变化，先进入死亡
+  恢复/归队路径，并使旧 fingerprint 失效；只有物理执行上下文仍一致时，才允许 `UNCHANGED` 决定继续同一暗雷腿。
+  归队协调器返回 COMPLETE 后必须回到该仲裁器得到一个可执行动作，不得再落入第二个无动作的 `PARK_IDLE`。
+- **fresh gate：** 所有任务共用同一日志链：`RETURN_TRIGGERED -> Alt+T OPEN -> PANEL_PRESENT/UNKNOWN PARK ->
+  PANEL_MISS -> Alt+T CLOSE -> RETURN_COMPLETE`。死亡场景必须记录进战地图与脱战地图，地图变化时不得出现
+  `UNCHANGED -> PARK_IDLE`；归队完成后同一轮必须立即得到且只得到一个后续动作。不得同时存在两个 PARK owner。
+- **2026-08-13 父级 review P1-1（本地 run 隔离未闭合）：** Client
+  `TeamReturnPanelLocalOperation.locallyOpenedPanelWindows` 仅按 `windowId` 缓存。暂停/新 `taskRunId` 会继承旧 run 的
+  “已开面板”内存，既可能跳过实际 `Alt+T`，也可能在旧物理面板仍打开时反向关闭却记成 `OPENED`。必须按 exact
+  `windowId + hwnd + businessTaskRunId` 持有所有权，并对 run 替换/停止时由旧 run 打开的物理面板作确定性收尾；旧
+  `GhostKingTeamReturnLocalOperation` 重复实现必须收敛，不能留下两套物理入口。
+- **2026-08-13 父级 review P1-2（双 PARK 仍存在）：** `TiantingTask.waitForTeamReturn()` 在
+  `WAIT_TEAM_RETURN_AFTER_COMBAT` 得到 `COMPLETE` 后只恢复 `RUN_SUBTASKS`，没有关闭本轮
+  `combatExitedAtMs/preCombatTaskBoxFingerprint` fence；随后 `preparedTrackerLink()` 仍可将同一任务框判为
+  `UNCHANGED` 并再次进入 `PARK_IDLE`。归队 COMPLETE 必须交回唯一 post-combat arbiter，并明确消费/失效旧 fence，
+  不能串联第二个无动作 PARK。
+- **2026-08-13 父级 review P1-3（死亡事实不可达且动作错误）：** 第一版只从 Cloud `GameContext` 读取
+  `currentMapName`，但现有 Client `POSITION_SAMPLE` 只在 pre-combat coordinate frame/pathing terminal 更新；死亡脱战
+  没有新鲜位置事实，比较很可能仍是旧地图。应复用 exact task-turn 下已有
+  `syncPositionInTurn() -> PlayerStateService.syncMyPosition()` 获取脱战后新鲜位置。地图变化表示旧腿和旧 Tracker action
+  失效，必须进入恢复/回接仲裁，不能把 `PHYSICAL_CONTEXT_CHANGED` 当成继续点击旧链接的许可。
+- **2026-08-13 父级 review P1-4（任务仍保存第二份 owner）：** `GhostKingRoundContext` 仍保存
+  `teamReturnGateTriggered/teamReturnPanelOpen`，与公共 coordinator stage 双写。六个队长任务只能提交初始触发事实、
+  接收 `WAITING/COMPLETE` 并选择 resume phase，不得再保留任务私有归队锁或面板开关。
+- **返修验证门：** 除原 fresh gate 外，先重跑双仓 `mvn -q compiler:compile` 与协议 byte-identical 检查；静态 review
+  必须证明暂停/新 run 不继承面板缓存、归队 COMPLETE 后旧 G013 fence 不可再次 PARK、死亡地图变化使用新鲜 exact
+  window 位置且不会消费旧 Tracker action、六个队长任务无第二份归队状态 owner。按用户当前授权不运行测试。
+- **返修结果与父级结论（2026-08-13）：** Client 的面板 owner 已改为 exact
+  `windowId + hwnd + businessTaskRunId`，并新增 `TEAM_RETURN_PANEL_CLOSE` 处理停止/替换 run；Cloud 仅由共享
+  `LeaderTeamReturnCoordinator` 保存 gate stage，修罗、五倍、天庭、抓鬼、江湖历练、鬼王六个队长任务均在终态
+  `release(...)`，鬼王私有 `teamReturnGateTriggered/teamReturnPanelOpen` 已删除。天庭战后改为同一仲裁器内的
+  `UNKNOWN/SAME/CHANGED` 三态：`UNKNOWN` 最多 5 次有界重读且不得进入 fingerprint 判断；`CHANGED` 清除旧
+  prepared Tracker action 并回到 `ACCEPT_TASK`；只有 `SAME` 才允许判断任务框连续性。归队 COMPLETE 也回到这一个
+  仲裁器，旧 `combatExitedAtMs/preCombatTaskBoxFingerprint` fence 在产出 resume phase 时确定性清除，不再串联第二个
+  `PARK_IDLE`。父级源码复审未发现剩余 P0/P1/P2。
+- **静态验证（2026-08-13）：** Client `D:\mavenProject\DHXY-cr271` 与 Cloud
+  `D:\mavenProject\dhxy-cloud-brain` 的 `mvn -q compiler:compile` 均 PASS；
+  `TurnLocalOperation.java`、`TurnWholeTaskRuntimeArguments.java`、`TurnProtocolValidator.java` 双仓 SHA-256
+  分别一致；两仓 G078 精确写集 `git diff --check` PASS。按用户授权未运行测试，也未启动 runtime/application/
+  Task/poller/UI/capture/input。
+- **待 fresh（关闭门）：** 重启 Client/Cloud 后实跑一次“成员死亡后归队”和一次“地图变化/死亡复活”天庭场景。
+  必须看到唯一链路 `trigger -> panel open -> WAITING -> panel miss/close -> COMPLETE -> post-combat arbiter ->
+  executable resume`；`UNKNOWN` 只能有界重试，归队 COMPLETE 后不得再出现同一旧 fingerprint 导致的
+  `UNCHANGED -> PARK_IDLE`。原“地图变化必须进入 `ACCEPT_TASK`”关闭条件已被 2026-08-14 fresh 反例推翻，改以
+  后续 P1 返修门为准。fresh 未完成前保持卡开放。
+- **2026-08-14 P1 fresh 失败（战后错误回天宫）：** 队长 `hwnd-AD816B4` 于 `10:20:29.587` 被 exact Runner
+  确认脱战；Cloud 随后明确得到 `titlePresent=true`，Observer 又保存了当前 Tracker
+  `taskBoxChange=UNCHANGED score=0.999048`，并连续把当前任务识别为暗雷（约 `0.9983`）。但是
+  `TiantingTask.refreshPostCombatPhysicalContext()` 用进战时缓存的 `GameContext.currentMapName=天宫` 与脱战后
+  fresh 同步的 `御马监` 比较，判成 `CHANGED`；`completePostCombatArbitration()` 在读取 prepared Tracker 前即清槽并
+  返回 `ACCEPT_TASK`。Client 因此于 `10:20:33.682` 执行 `Alt+2`，随后输入 `tg` 并导航天宫，正是用户看到的
+  “战斗后回城、不继续左侧任务”。这里不是没看 title，而是地图分支错误覆盖了 title/Tracker 证据。
+- **P1 根因与修复方向：** `preCombatMapName` 来自未做 fresh sync 的 `GameContext` 缓存，跨图寻路后仍可保留接任务时的
+  `天宫`，不能作为死亡/复活的权威前态；且“地图不同”只能废弃旧腿/旧 fingerprint，不能等价为“任务不存在”。战后
+  必须先以 fresh title 三态决定任务是否仍在：title 存在时继续消费 fresh Tracker（同一暗雷继续巡逻，任务框更新则
+  进入新子任务）；只有 title 明确消失才允许整轮完成并回城。地图前后态只有在两端都是 exact-window、同 generation
+  的 fresh 样本时才能作为死亡恢复证据，并且不得绕过 title 仲裁。预计精确写集为 Cloud
+  `TiantingTask.java` 及其 G078 合同；Client 无行为改动。
+- **返修 fresh gate：** 在“天宫接任务 -> 绿链跨图到御马监 -> 战斗 -> 脱战且天庭 title 仍存在”场景，必须记录
+  `title=PRESENT -> tracker consumed -> RUN_SUBTASKS`，不得出现 `selected ACCEPT_TASK after map change`、`Alt+2`
+  或导航天宫；另保留“title 明确消失 -> RETURN_HOME”和“真实死亡/复活但 title 仍在 -> 恢复后继续当前任务”两条。
+- **2026-08-14 P1 返修实施：** Cloud 仅修改 `TiantingTask.java`。进战前地图不再读取可滞后的
+  `GameContext.currentMapName`，只接受当前 Runner pathing snapshot 的地图；没有 exact 腿地图时保持 `UNKNOWN`。
+  战后仲裁顺序改为 fresh title 三态优先：prepared Tracker 存在即 `PRESENT`，连续 fresh title miss 达既有阈值才是
+  `ABSENT`，其余均为 `UNKNOWN` 并按有界 park slice 重读。地图 `CHANGED` 只记录旧位置腿失效，不再清除 prepared
+  Tracker、覆盖 title 结论或返回 `ACCEPT_TASK`。
+- **父级 review：** `P0/P1/P2=0`。第一版返修仍会在 `CHANGED` 时提前清 fingerprint、把 fresh 暗雷降为普通腿，已退回
+  worker 修正；最终版保留 fingerprint 直到 Tracker 比较完成，`UNCHANGED + freshDarkThunder=true` 保持
+  `state.darkThunder=true` 并进入 `RUN_SUBTASKS` 继续同一暗雷巡逻，`FRESH` 才按新子任务交回绿链流程。不存在
+  “地图不同 -> ACCEPT_TASK”出口；日志使用 `Tracker retained`，不再把 peek 写成 consume。
+- **验证：** `git diff --check -- src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java` PASS；父级使用隔离输出目录执行
+  `mvn -q "-Dproject.build.directory=target/codex-g078-parent-review" compiler:compile` PASS。按用户长期授权未运行测试，
+  未启动/停止 runtime、Task、poller、UI、capture 或 input。
+- **当前状态与 fresh gate：** 源码返修和父级静态 review 已通过，卡继续保持开放。重启后原反例必须出现
+  `post-combat title=PRESENT` 与 `same dark-thunder Tracker retained -> RUN_SUBTASKS`，随后继续巡逻；不得出现重复点击
+  同一绿链、`ACCEPT_TASK`、`Alt+2` 或导航天宫。另验 title 连续 fresh miss 达阈值后才 `RETURN_HOME`，单次 UNKNOWN
+  只能 park，不能冒充 title 消失。
+
+## G077 暂停热恢复清空任务累计次数（2026-08-13）
+
+- **状态：** 双端生产编译与 5 项 G077 独立合同通过，待 Client/Cloud 重启 fresh。
+- **现场证据：** `21:45:53.769` 五个天庭窗口在 `RUNNING` 时执行暂停；随后五窗均记录
+  `[task-runtime-reset] ... remote turn paused; fresh start required`。队长旧运行终态仍在
+  `phase=RUN_SUBTASKS round=5`。`21:51:58.758` 执行 `PAUSE_RESUME` 后创建全新
+  `taskRunId=remote-turn-74816...`，说明当前恢复确实走“清空瞬时状态后重新热启动”的设计边界。
+- **代码根因：** Client `WindowRuntimeContext.clearTaskExecutionState()` 与 `markStarted()` 都调用
+  `clearTaskRunProgress()`，暂停清场和新运行开始各清一次 UI 次数；Client 只保留格式化字符串，没有保留可供续跑的
+  数值进度。Cloud `TiantingTask.execute()` 又无条件执行 `completedSubtasks=0`、
+  `setCurrentTaskProgress(0)`、`updateProgress(0, maxSubtasks)`。当前 `TurnTaskStartRequest` 只有
+  `taskCodes/taskMaxRuns`，没有暂停前累计次数，因此 Cloud 新任务无法恢复真实剩余次数。
+- **风险定性：** 这不只是 UI 文本问题。天庭循环上限使用 `completedSubtasks < maxSubtasks`；只保住界面文字却让
+  Cloud 从 `0` 继续，会导致热恢复后可能多跑。李靖“今日已完成次数”OCR 只能在之后重新进入接取界面时向上校准，
+  不能保证战中暂停恢复后立刻显示正确，也不能代替续跑快照。
+- **用户批准与实现：** 暂停前按 exact window/current task 保存数值型 `completed/total` 续跑快照；暂停仍清理路径、
+  点击、对话、观察与战斗等瞬时状态，但 `PAUSED` UI 保留原次数。`PAUSE_RESUME` 启动协议新增与队列元素对齐的
+  `taskInitialCompletedRuns`，Cloud runtime 将其绑定到 exact task metadata；天庭从该值初始化
+  `completedSubtasks`、`GameContext` 与首次 UI 回推，循环仍按 `completedSubtasks < maxSubtasks` 计算剩余次数。
+  STOP、冷启动、任务终态、任务/总数不匹配和成员角色投影到 `AUTO_BATTLE` 时均归零，禁止跨任务、跨窗口复用；
+  后续日计数 OCR 保持既有“只向上校准”规则。
+- **验证：** Client production compile PASS、Cloud production compile PASS；Client G077 独立 JUnit 3/3 PASS，
+  Cloud 天庭初始化与协议合同 2/2 PASS，精确写集 `git diff --check` PASS。两仓聚合 `testCompile` 被写集外既有
+  测试漂移阻断：Client 缺 `TurnContractFixtures.LocalPathingStartProofMechanics`，Cloud 仍引用旧构造器和已删除 API；
+  本卡未修改这些旧测试。
+- **fresh gate：** 用有限次数天庭在战斗中暂停：暂停前若为 `N/总数`，`PAUSED` 期间必须仍为 `N/总数`；恢复的新
+  `taskRunId` 首次进度也必须为 `N/总数`，完成条件按剩余次数计算。另验 STOP/冷启动从 `0` 开始、多窗口成员不
+  冒用队长次数、旧运行迟到进度不能覆盖新运行。
+
+## G076 本地队员按队长脱战过早补给，光牛的滑子长期不补蓝（2026-08-13）
+
+- **状态：** `P1 三次 fresh 的直接故障已修，待 fresh`。自身脱战门和 Runner 缓存消费者均已生效；共享补给
+  右键已从 `0ms` 改为 `100ms` hold，本轮按用户要求不增加 post-action 复拍。
+- **窗口身份与配置：** 光牛的滑子为 `hwnd-98F166E`，本轮角色是本地天庭队伍 `MEMBER`，实际任务
+  `auto_battle`、requested task `tianting`；启动设置明确为 `playerMp=true/70`，不是没有启用补蓝。
+- **现场铁证：** 运行约 56 分钟、24 个 Runner generation 中，该窗口每轮都有 `198x17` 状态条截图，但从
+  `20:49` 到暂停没有一次 `CLICK_RIGHT`。generation 24 中，队长于 `21:44:55.921` 报脱战，光牛状态条于
+  `21:44:57.918-57.990` 被截取，而光牛自己的 Runner 到 `21:44:59.019` 才报脱战，截图早了约 `1.0s`；
+  generation 23 同样在自身脱战前约 `0.8s` 截图。多轮队员相对队长的脱战延迟约 `0-4.3s`，固定 `1500ms`
+  无法保证画面已落到该窗口的场外状态。
+- **代码根因：** G063 为避免双 generation，`CloudFastExpectedCombatExitCoordinator` 对本地 MEMBER 的
+  direct `COMBAT_EXITED` 直接 return；`AutoBattleTask` 的 exact Runner 消费又只给非 follower 的 standalone
+  模式使用。于是队员补给只由 leader broadcast 驱动，G074 的 `1500ms` 从队长退出时刻开始计时，本窗口真正
+  退出时不会再触发恢复。
+- **1.5 秒规则澄清：** 用户原意是“每个窗口以自身 exact Runner 脱战为零点，满 `1500ms` 后才开放该场
+  战后的既有截图/补给检查”，不是“从队长脱战后睡 `1500ms` 就立即拍”，也不是把整个任务改成只检查一次。
+  `MAX_CHECKS_BETWEEN_BATTLES=1` 是旧基线已有的每场有效结论额度，并非 G074 新增；当前故障在于这个额度可能被
+  一张早于成员自身脱战的过渡帧错误消耗。
+- **拟议修复边界：** 继续让队长广播作为队伍战斗 phase/generation 的唯一业务权威，不把成员 direct edge
+  变成第二战斗权威；但成员自己的 direct `COMBAT_EXITED` 必须作为该窗口“允许读取 HP/MP/发送补给”的物理
+  readiness gate。leader exit 只武装待补给，等 exact member exit 后再执行现有 G074 稳帧和 `FULL_RECOVERY`。
+  禁止用更长固定延迟猜窗口何时脱战。预计文件为 `CloudFastExpectedCombatExitCoordinator.java`、
+  `AutoBattleTask.java`/`AutoCombatService.java` 中最窄的现有边沿消费边界及定向合同。
+- **Fresh gate：** 同队一场战斗中，光牛先记录 leader exit armed、后记录自身 exact Runner exit，再等待
+  `elapsedMs>=1500` 并截图；低于 `70%` 时必须出现该窗口 `CLICK_RIGHT`，且截图不得早于自身 exit。成员 direct
+  edge 不得改变队伍 generation、不得造成重复战后恢复。
+- **用户批准后的实现：** 新增内部 ready-event `MEMBER_COMBAT_EXIT_READY`。Coordinator 继续用 leader broadcast
+  唯一修改成员 `GameContext`；成员 direct Runner 边只进入独立 `CombatEdgeGate` 配对，只有自身 exit 发布 readiness，
+  不写队伍状态。`AutoCombatService` 用 leader-exit armed 与 member-exit observed 两个闩锁汇合，兼容任一先到；
+  `AutoBattleTask` 消费并等待两类事件。恢复等待改为以 member event `createdAtMs` 为锚，只补足到
+  `ownExitAtMs + 1500ms`，完成后清除两闩锁，下一战 leader entry 也会清理残留，避免重复恢复。人工复核又补齐
+  leader exit 恰在面板维护期间发生的竞态：保留 enter-handled 直到出口武装完成；等待成员自身 exit 期间返回 busy，
+  禁止空闲回队/维护提前运行。
+- **验证：** `G072AutoBattleRunnerRecoveryContractTest`、`G074PostCombatFrameSettleContractTest`、
+  `G076MemberOwnExitFirstAidGateContractTest` 均 PASS；`mvn -q -DskipTests=false compile` PASS；精确写集
+  `git diff --check` PASS。命名 `TiantingSubtaskLoopContractTest` 被写集外既有全局 `testCompile` 债阻断，错误为旧测试
+  构造器/已删除 API 不匹配，不是 G076 production compile 错误。
+- **2026-08-13 23:04 fresh 失败（P1）：** G076 的成员自身脱战门和 `1500ms` 稳帧均已真实生效。光牛的滑子
+  `hwnd-98F166E` 在 generation 2 的自身 Runner exit 为 `ownExitAtMs=1786676659615`，随后记录
+  `elapsedSinceOwnExitMs=1502`；`23:04:21.139-21.436` Client 对该 exact window 完成 `198x17` 状态条截图，Cloud
+  明确判定 `人物法力 below 70%`、`precheck=SUPPLY_NEEDED` 并设置 `pendingFollowerFirstAid=true`。同一窗口之后没有
+  `pending follower first-aid ... queued/acquired`，Client 也没有 `CLICK_RIGHT`；后续只见 500ms ready-event timeout 和
+  普通 idle maintenance。第三代战斗再次重复 `SUPPLY_NEEDED`，仍未执行右键。
+- **二次根因与待批准修复方向：** `AutoCombatService.handleCombatTick()` 的 Runner/leader-broadcast 分支在
+  `finishMemberRecoveryAfterOwnExit()` 返回 `EXIT_RECOVERED` 后提前退出；下一 tick 又在该 Runner 分支的末尾直接
+  `return NONE`。真正消费 `runPendingMemberCommonBoxIfAllowed()` / `runPendingFollowerFirstAidIfAllowed()` 的代码只位于
+  旧 Radar 分支，因此本地队员的缓存补给计划永久搁置，`AutoBattleTask.maybeRunIdleMaintenance()` 也不会消费它。
+  最小修复是在现有 Runner 驱动的 FREE 分支、提前返回之前，按既有顺序尝试 common-box 再尝试 follower first-aid；
+  保留现有 local-team capability、task-turn、缓存计划和失败重试语义，不重新截图、不新增战斗 generation、不改变
+  leader/member readiness。fresh 必须看到 `SUPPLY_NEEDED -> FIRST_AID opened -> queued/acquired -> cached plan consumed ->
+  hwnd-98F166E CLICK_RIGHT`，且动作仍不得早于成员自身脱战后 `1500ms`。
+- **用户确认的执行时机不变量：** 成员自身 Runner exit `+1500ms` 只允许无焦点截图、判定并缓存计划，绝不直接
+  发送补给输入。实际右键必须同时晚于：队长成功点击本轮绿色链接、该点击事务以 `MUST_YIELD` 释放唯一 task-turn、
+  队长进入 `PARK_PATHING` 等待，以及本轮 `FIRST_AID` capability 开放；随后成员还必须通过现有
+  `taskTurn.enter(...)` 取得唯一输入权才可执行。23:04 现场顺序已证明现有队长侧门正确：日志 `1834` 先
+  `task.turn.release`，`1836` 才开 `FIRST_AID`，`1841` 决策为 `PARK_PATHING`，`1844` 光牛才缓存
+  `SUPPLY_NEEDED`。窄修只能把缓存计划接到这个 park 窗口的既有消费者，禁止在
+  `finishMemberRecoveryAfterOwnExit()` 内同步右键。
+- **与修罗共用机制：** 修罗在 Tracker 绿色链接及真实 pathing 提交后只调用共享
+  `TaskMaintenanceService.openTeamPathingMaintenanceWindow(...)`；该共享窗口自动开放 `FIRST_AID`，成员实际执行
+  继续由 `AutoCombatService.runPendingFollowerFirstAidIfAllowed(...)` 统一负责。修罗任务没有创建自己的队员补给
+  队列、执行器或第二套 task-turn。天庭保留现有较窄的 `openTeamFirstAidMaintenanceWindow(...)` 即可，避免误开放
+  修罗 pathing window 的其他 capability；但消费者必须接回同一个 `AutoCombatService` 公共入口，不新增天庭专属
+  方法、队列、状态或调度器。当前 Runner 分支提前返回是共享消费者的可达性缺口，不是天庭需要另造机制。
+
+## G075 蟠桃园暗雷巡逻第二个右点镜像修正（2026-08-13）
+
+- **状态：** 源码、实机图回放、定向合同与 Cloud production compile 通过，待 Cloud 重启 fresh。
+- **用户确认的实际点击序列：** 第一下保留老右点，第二下点击以旧左右间距向右镜像出的新右点，随后在两点间交替；即
+  `老右 -> 新右 -> 老右 -> 新右 -> 老右……`，不是在老右原地连续右键两次。
+- **开工证据：** 当前蟠桃园窗口相对点为老左 `(300,421)`、老右 `(420,421)`，水平间距 `120px`；
+  `TiantingDarkThunderPlan.patrolPointAt(...)` 对蟠桃园索引 `0/1` 都返回旧 `points[1]`，因此现场第二下必然原地。
+- **窄修边界：** 删除旧左点，将老右 `(420,421)` 作为新左点，并镜像生成新右 `(540,421)`；蟠桃园按
+  `新左 -> 新右 -> 新左 -> 新右……` 交替。其他地图点位、右键间隔、飞行判断、入战权威与任务阶段不变。
+- **实现与验证：** `TiantingGeometry` 的蟠桃园屏幕点由 `(1617,608)/(1737,608)` 改为
+  `(1737,608)/(1857,608)`，对应窗口相对 `(420,421)/(540,421)`；`TiantingDarkThunderPlan` 删除把索引
+  `0/1` 都映射到同一右点的特殊分支，五步合同固定为 `(420,421) -> (540,421) -> (420,421) ->
+  (540,421) -> (420,421)`，隔离 JUnit `1/1 PASS`，Cloud production compile PASS。实机原图复用
+  `images/test-cases/tianting-dark-thunder/g037-pantao-live-raw.png`，G075 标注输出为
+  `images/test-output/g075-tianting-dark-thunder/pantao-live-mirrored-sequence-marked.png`；图中灰色叉为废弃旧左，
+  黄色为老右/新左，青色为向右镜像 `120px` 的新右。Maven 临时输出目录参数未被本项目采用，compile 实际更新
+  `target/classes`；运行中 JVM 不会热加载，重启 Cloud 后 fresh 生效。
+
+## G074 09:36 补给目标复核（2026-08-13）
+
+- **状态：** 源码、合同与隔离 Cloud 编译通过，待重启 fresh。
+- **现场证据：** `09:35:54.657` 黑精窗口原始 `198x17` 状态条帧首次规划出人物血、人物法两个目标；
+  `09:35:54.678` Client 收到连续双右键动作包，实际于 `09:35:57.981` 点血、`09:35:58.850` 点法，
+  两次点击之间没有重新截图或像素复核。
+- **用户逐图预期：** 黑精补人物血+人物蓝；单飞补人物蓝（人物血可疑）；火鸡补人物蓝；乌龟不补给。整窗
+  仍显示战斗画面不能单独否定右上角状态条 ROI 的可读性。
+- **实际行为：** 黑精执行人物血 `(2331,300)`、人物蓝 `(2331,316)`；单飞只执行人物蓝 `(2353,149)`；
+  火鸡只执行人物蓝 `(2370,410)`；乌龟 `targets=[]` 且无点击。四窗与用户预期一致。
+- **结论：** 本轮没有错误补给目标，不改 Runner、ROI、阈值或缓存计划。旧迁移基线的逐目标二次确认与当前
+  一次性缓存计划之间确有代码差异，但没有本轮故障证据，需另有失败帧才能开启行为修复。
+- **用户批准的窄修复：** 不改变上述识别结论；为避免脱战过渡画面尚未完全更新，在即时战后恢复开始前固定
+  等待 `1500ms`，日志记录实际 `elapsedMs`。只覆盖会立即截图/补给的恢复策略；已经延后恢复的
+  `CLIENT_RUNNER_EXIT` 不重复等待。保留所有现有视觉和点击业务规则。
+- **实现与验证：** `AutoCombatService.recoverAfterConfirmedExit()` 现在于非 deferred 路径先执行可中断
+  `1500ms` 稳定等待并记录 `configuredMs/elapsedMs`，然后才运行 common-box 与 first-aid；新增
+  `G074PostCombatFrameSettleContractTest`。G074 合同、G072 回归合同与隔离 Cloud production compile 均 PASS；
+  未覆盖活动 `target/classes`，仍待重启 fresh 验收日志顺序和实际耗时。
+
+## G073 五环残留 Radar 战斗裁决（2026-08-13）
+
+- **状态：两处源码、契约与 Cloud compile 通过，待 fresh。** 五环虽然已由 Runner/observer 写入当前
+  `GameContext` 战斗状态，但仍有两处重新调用 Cloud `BattleRadarService`。
+- **第一处：** `WAIT_PATHING` 看到此前经历过战斗且当前 Runner 状态已脱战后，旧代码调用
+  `handleCombatTick(..., true)`，重新截图裁决再做战后补给。用户明确要求改为直接消费 Runner 脱战后的现有
+  `FULL_RECOVERY_WITH_LEADER_INCENSE`；已经实现，新一轮入战竞态保持等待。针对性合同与 Cloud production
+  compile 均 PASS，待 fresh。
+- **第二处真实含义与实现：** 所谓 `combat-roi-guard` 不是“启动战斗保护探测”。它发生在 Runner 仍标记战中、五环
+  左侧任务栏 ROI 相对入战基线发生变化时；positive tracker/story 证据未命中后，再调用 Radar 试图提前释放
+  战斗状态。这会形成 Runner 之外的第二战斗权威。用户批准删除后，现在没有 positive evidence 时只刷新 ROI
+  基线并等待 Runner exact exit；旧 `probeWindowCombatStateReadOnly()` 接口已删除。扩展合同、G073
+  business-rule gate 与 Cloud production compile 均 PASS。
+
+## G072 独立自动战斗忽略 Runner 脱战边沿，宝宝补给被漏掉（2026-08-13）
+
+- **状态：P1 源码、契约与 Cloud production compile 通过，待双端重启 fresh。** 四个独立 `AUTO_BATTLE` 窗口并非没有运行：
+  Client 按配置约每 `120s` 为每窗下发 `Alt+8`，输入均成功。用户看到的“不动”主要是战后 HP/MP 补给没有
+  被可靠触发。
+- **启动现场：** 四窗于 `08:39:18` 启动，配置为人物血/法与宝宝血低于 `70%` 时补给。火鸡味锅巴、
+  黑精的皮牛、乌龟的黑头均识别出人物法力不足，但当时已在战斗，Client 安全门以
+  `LOCAL_COMBAT_ACTIVE ... before-enqueue` 拒绝鼠标输入；旧逻辑仍把本轮计数写成 `checks=1/1`。单飞打手机
+  启动帧判定无低血法目标。
+- **权威边沿没有慢：** Client Runner 在 `08:39:45-46`、`08:42:11-12`、`08:44:57-58`、
+  `08:48:57-58` 等多轮均逐窗发布 exact `COMBAT_EXITED`；Cloud 的
+  `CloudFastExpectedCombatExitCoordinator` 也按 exact window/run 接收并写入 `GameContext=FREE` 与
+  `COMBAT_STATE_CHANGED`。因此不是 Client 战斗检测频率或模板慢。
+- **精确根因：** 独立自动战斗使用 `FULL_RECOVERY`，`AutoCombatService.handleCombatTick(...)` 只让
+  `CLIENT_RUNNER_EXIT` 或本地队员广播模式走 Runner 状态分支；`requested=auto_battle` 的独立窗口仍调用
+  `BattleRadarService.checkAndSyncCombatState()`，却从不消费已经发布的 Runner `COMBAT_STATE_CHANGED`。
+  Radar 可能在 Runner 已置 `FREE` 后用旧战斗画面重新写回 `IN_COMBAT`，也可能看到已是 `FREE` 而不产生自己的
+  `combatExitPending`，两种情况都漏掉 `recoverAfterConfirmedExit(...)`。
+- **结果证据：** `08:42:12` Runner 脱战后，只有单飞打手机在约 `19s` 后由 Radar 自己凑齐两次 miss，
+  识别 `宝宝血量@860,85/70%` 并于 `08:42:31` 真实右键 `(2214,133)`；其余三窗从启动到至少
+  `08:50` 没有任何 `auto-combat exit detected`、`no-focus result` 或补给点击。短至约 `1-6s` 的脱战窗口必然
+  更容易被四秒 Radar 与 UI maintenance 链错过。
+- **用户批准与实现：** 独立 `AUTO_BATTLE` 以现成 exact Runner 状态为唯一战斗权威：Runner `IN_COMBAT`
+  只做战斗维护；同一窗随后的 exact `COMBAT_EXITED` 立即调用现有 `FULL_RECOVERY`，重置一次补给额度并执行
+  现有人物/宝宝 HP/MP 计划。独立自动战斗的 command-plane Radar 不再覆盖 Runner 状态；任务通过 condition
+  等待精确边沿，即使脱战窗口只有数秒也会被唤醒。旧 entry 已被 exit 覆盖时跳过面板输入，旧 exit 已被更新
+  entry 覆盖时跳过补给。启动时若已在战斗，或 Client 拒绝补给输入，均不消耗唯一额度；待 exact 脱战后补做。
+  阈值、补给坐标、`Alt+8` 周期、Client 战斗输入安全门和队员支援路径均未改。
+- **验证：** Cloud `G072AutoBattleRunnerRecoveryContractTest`、`G072` business-rule gate、隔离输出 production
+  compile 均 PASS；未替换
+  活动 `target/classes`，未重启双端。
+- **Fresh gate：** 四窗战斗启动后，每个 exact Runner `COMBAT_EXITED` 应在下一次业务 tick 立即出现各自
+  `auto-combat exit detected`；低于阈值的宝宝/人物执行补给，健康窗口明确记录 zero/healthy，不得只看到
+  Runner exit 而没有任何战后补给裁决。
+
+## G071 天庭 60/60 收尾误解为重新接任务（2026-08-12）
+
+- **状态：调查闭环，无生产代码变更。** `22:55` 队长打开世界地图并输入 `tg` 不是准备接第 61 次任务，
+  而是天庭达到上限后的最终回城降级链。
+- **决定入口：** 队长 run `remote-turn-8135ab8a-219d-476c-b6d5-912ddc99f618` 在 `22:54:39`
+  收到 Runner 脱战；Cloud 随后记录 `subtask completed: count=60 limit=60 source=panel-advanced`，因此离开
+  `RUN_SUBTASKS` 并进入收尾 `RETURN_HOME`。这不是 title 消失、watchdog 超时或 G070 再次抢跑。
+- **为什么开始步行：** 两次 `BAG_RETURN_ITEM` 都完成了道具点击，但 Cloud 的落地验证均为
+  `used=true map=蟠桃园 home=false`。第一次失败后发现并清理了 Story，第二次已无 dialog 仍未落到天宫；既有
+  fallback 因而记录 `return item did not land in 天宫; walking back before closing the round`，并用世界地图
+  `tg` 返回。当前证据只证明“点击成功但落地未发生”，不能把原因进一步断言为模板、焦点或 cooldown。
+- **最终结果：** 用户于 `22:55:28` 触发紧急暂停，步行导航返回 `MAP_NOT_REACHED`；任务仍以
+  `completedSubtasks=60`、`phase=FINISHED`、`outcome=SUCCESS` 结束，队列没有重新接天庭。
+- **G070 fresh：** 同一新 runtime 中多次记录“enter-battle option executed -> Runner IN_COMBAT confirmed”，
+  确认等待约 `408-1694ms`，未再由旧 watchdog 抢跑回城；G070 的活动 runtime 门通过。
+
+## G070 天庭点击开打后 watchdog 抢跑回城（2026-08-12）
+
+- **状态：P1 源码、顺序合同与 production compile 通过，待安全重启 fresh。** 现场不是 BagService 在战斗中自行决定用道具；Cloud 已先把天庭 phase
+  切成 `RETURN_HOME`，Client 才忠实执行 `BAG_RETURN_ITEM`。
+- **证据：** `19:56:35.533` Client 命中并点击 `kaida.png score=1.0`；Cloud 收到
+  `tianting.enterBattle.kaida|executed=true` 后，旧子任务 watchdog 已累计 `189317ms`，先触发
+  `tianting:subtask-watchdog-expired`。回程宏于 `19:56:37.541` 下发、`19:56:40.895` 点击回程道具，而 Runner
+  到 `19:56:42.332` 才确认 `IN_COMBAT`。
+- **根因与边界：** `TiantingTask.runSubtasks()` 在消费 enter-battle dialog 结果、等待 Runner exact 战斗边之前
+  就执行 180 秒 watchdog；它只认当下 `gameContext == IN_COMBAT`，不保护“开打已点击、战斗事实尚在路上”的窗口，
+  因而把真实入战竞态误判成场外停滞。G052 的战斗事实权威不应被改成用点击结果冒充战斗；需要的是入战待确认栅栏。
+- **用户批准与实现：** Client `executed=true` 后锁存入战待确认状态，清除旧场外 watchdog；Cloud 在 G017、
+  watchdog、Tracker 和回城之前只等待 exact `COMBAT_STATE_CHANGED`。Runner `IN_COMBAT` 到达后释放栅栏；`25s`
+  确认超时只回到既有事实裁决，不把点击冒充战斗，也不复活旧 watchdog 立即回城。
+- **验证：** changed-source `javac`、`G070TiantingEnterBattleLinearGateContractTest`、独立输出 production compile
+  均 PASS。定向 Maven test 被当前工作树既有测试夹具/构造器签名漂移阻断，与 G070 无关；未覆盖活动 runtime
+  的 `target/classes`，待安全重启 fresh。
+
+## G069 天庭新启动进入接任务前漏掉 Hot Start 回程道具检查（2026-08-12）
+
+- **状态：P1 源码与针对性合同通过，待安全重启 fresh。** 用户纠正成立：stop 时清空旧任务状态和内存回城重放是正确行为；
+  重启后应从零启动并走正常 Hot Start，不应持久化恢复旧 `RETURN_HOME` phase。旧进程停止终态
+  `STOPPED phase=RETURN_HOME round=1` 只证明角色可能仍带着尚未成功使用的天庭回程道具。
+- **精确根因：** 新 run 的 Cloud 日志明确为 `G017 ... phase=ACCEPT_TASK`，随后直接进入
+  `tianting:accept-nearby-check`，中间没有 `BAG_RETURN_ITEM`。`TiantingTask.execute()` 的首轮启动仲裁只把
+  `PRESENT+NONE` 映射到 `RUN_SUBTASKS`、`ABSENT+NONE` 映射到 `ACCEPT_TASK`；得到 `ACCEPT_TASK` 后立即执行
+  李靖接取链，没有“任务页回程道具 -> 落地地图验证 -> 归队 -> 再接任务”的 Hot Start 分支。
+- **其他任务对照：** 修罗、江湖历练、鬼王的首轮 NORMAL Hot Start 在没有可执行 Tracker 时，会先单次探测并
+  使用各自任务页回程道具，验证起始地图后才进入接任务；天庭缺少这一段。抓鬼当前也直接接任务，五倍只在
+  `AFTER_COMBAT_EXIT_STARTUP` 探测，因此不是“每个任务代码都已有”，但用户指出的天庭业务缺口属实。
+- **与 G062 的边界：** `18:51:57` 无缓存整窗找到真实包裹锚点 `(574,411)` 并成功使用摄妖香，已经证明 G062
+  首次动态锚点链 fresh 通过。回城道具没有再次执行并非锚点 miss，也不是跨停止/跨进程 phase checkpoint
+  丢失，而是新 run 的接任务前 Hot Start 分支缺失；回城任务页/缓存快路仍未得到 fresh 验收。
+- **已批准修复方向：** 保持 stop 全清、启动协议和 G017 仲裁不变；只在首轮 Hot Start 明确得到
+  `ACCEPT_TASK` 后、任何李靖导航/点击前，单次探测并使用 `tianting/huicheng.png`。使用后验证已到天宫，先完成
+  队员归队等待，再回 `ACCEPT_TASK`；未找到或未验证则走既有普通接取链。必须增加明确的“归队后继续接任务”
+  目标，不能复用现有 `WAIT_TEAM_RETURN_AFTER_RETURN_HOME -> FINISHED` 提前结束新 run。
+- **用户扩大并批准统一规则：** 凡任务实际拥有专属回程道具，首轮 Hot Start 在 Tracker 未接管、即将进入接任务
+  链前都必须先探测回程道具。盘点五项：修罗、江湖历练、鬼王已有 NORMAL Hot Start；天庭完全缺失；五倍仅在
+  `AFTER_COMBAT_EXIT_STARTUP` 执行。抓鬼没有专属回程道具实现，不纳入。补齐天庭与五倍，前三项保持；
+  `CLEAN_QUEUE_TRANSITION` 继续跳过屏幕恢复，避免把上一队列项状态误认成当前任务。
+- **实施边界：** Cloud `dev@847410396b3fda1cc00174910401713ff30cede4`（等于 `origin/dev`）上的当前 dirty
+  业务实现为工作基线；只改 `TiantingTask`/`TiantingPhase`、`WubeiTask` 与针对性合同。Client 只同步 G069
+  治理记录、规则追踪和 dashboard。复用现有回程模板与本地 `BAG_RETURN_ITEM` 宏，不改视觉算法或点击坐标。
+- **实现与验证：** 天庭新增 `WAIT_TEAM_RETURN_BEFORE_ACCEPT`，回程落地后的归队完成只恢复 `ACCEPT_TASK`；五倍
+  NORMAL Hot Start 的 Tracker miss 也执行既有回程道具与归队链，战后恢复原语义不变。三个生产文件隔离
+  `javac` PASS，`G069ReturnItemHotStartContractTest` PASS，独立 Maven 输出目录 production compile PASS；均未
+  覆盖活动 runtime 的 `target/classes`，重启与 fresh 仍待安全停机。
+
+## G068 队列第二项失败后整队回卷并重做鬼王（2026-08-12）
+
+- **状态：P1 源码修复与针对性合同通过，待重启 fresh。** 用户提交的队列确实按
+  `GHOST_KING(60) -> TIANTING(60)` 执行，不是 UI 把第二项丢失。
+- **现场时间线：** leader `hwnd-24197C` / start request
+  `remote-turn-21793b92-1e92-4489-a92e-c87e0bc9c6e5` 于 `16:36:28.066` 记录鬼王 round 60
+  `TASK_ROUND_FINISHED/SUCCESS`，`16:36:28.391` 队列由 index 0 前进并进入 index 1 `TIANTING`；天庭实际执行
+  `5281ms` 后返回 `FAILED`，终态事件于 `16:37:33.653` 被 Client 接收。`16:37:35.032` 出现新的 start request
+  `remote-turn-64633721-1674-4f4e-a098-a8500376b9f9`，其 index 0 又是 `GHOST_KING`，`16:37:38` 重新从
+  round 1 开始。
+- **现场画面与精确失败点：** 天庭启动保存的
+  `images/temp/match-miss/tracker-title/04-tianting_title-score-0.3624.png` 未显示天庭 title；这不是失败条件。
+  `TiantingTask.synchronousStartupPhase(...)` 已把该显式 miss 正确解析为 `ACCEPT_TASK`。`cloud-brain-console.log`
+  `52262-52266` 随后明确记录 `REJECTED_LINEAGE`，以及
+  `startup synchronous terminal could not exact-ACK ... failing closed before phase=ACCEPT_TASK`，所以天庭并未进入接任务动作。
+- **天庭启动根因：** Client 的 `WindowTurnLoop.maybeStartObservationRunner(...)` 每个 start request 只创建一个观察器，并把整条
+  effective queue 拼成 `taskCode=ghost_king,tianting`；队列从 index 0 切到 index 1 时没有重绑。Cloud 的天庭观察器和
+  `TiantingTask` 均要求请求 `taskCode` 精确等于 `tianting`，因此整条队列观察请求被判为 `REJECTED_LINEAGE`；同步 title
+  miss 虽已算出 `ACCEPT_TASK`，仍因无法 ACK 这个错误 lineage 而 fail-closed。鬼王 tracker 是否仍显示与这次失败无因果关系，
+  不应把“取消鬼王残留任务”作为队列换项前提。
+- **整队回卷根因：** `WindowTaskControlService.projectRemoteTerminal(...)` 把整个 Cloud queue 的最终
+  `FAILED/SKIPPED` 一律视为可恢复终态；`recoverRemoteTerminal(...)` 使用最初保存的完整
+  `taskCodes/taskMaxRuns/queue` 再次调用 `startOneRemote(...)`。恢复计划没有当前 `queueIndex` 或已完成项 checkpoint，
+  因而天庭 index 1 失败会把 `[鬼王60, 天庭60]` 从 index 0 重放，任务进度自然重新显示 `0/60`。
+- **已实施：** `WindowTurnLoop` 在每个 exact `TASK_STARTED` 上保存 child `taskCode/queueIndex`，初次观察器只使用第一个
+  exact child，后续通过 `WindowObservationRunner.rebindTaskCode(...)` 保留 observation run id 与单调 `observerSeq`，同时清空旧
+  child interests/events、重发 `startup-screen-observation`；binding revision 会丢弃切换期间返回的旧 child 响应，禁止其覆盖
+  天庭状态。`WindowTaskControlService` 从失败 child 的 exact `queueIndex` 构造 `taskCodes/taskMaxRuns/WindowTaskQueue` 后缀，
+  index 1 天庭失败只重启 `[TIANTING(60)]`，已成功的鬼王不再进入恢复请求。
+- **验证：** Client 318 个主源码编译通过；手工隔离 test-compile 后
+  `WindowTurnLoopObservationContractTest` `10/10 PASS`，其中新增真实线程合同证明
+  `ghost_king -> tianting` 仍使用同一 runner、无逗号整队身份、天庭收到新 startup 边界且 checkpoint=`1`；
+  `WindowRemoteTurnControlContractTest#recoverableCloudTerminalKeepsWindowOwnedAndSubmitsFreshHotResumeRun` `1/1 PASS`。
+  Cloud 主源码编译通过，`G017TiantingStartupPhaseDecisionContractTest` `13/13 PASS`，显式 title miss 仍为 `ACCEPT_TASK` 并可 exact-ACK。
+  两仓全量 test-compile 均被前序 dirty worktree 的无关旧测试漂移阻断，未修改这些非 G068 问题。fresh 验收必须看到
+  `鬼王60 SUCCESS -> 天庭 index 1 -> title absent -> ACCEPT_TASK`；若天庭失败，下一 start request 的 index 0 必须就是
+  `TIANTING`，不得出现鬼王 round 1。
+
+## G067 鬼王本地队伍面板归队完成栅栏（2026-08-12）
+
+- **状态：源码、双仓编译与本地 ROI 回放通过，待重启 fresh。** 用户确认保留战斗结束后现有 `zhao.png` 首次离队判断；该标记只负责触发
+  `WAIT_TEAM_RETURN`，不再作为归队完成事实。
+- **用户裁决：** 队长必须在全部既有战后动作完成后的流程最末尾按一次 `Alt+T` 打开队伍面板，当轮不匹配，
+  立即释放 task turn 并完全 park。下一次轮转起，由 Client 在本地 exact-HWND 截图并在屏幕绝对 ROI
+  `(648,310)-(1209,350)`（现场窗口 base `(334,31)`，即窗口相对 `(314,279)-(875,319)`、`561x40`）内匹配
+  `images/template/team/not_returned_yet.png`。命中表示仍有队员未归队，面板保持打开并继续 park；未命中才按
+  `Alt+T` 关闭面板并允许队长继续。图片不得上传 Cloud，Cloud 只消费闭合状态结果；捕获、模板或输入异常一律
+  fail-closed，不能冒充全部归队。
+- **目标工作树与基线：** Client/治理 `D:\mavenProject\DHXY-cr271`，`dev@4da93bea737c20e73f177002383fbcbc94a790c9`；
+  Cloud `D:\mavenProject\dhxy-cloud-brain`，`dev@847410396b3fda1cc00174910401713ff30cede4`，均等于
+  `origin/dev`。保护工作树 `D:\mavenProject\DHXY` 不修改；两仓既有 dirty/untracked 全部保留。
+- **预计写集：** Client 本地归队面板操作、两仓 local-service 协议枚举/校验、Cloud local-service client 与
+  `CloudTeamReturnPort` 适配、`TeamReturnService`、`GhostKingRoundContext`、`GhostKingTask`，以及 G067 业务规则、
+  traceability、ROI 回放证据和 dashboard。按用户现行要求不新增、不运行测试；运行实例与自动拉起宿主完全停止后
+  才允许双仓 production compile。
+- **实现与静态验证：** 新增本地闭合操作 `GHOST_KING_TEAM_RETURN_PANEL_OPEN/PROBE`。首次“招”事实写入
+  `teamReturnGateTriggered` 后不再读取“招”决定完成；末尾 OPEN 只按 `Alt+T`，返回后立即
+  `SHARED_STATE_TRIGGERED/MUST_YIELD`，下一轮才 PROBE。Client `GhostKingTeamReturnLocalOperation` 对 exact-HWND
+  只裁剪窗口相对 `(314,279,561,40)` 并匹配 `not_returned_yet.png`；命中和 UNKNOWN 均不关面板，明确 miss 且
+  `Alt+T` 关闭成功才返回 `ALL_RETURNED`。协议结果只有 enum，未传图片。现场 testcase
+  `images/test-cases/team-return/g067/leader_team_panel_not_returned.png` 回放得分 `1.000000`（阈值 `0.85`），中心
+  `(694,292)`，标记输出为 `leader_team_panel_not_returned_marked.png`。G067 规则门、双仓 production compile、
+  双仓 diff check 与共享协议 byte-identical 均 PASS；按指令未新增、未运行测试，fresh 仍待重启。
+
+## G066 天庭与鬼王接任务十秒超时及专用取消恢复（2026-08-12）
+
+- **状态：源码与双仓编译通过，待重启 fresh。** 天庭和鬼王在点击接任务选项后最多等待 `10` 秒确认任务 Tracker title。
+- **现场根因：** 鬼王 accept 模板连续真实命中并点击，但 title 未出现后误调用抓鬼取消操作；鬼王自己的
+  `images/template/dialog/guiwang/quxiao.png` 没有接入，随后通用 `FALLBACK_LAST_OPTION` 被误当作恢复动作。
+- **用户裁决：** 鬼王完全采用天庭的互斥恢复语义：接取结果不确定时，下一次先执行取消专用操作；只有
+  `quxiao.png` 真正命中并点击、Client 返回 `CANCELLED` 后才算取消成功，再回普通 accept。取消未命中不得
+  冒充成功，也不得使用通用最后项 fallback。天庭原 `60s` 与鬼王原 `2s` 均改成最多 `10s`。
+- **目标工作树与基线：** Client/治理 `D:\mavenProject\DHXY-cr271`，`dev@4da93bea737c20e73f177002383fbcbc94a790c9`；
+  Cloud `D:\mavenProject\dhxy-cloud-brain`，`dev@847410396b3fda1cc00174910401713ff30cede4`，均等于
+  `origin/dev`。两仓既有 dirty/untracked 原样保护；鬼王当前实现是 G050 后续本地未跟踪增量，只做窄增量。
+- **预计写集：** `TiantingTask.java`、`GhostKingTask.java`、两仓 `TurnLocalOperation` / `TurnProtocolValidator`、
+  Cloud local-service client、Client dispatcher/executor/`GhostKingDialogLocalOperation`，以及本卡、业务规则、
+  traceability、错误清单和 dashboard。
+- **验证门：** 先通过 `BR-TIANTING-005` / `BR-GHOSTKING-005` 规则门；停止运行实例后只做双仓 production
+  compile、共享协议一致性和 diff check。按当前用户指令不新增、不运行测试；fresh runtime 留给重启后验证。
+- **实现与静态验证：** 天庭 `60_000ms -> 10_000ms`，鬼王 `2s -> 10s`；新增闭合协议
+  `GHOST_KING_CANCEL_DIALOG_TEMPLATE`，Client 仅由 `GhostKingDialogLocalOperation.executeCancel()` 匹配
+  `guiwang/quxiao.png` 并在真实点击后返回 `CANCELLED`。鬼王取消未命中直接回普通 accept，传输失败留在取消链
+  重试，均不调用通用 UI cleanup。`BR-TIANTING-005/BR-GHOSTKING-005` gate PASS；Client/Cloud production
+  compile PASS；两仓 `TurnLocalOperation.java` 与 `TurnProtocolValidator.java` SHA-256 分别完全一致；diff check PASS。
+  编译前已停止旧 Cloud JVM PID `3084`。按指令未新增、未运行测试，fresh 仍待重启验证。
+- **2026-08-12 用户补充取消 CD：** 鬼王只有收到真实 `CANCELLED` 后才释放 task turn，并做 stop-aware 的
+  `7_000ms` 冷却，再进入普通地藏王接取；`NOT_MATCHED` 或传输失败均不启动冷却。实现不得在输入事务内占住
+  公平 turn 睡眠，也不得把这 7 秒套到天庭或抓鬼。Cloud production compile、G066 规则门与 diff check PASS；
+  按当前指令未运行测试，待重启 fresh 核对 `CANCELLED -> delayMs=7000 -> ACCEPT_TASK_CLICK_NPC` 顺序。
+
+## G065 关屏鬼王后台长跑验收入口（2026-08-12）
+
+- **2026-08-12 10:51 P1 归队中间态被误判完成（只读诊断，待用户批准修复）：** 队长
+  `hwnd-24197C` 在第 2 轮回城后正确进入 `WAIT_TEAM_RETURN` 并连续每 `3s` 让权；队员 `hwnd-E31224`
+  于 `10:51:18-10:51:19` 命中并点击“归”，但 Runner `2s` 内没有任何移动事实，Cloud 明确返回
+  `CLICKED_NO_MOVEMENT`。保存画面 `images/temp/hwnd-E31224/latest_vision.png`（`10:51:23`）仍显示队员在
+  `龙窟六层 (97,23)`，游戏提示“正在归队中”“只有在队长附近才能回归队伍”。队长侧 `zhao.png` 标记随后消失，
+  现有 `waitTeamReturn()` 只用该单一 negative 关闭 capability，于 `10:51:26` 产出
+  `team return wait not needed -> ROUND_DONE`；`10:51:31` 已重新点击地藏王，`10:51:35` 点击 accept。
+  根因是把“队长侧招标记消失”当成“全部成员已实际归队”，没有把成员 `CLICKED_NO_MOVEMENT/正在归队中`
+  保持为 pending。该结论只登记、不改代码；修复必须由用户批准，并应让 shared session 聚合每个成员的明确
+  `MOVEMENT_OBSERVED` 或其他已批准归队完成事实，任何 pending/unknown 都要 fail-closed，禁止队长接任务。
+- **同次运行的独立 E28 污染：** `10:51:54` stop 尾部 Cloud 抛出 `NpcClickSmartQueueStore$ArrivalRunKey` 与
+  `CloudTaskExecutionTrace$Snapshot` 的 `NoClassDefFoundError`。这是运行实例在本轮 Cloud compile 检查之后被重新
+  拉起、又与 `target/classes` 替换撞车；发生时间晚于 `10:51:26` 错误放行和 `10:51:31-35` 接任务输入，不是归队
+  根因，但该 run 后段不再算干净 fresh。后续任何编译前必须二次确认 Client/Cloud JVM 在整个编译窗口都未启动。
+
+- **状态：SCREEN-OFF + GHOST KING 1 ROUND PASSED / 200 ROUND READY。** 用户要求先在显示器关闭状态下后台运行鬼王 `1` 次，确认 exact-HWND
+  截图不是黑图且完整业务链可完成；首次通过后改为 `200` 次持续监控，发现错误必须先正式 stop `5/5`，窄修、
+  编译并从后台恢复，不得手工控制游戏 UI。
+- **目标工作树与基线：** Client/治理 `D:\mavenProject\DHXY-cr271`，
+  `dev@4da93bea737c20e73f177002383fbcbc94a790c9`；Cloud `D:\mavenProject\dhxy-cloud-brain`，
+  `dev@847410396b3fda1cc00174910401713ff30cede4`。两仓与各自 upstream 一致但已有大量 dirty/untracked，
+  全部原样保护；受保护 baseline `D:\mavenProject\DHXY` 不修改。
+- **用户运行配置：** 首次 exact run 为鬼王 `1` 次；其余配置读取现有 UI 持久化设置。`领取双倍=false`、
+  医保宝间隔 `7,200,000ms`（两小时）、修理装备间隔 `0`（关闭）。后台次数只临时写入本次 start snapshot，
+  不覆盖 UI 中持久化的鬼王次数。
+- **实现边界：** 只给现有 G033/G036 无 UI 控制面增加 `start-ghost-king`，复用
+  `WindowTaskControlService`、同队预检、队长运行 `GHOST_KING`、成员运行 `AUTO_BATTLE`、exact-HWND 截图、
+  pause/stop/shutdown 和高权限 host。无 UI host 在创建 exact run 前显式读取与 JavaFX 相同的
+  `GameUiSettingsStore`，再只临时覆盖命令指定的鬼王次数。不得修改鬼王 NPC、Tracker、Dialog、导航、战斗、维护和
+  fallback 业务。
+- **首次 fresh 门：** 用户明确关屏后才可启动。五窗必须 `5/5 RUNNING`；队长 task 为 `GHOST_KING`，成员为
+  `AUTO_BATTLE`；每次截图 provider 必须是 `HWND_PRINTWINDOW/HWND_BITBLT/HWND_BITBLT_REGION`，不得出现空白探针、
+  黑帧识别、Robot fallback、窗口异常或长期 PARK。完成一轮后再进入 `200` 次监控。
+- **实现与静态验证：** G033 service、普通/高权限 PowerShell 入口已接入 `start-ghost-king`；后台启动先加载
+  UI 持久化设置，再临时覆盖本次 `MaxRuns`，并在日志输出双倍/医保宝/修理 exact-run 值。Client production
+  compile PASS，PowerShell 双脚本语法 PASS，隔离 `BackgroundTaskTestControlContractTest` `2/2 PASS`，
+  touched-file `git diff --check` PASS。标准 Maven 定向 test 仍被卡外既有
+  `TurnContractFixtures.LocalPathingStartProofMechanics` 缺失阻断于全局 `testCompile`。
+- **首次关屏 fresh 结果（2026-08-12 03:06-03:09）：** `5/5 RUNNING`，队长 `hwnd-24197C` 运行
+  `CATCH_GHOST`、四名成员运行 `AUTO_BATTLE`；exact-HWND capture 从 `66` 增至 `167`，连续帧 SHA 不同，
+  `robotCapture=0/captureFailure=0`，证明显示器关闭后仍能取得正在变化的非黑游戏帧。证据保存在
+  `images/test-cases/g065-screen-off/screen-off-catch-ghost-rejected.png`。
+- **误启动记录：** 首次命令误用了 `CATCH_GHOST`。游戏在队长点击“我来帮你”后明确返回“您队伍的平均等级太高，把这个机会让给低等级玩家吧”，
+  因此不会生成 `zhuagui_title.png`。Cloud 现有 `ACCEPT_TASK_VERIFY_TITLE` 在每次 2 秒标题等待失败后执行
+  `ACCEPT_TASK_CLICK_NPC_FOR_CANCEL -> ACCEPT_TASK_CANCEL_DIALOG`，造成接取/取消循环；已于 `03:09:50` 正式
+  stop `5/5`，`runningWindowCount=0`。用户随后澄清目标本来就是鬼王；该记录只证明错误任务已安全停止，不作为鬼王
+  业务结果。控制层已新增 `start-ghost-king`，production compile、PowerShell 语法与 diff check 通过。
+- **鬼王关屏单轮通过（2026-08-12 03:21-03:25）：** `start-ghost-king -MaxRuns 1` 后台启动达到
+  `5/5 RUNNING`，队长 `hwnd-24197C` 运行 `GHOST_KING`，四名成员运行 `AUTO_BATTLE`；exact run 日志确认
+  `doubleExperience=false`、医保宝 `7200000ms`、修理 `0ms`。队长完成接取、Tracker 绿链、凤巢六层导航、看打、
+  五窗自动战斗、脱战、回城道具与队伍归队预检，Cloud 于 `03:24:46` 记录 `round 1 skeleton finished, completed=1`
+  并以 `SUCCESS` 终止。Client 关屏期间持续保存 `HWND_PRINTWINDOW` 帧，`robotCapture=0/captureFailure=0`；
+  `03:25:46` 接收终态并停止队长，随后后台 stop 剩余四名成员，最终 `runningWindowCount=0`。
+- **终态时序说明：** Cloud 完成本轮后，当前无 action 的 Turn 请求仍按配置完成最长 `60000ms` 长轮询，故 Client
+  接收 `SUCCESS` 比 Cloud terminal 晚约 60 秒；这不是任务多跑一轮或卡死。200 次长跑只在最后一个 terminal 受此影响。
+- **200 轮运行 P1 / 已停机返修（2026-08-12 03:58）：** 前 `8` 轮业务完成，但日志出现两次
+  `FakerInput cursor move failed` 死信：关闭窗口目标三次后仍偏 `(+8,-4)px`，第 8 轮看打三次后仍偏
+  `(-1,+4)px`。当前驱动每次绝对报告都在向目标收敛，失败原因是固定 `3` 次重试先于 `1px` 精确验收耗尽，
+  不是模板坐标或 HWND 绑定错误。已正式后台 stop `5/5`，不得带着死信继续验收。返修只允许增加
+  `FakerInputProvider` 的绝对移动收敛次数，禁止放宽 `1px` 验收、改变点击点、增加前台/Robot fallback；
+  Client 编译和定向验证通过后，以 `MaxRuns=192` 恢复，累计完成目标仍为 `200`。
+- **P1 已修并恢复（04:00）：** 将 FakerInput 绝对移动最大收敛次数由 `3` 增至 `6`，继续要求最终误差
+  `<=1px`；没有放宽点击精度或增加 fallback。Client production compile、diff check、dashboard 刷新 PASS。
+  后台已用 `MaxRuns=192` 恢复 `5/5 RUNNING`，配置仍为双倍关闭、医保宝两小时、修理关闭；fresh 后续门为
+  不再出现 `FakerInput cursor move failed`/dead letter，并继续核对每轮五窗广播、Alt+8 与关屏截图。
+- **P1 回城普通导航断链 / 已停机返修（04:42）：** 新 run 完成 `11` 轮，累计 `19/200`。第 12 轮回城道具落在
+  轮回司后转入普通世界地图导航；legacy 绿链点击未把 `TurnPathingIntent` 带入物理 Turn，日志明确为
+  `worldMapRouteClick intentId=null`。鬼王等待端又以 `...return-to-zhongkui` 匹配请求端
+  `...return-to-dizangwang`，造成 `snapshotBelongs=false/state=NONE` 并无限 25 秒 PARK。已 stop `5/5`；返修要求
+  legacy OCR 与记忆点击都携带并返回同一个 intent，等待 source 与请求 source 完全一致，补连通合同后双仓编译并以
+  剩余轮次恢复。禁止改回城道具、目标地图、OCR/坐标或 Runner 终态语义。
+- **P1 已修并恢复（04:49）：** legacy OCR/记忆绿链均在实际点击 Turn 携带并返回 exact intent；鬼王等待 source
+  已与请求端统一为 `...return-to-dizangwang`。Cloud compile、G065 连接合同、Client compile、双仓 diff check 与
+  dashboard 均 PASS。已用 `MaxRuns=181` 恢复 `5/5 RUNNING`，新 run id 为
+  `remote-turn-6b26e6a3-dcf9-4362-b303-c2d53a043a5a`；累计从 `19/200` 继续。
+- **P1 看打事实消费顺序错误 / 已停机返修（05:00）：** 第 1 轮 Runner 于 `04:50:33` 成功点击看打并上报 exact
+  attempt，但 Cloud 的等待分支固定先调用 `consumeFailed()`；该函数旧实现不判断事实类型就执行
+  `getAndSet(null)`，因此成功事实被失败检查删除。`consumeClicked()` 随后读空，`STOPPED_AWAY` 消费后任务长期停在
+  `WAIT_TRACKER_SHORTCUT_PATHING/state=NONE`。已正式 stop `5/5`，当前 run 新增完成数为 `0`。返修把成功/失败消费
+  改为 CAS 条件消费：反类型检查保留事实，只有 exact attempt/round 且类型一致时才删除并返回成功；错代事实仍按原规则
+  丢弃。Cloud production compile PASS，独立 `G065LocalKandaFactConsumptionContractTest` 同时覆盖“先查失败再消费成功”
+  与“先查成功再消费失败”并 PASS；标准 Maven test 仍被既有全局 `testCompile` 漂移阻断。fresh 门：重启剩余
+  `181` 轮后，首次看打成功必须直接进入 `waitForRunnerCombatEntry`，不得再次出现该 attempt 的 `state=NONE` 长 PARK。
+- **Fresh 二次 P1 / 已停机返修（05:05-05:11）：** Cloud 已正确消费 `ENTER_BATTLE_CLICKED`，但游戏把看打 option
+  替换成“请组成3人以上队伍”的拒绝 story，未进入战斗。Runner 四秒后允许重试时模板已消失；旧逻辑的失败预算只统计
+  实际执行点击，因此永远停在一次点击、`template-match=none`，Cloud 再次长期 PARK。已 stop `5/5`，该 run 完成
+  `0` 轮。Client 增加 exact-attempt 终结：至少一次真实点击、四秒未进战且模板消失时只上报一次
+  `ENTER_BATTLE_CLICK_FAILED`；模板仍在继续沿用最多三次点击，未点击和 replacement attempt 不受影响。Client
+  production compile、独立 `G065LocalKandaDialogGoneContractTest` 与 touched-file diff check 均 PASS。累计保持
+  `19/200`；fresh 必须看到拒绝 story 后 Cloud 回到接任务链，禁止再出现该 attempt 的 `state=NONE` 长 PARK。
+- **Fresh 三次 P1 / 热启动终态已窄修（05:18-05:24）：** 新 run 启动时画面已是上一 run 留下的拒绝 story，
+  因此本 run 没有“已点击看打”历史。绿链 exact intent 已由 Runner 判为 `STOPPED_AWAY` 并被 Cloud 消费清空，
+  但八秒后启动的看打探针只得到 `AVAILABLE + template-match=none`，再次长期 PARK。已 stop `5/5`，该 run 完成
+  `0` 轮。Client 现复用跨 clear 保留的 `lastKnownPathingLocation`：仅 exact schedule/intent 的终态、当前不存在
+  同 intent `ACTIVE` pathing 且终态与 schedule 的完整身份一致时，才一次性发布 `ENTER_BATTLE_CLICK_FAILED`；正常移动、
+  unrelated/旧/replacement intent 和重复采样均不得触发。Client production compile PASS，扩展的
+  `G065LocalKandaDialogGoneContractTest` 覆盖 exact terminal、ACTIVE 与 unrelated 隔离并 PASS。累计仍为
+  `19/200`，fresh 门是拒绝 story 必须回到重接链且不再出现该 attempt 的 `state=NONE` 长 PARK。
+- **Fresh 四次 P1 / 重接相位错误已修（05:29-05:40）：** run
+  `remote-turn-37c9ced3-a5fd-4d28-b835-a325b41f02f8` 已在 `05:29:55` 由 exact
+  `LOCAL_ENTER_BATTLE_FAILED` 立即唤醒 Cloud，证明热启动终态修复生效；但 Cloud 的
+  `restartAcceptTaskFromTrackerMiss()` 错把恢复目标设为 `ACCEPT_TASK_CLICK_NPC`。当时人物仍在白骨山
+  `(168,59)`，因此地藏王固定点被错误点击在野外画面，随后无限等待不存在的接任务 dialog。已正式 stop/shutdown
+  `5/5`；Cloud 将该恢复目标收窄为 `ACCEPT_TASK_NAVIGATE_TO_NPC`，正常接任务、NPC 点击与导航算法均未改。
+  Cloud production compile 与 touched-file diff check PASS；focused Maven test 被仓内既有全局
+  `testCompile` 漂移阻断。新 run `remote-turn-2e7e374d-b149-4e94-91b8-0e20d2e6865e` 于 `05:40`
+  复现同一失败入口后明确进入 `ACCEPT_TASK_NAVIGATE_TO_NPC`，日志确认 `current=白骨山`、
+  `target=阎王书房`，且未再执行白骨山上的地藏王固定点。当前五窗 `5/5 RUNNING`，剩余 run 仍为
+  `MaxRuns=181`，累计基线保持 `19/200`。
+- **Fresh 五次 P1 / 接任务探针时序已修并通过原故障点（05:41-05:53）：** run
+  `remote-turn-2e7e374d-b149-4e94-91b8-0e20d2e6865e` 已正确到达阎王书房并点击地藏王，但本地
+  `GHOST_KING_ACCEPT_TASK` 探针在开始约一分钟导航前就已注册；探针在路途中持续匹配空结果，到达后的 NPC 点击没有
+  产生新的可唤醒事件，Cloud 因 `WAIT_ACCEPT_DIALOG timeoutMs=-1` 永久 PARK。已正式 stop `5/5`。Cloud 现只在
+  exact 到达后、NPC 输入前注册探针，并将等待限制为该探针注册后的 `8s`；超时只重置同一轮到
+  `ACCEPT_TASK_NAVIGATE_TO_NPC`，不得终止任务。Cloud production compile、G050/G065 接任务顺序合同和 touched-file
+  diff check PASS。新 run `remote-turn-3a25b7d8-5fe3-4a45-a21b-379b20a01285` 于 `05:52` 首次探针超时后按设计
+  同轮重试，第二次收到 `GHOST_KING_DIALOG_ANSWERED`，随后确认鬼王 title 并点击 fresh Tracker 绿链；证明原无限
+  PARK 已解除。当前 `5/5 RUNNING`，累计仍为 `19/200`，继续验证本轮入战、五窗 `Alt+8`、脱战与完成计数。
+- **Fresh 六次 P1 / 重接导航被意外战斗脱战劫持（06:14）：** 当前 run 约 20 分钟仍为 round 1，五窗运行、
+  广播、`Alt+8` 与截图均正常，但重复“接取 -> 白骨山 -> 看打不可用 -> 回地藏王”。Cloud 两次记录
+  `interruptedPhase=ACCEPT_TASK_NAVIGATE_TO_NPC titlePresent=true` 后仍无条件跳到
+  `TRY_TRACKER_SHORTCUT`。该相位已经是旧 Tracker/看打判废后的重接恢复；复用旧缓存会中断回地藏王并形成循环。
+  已正式 stop `5/5`。返修只允许在该 exact interrupted phase 下清旧 Tracker 并继续
+  `ACCEPT_TASK_NAVIGATE_TO_NPC`；其他正常 Tracker 途中的意外战斗恢复规则不变。Cloud 编译、定向合同通过后从
+  累计 `19/200` 恢复剩余 `181` 轮。
+  已完成窄修：Cloud production compile PASS，隔离
+  `G050GhostKingRegistrationConnectivityTest` `2/2 PASS`；标准 Maven focused test 仅被既有全局
+  `testCompile` 漂移阻断。下一 fresh 门为新 run 中 exact 重接相位遭意外战斗后继续回地藏王，不得再进入
+  `TRY_TRACKER_SHORTCUT`。
+- **Fresh 七次 P1 / 首次看打不可用即无限回地藏王（06:25）：** 只读双审查确认四个
+  `template-never-appeared-after-pathing-terminal` 均属于不同 exact Tracker attempt；Cloud 鬼王却在每次首次
+  `LOCAL_ENTER_BATTLE_FAILED` 后直接重接，且不增加 retry，导致 round 1 无上限循环。已对齐修罗基线的有界策略：
+  在当前目标处最多三次真实重按保存绿链，每次重建 movement/pathing/看打 interest；仅预算耗尽或无保存点时
+  回地藏王。Cloud production compile PASS，隔离合同 `2/2 PASS`；等待 fresh 证明重按/进战或有界回退。
+  Fresh run `remote-turn-03e6765a-baaf-46d8-a844-46f5300d3599` 已真实完成 `retry=1/2/3` 三次新 attempt，
+  第 4 次才按 `limit=3` 有界回地藏王；五窗 `5/5 RUNNING`，累计仍为 `19/200`，继续长跑。
+- **Fresh 八次 P1 / 地图遮挡被误报为看打不存在（06:37）：** exact 失败帧显示队长已到白骨山
+  `(42,145)`，但大地图仍覆盖中央业务区域；Client 的看打采样早于终点场景清理，因此三次 saved-green 重按
+  都回到同一遮挡画面。现仅对 `GHOST_KING` 看打 miss 先在共享帧匹配地图标题/复选框；命中时只关闭地图、
+  清缓存并等待下一帧，禁止消费一次性 failure claim。模板、ROI、Tracker 点、业务 dialog 与其他任务不变。
+  production compile PASS；隔离真实帧回放 PASS，raw/marked 位于
+  `images/test-cases/guiwang/g065/white-bone-map-blocker-{raw,marked}.png`，复选框 score=`0.9961` 且同帧
+  `jinzhan.png` absent。已正式 stop/shutdown `5/5`；高权限后台重启的 UAC 在本轮无人批准而超时，剩余
+  `181` 轮等待高权限 no-UI host 恢复后继续，普通权限宿主不得冒充 fresh 验收。
+- **Fresh 九次 P1 / 自动恢复入口错误 + 输入失败后永久 PARK（08:00）：** 停机返修后的恢复脚本错误调用不存在的
+  `DHXY Restart Elevated Ready`，实际计划任务为 `DHXY Restart Elevated`，因此运行不应有地暂停数小时。现已用正确
+  高权限入口恢复 `5/5 RUNNING`。恢复首轮的 saved-green 重按在 FakerInput 六次绝对定位后仍从目标 `(219,419)`
+  漂移到 `(217,388)`，进入 dead letter；Cloud 随后把唯一失败事件消费掉，却以“keep waiting current attempt”返回
+  `WAIT_TRACKER_SHORTCUT_PATHING`，造成无新事件可唤醒的永久 PARK。P1 修复要求同时满足：FakerInput 保持
+  `<=1px` 精度并用驱动相对报告完成收敛；saved-green 输入失败须有界重新提交，仍失败则进入既有重接恢复链，禁止
+  等待已消费事件。运行返修必须通过正确计划任务自动恢复，不得再次停在 UAC/人工批准状态。
+- **Fresh 九次返修验收（08:13）：** Client 保留 FakerInput 与 `<=1px` read-back 门，绝对报告未到位时继续用驱动
+  相对报告纠偏，不再把一次收敛漂移直接送入 dead letter；Cloud 对 saved-green 单次输入失败最多原点重交三次，
+  全部失败后进入既有 fallback。双仓 production compile 和 diff check PASS。正式 `stop 5/5`、换载 Cloud 后，
+  已由真实计划任务自动启动高权限 no-UI Client PID `61592` / sessionId=`32c64cec-16aa-477a-bf27-f9fbc7696dd3`，
+  五窗 `5/5 RUNNING`。fresh 队长 runId=`remote-turn-316c7bae-922c-4f85-8d57-0937cfa0476d` 已真实执行
+  saved-green `retry=1/2/3` 且无 cursor failure/input dead letter；预算耗尽后转入
+  `ACCEPT_TASK_NAVIGATE_TO_NPC` 返回地藏王，不再等待已消费事件。累计仍按 `19 + 当前 181` 统计到 `200`。
+- **Fresh 十次 P1 / 重接循环绕过归队门（08:13-08:52）：** 上述 run 不是正常长跑，队长约 40 分钟始终
+  停在 round 1，反复 saved-green 三次重按、回地藏王重接；没有 `ROUND_DONE`、`RETURN_HOME`、
+  `WAIT_TEAM_RETURN`、`TEAM_RETURN` capability 或成员归队按钮观察。根因是
+  `restartAcceptTaskFromTrackerMiss()` 直接进入 `ACCEPT_TASK_NAVIGATE_TO_NPC`，绕过
+  `PREPARE_ROUND` 的队长“招”检测；四名本地 `AUTO_BATTLE` 成员必须等该 capability 才能扫描归队，因此
+  从未获得执行权。Cloud 已在 exact 重接入口复用现有 `shouldYieldForTeamReturnSignal()`：有信号先进入既有
+  `WAIT_TEAM_RETURN`，信号清除后再继续重接；无信号保持原导航。模板、ROI、成员点击、正常 round 与其他任务
+  均未改。Cloud production compile、隔离 G050/G065 连通合同 `2/2 PASS`、diff check PASS；标准 Maven test
+  仍被既有全局 `testCompile` 漂移阻断。`08:52:55` 的全局紧急停止使五窗正式 `STOPPED`；下一 fresh 必须
+  通过高权限后台恢复，真实看到“招”时开放 capability、成员扫描/点击归队，并最终完成 round 1。
+- **Fresh 十一次 P1 / 队伍预检前台激活失败（09:07-09:19）：** 两次启动的五个窗口全部成为
+  `AUTO_BATTLE`，不是正常主程序角色分配。日志证明 `SetForegroundWindow` 对五窗均返回 `focused=false`，但旧输入
+  worker 仍发送物理 `Alt+T`；保存帧只有世界画面，队伍面板未打开。预检又把“全组无队长”静默降级为 MEMBER，
+  因而制造五个假队员。用户重申所有普通任务输入必须是聚焦后的 FakerInput 前台物理输入；本轮曾尝试的后台
+  `Alt+T` 已完整撤回，禁止 PostMessage/exact-HWND 后台键盘回退。Client 现只在 Windows 聚焦失败时，用
+  FakerInput 点击 frozen exact 窗口标题栏中央并复验前台，再发送原有物理 `Alt+T`；仍无法激活或所有本地组都无
+  队长时拒绝启动。Client production compile、diff check PASS；点击回放 raw/marked 为
+  `images/test-cases/team-role/g065/foreground-activation-{raw,marked}.png`，实际窗口相对点 `(518,7)` 位于标题栏。
+  通过真实计划任务恢复的高权限 no-UI Client PID `62148` / session
+  `2e2cb782-61d0-4ee4-97da-f8014c8f5026` 已正确得到 `hwnd-24197C=GHOST_KING`、其余四窗
+  `AUTO_BATTLE`、5/5 `RUNNING`；fresh 业务输入均记录 `backend=FakerInputProvider` 和 focus success，无后台输入
+  回退、input dead letter 或 cursor failure。累计继续按 `19 + 当前 181` 统计到 `200`。
+
+## G064 UI 控制普通任务是否检测并领取双倍（2026-08-11）
+
+- **状态：SOURCE + DUAL COMPILE + ISOLATED CONTRACT PASSED / AWAITING FRESH。** 用户要求增加 UI 开关；关闭后不检测双倍状态，也不导航长安或点击
+  一品侍卫。默认开启，保持现有 G058 行为。
+- **实现边界：** Client “领取双倍”复选框写入 `BotProperties` 并由 `GameUiSettingsStore` 持久化；启动时通过
+  双仓 byte-identical `TurnTaskRuntimeSettings.doubleExperienceClaimEnabled` 绑定到 exact window/task run。
+  Cloud 鬼王按该值启停共享摄妖香帧的双倍观察，并在 after-accept 消费点和通用领双维护入口双重拦截。
+  关闭时 pending 会在任务启动边界清空。显式手动 `G056_DOUBLE_EXPERIENCE_ACCEPTANCE` 保留，阈值、CD、
+  长安坐标、NPC 与广播点击链均不改。
+- **验证门：** Client 设置快照测试、启动协议 golden JSON、Cloud G064 识别/导航顺序合同、双仓 production
+  compile、协议文件 byte-identical、业务规则门与 touched-file `git diff --check`。不运行 UI/runtime/input；
+  fresh 需确认关闭开关后无双倍识别日志、无长安领双 pathing，重新开启后恢复原 G058 行为。
+- **静态验证：** Client `mvn -q -DskipTests compile` PASS；Cloud `mvn -q -DskipTests=false compile` PASS；
+  G064 隔离连通合同真实调用 `buildRuntimeSettingsSnapshot()` 并检查跨仓识别/导航顺序，PASS；双仓协议文件
+  SHA-256 完全一致；`BR-GHOSTKING-004` 规则门与 touched-file diff check PASS。标准 Maven test 被两仓既有
+  无关 testCompile 漂移阻断：Client 缺 `LocalPathingStartProofMechanics`，Cloud 有多处旧构造器/协议测试未同步。
+
+## G063 恢复头像锚点同队分组并收紧战斗广播边界（2026-08-11）
+
+- **2026-08-12 23:09 监控状态：** 五窗广播与 exact-window 自动战斗在前 11 轮持续通过；第 12 轮由
+  G005 天庭可见 title 彩色误判导致接任务周期终止，已正式 stop `5/5`，不是 G063 分组或广播回归。
+  G005 修复、编译和真实帧回放通过后，仍使用同一五窗后台入口重启并继续 100 轮；G063 验收继续要求
+  队长与四个 `AUTO_BATTLE` 成员同场完整维护，ID 3511 不得遗漏。
+- **23:32 重启状态：** 新后台 session `ce38585e-7718-437d-83ab-e477ff0c093c` 已启动 `5/5`；
+  `hwnd-37113A4` 为天庭队长，含 ID 3511 `hwnd-24197C` 在内四窗均为 receiver-only
+  `AUTO_BATTLE`，当前五窗持续 `RUNNING`。第一场已进入战斗，继续等待该场五窗 exact-window `Alt+8`
+  与完整脱战广播闭环。
+- **23:33 环境 P1 与恢复：** 上述 session 由普通权限后台 host 启动，首场五窗 exact-window `Alt+8`
+  全部被 Windows 拒绝，四段按键消息均为 `success=false,lastError=5`；3511 的 `hwnd-24197C` 同样失败。
+  已正式 stop `5/5` 并 shutdown 该 host，未改业务代码、未放开前台 fallback。通过既有 G036
+  `-ElevatedHost` 入口完成 UAC 授权后，新 session `caf6cc93-b147-4876-89eb-93d1a835f126` 已恢复
+  `5/5 RUNNING`。fresh 仍需首场确认五窗 `Alt+8 result=true`、3511 不遗漏且无 `lastError=5`。
+
+- **状态：五窗广播与窗口独立自动战斗刷新 fresh 通过，继续 100 轮后台监控。** 用户确认同队事实不能由“同一批启动窗口”推断。必须恢复历史已验证的
+  exact-HWND 窗口相对 `(644,91,10x10)` 原始 ARGB SHA-256 锚点分组；只有锚点 Hash 相同的窗口才可能
+  共享本地队长战斗广播。
+- **历史与当前证据：** 历史提交 `2f083c14` 的 `LocalTeamRolePreflightService` 先按上述锚点 Hash 分组，
+  tooltip 只负责组内认队长。提交 `49cc45ce` 删除分组后，当前代码改成“整批首个队长按钮命中，其余全部
+  MEMBER”，Cloud 又直接按整批 `localTeamSessionKey` 广播，存在跨队广播风险。当前 G002 队员采样抑制还错误
+  要求 member 的 `localLeaderWindowId` 非空，而该字段按 CR138 只在 leader context 保存，导致同队成员仍自行
+  请求战斗 ROI。
+- **批准实现边界：** Client 先用旧锚点算法分组，再用现有 `Alt+T` 队长按钮模板在每个 Hash 组内认队长；
+  只有确实包含本地队长的组才发布 `groupHash`。固定 `AUTO_BATTLE` 成员与暂停热恢复窗口也必须通过同一锚点
+  归入对应队长组。Cloud 信任 Client 已确认的 LEADER/MEMBER 角色，以 `batchSession + groupHash` 投影真实组内
+  session；广播和成员采样抑制只依据该 scoped session 的 live leader state。无本地队长或无可靠锚点的窗口
+  不得进入广播组，继续自行检测战斗。
+- **精确写集：** Client `LocalTeamRolePreflightService.java`、`WindowTaskControlService.java`、
+  `WindowTurnLoop.java`、`run-cloud-brain-server.ps1` 及 G063/Turn loop 合同；Cloud
+  `CloudTeamRolePreflightService.java`、`CloudTurnTaskRuntime.java`、`AutoCombatService.java`、
+  `CloudWholeTaskObserver.java`、`CloudTurnHttpHandler.java` 及 G063/strict ingress 合同；本卡、
+  `docs/ACTIVE_WORK.md`、dashboard 数据。不得修改受保护 `D:\mavenProject\DHXY`，不得启动
+  runtime/application/UI/capture/input。
+- **验证门：** Client/Cloud production compile、G063 定向合同、touched-file `git diff --check`。本轮只做
+  源码和离线合同验证，不运行现有 live anchor probe；fresh 需看到同 Hash 组使用同一 scoped session、不同 Hash
+  组绝不互收战斗边沿，且同队成员不再发布 `COMBAT_SIGNAL` interest。
+- **实现与静态门：** Client 已恢复 exact `(644,91,10x10)` 原始 ARGB SHA-256，并让每个 Hash 组独立匹配
+  现有队长按钮；固定 `AUTO_BATTLE` 成员和暂停恢复角色会补入同一 confirmed-leader Hash，外部队长组保留
+  `groupHash=null`。Cloud 先接受 Client 明确角色，再将组内 session 投影为 `batchSession::groupHash`；广播只发给
+  scoped session 内的 `localSupportMember`，成员采样门改读 `TaskMaintenanceService` live leader/pending state。
+  Client/Cloud `mvn -q -DskipTests=false compile` 均 PASS；隔离合同 Client `6/6 PASS`、Cloud `2/2 PASS`；
+  touched-file `git diff --check` PASS。标准 Maven test 分别被卡外既有
+  `TurnContractFixtures.LocalPathingStartProofMechanics` 缺失和 Cloud 多份旧测试构造器/API 漂移阻断于全局
+  `testCompile`。未运行 live anchor probe，未启动 runtime/UI/capture/input。
+- **Fresh P0（2026-08-11 18:38）：** 本地锚点分组成功，日志确认
+  `groupHash=anchor-8e335f...`、`leaderWindowId=hwnd-37113A4`、`memberCount=4`；随后五个
+  `WindowTurnLoop` 均启动，但每个首包都被 Cloud 以 HTTP 400
+  `INVALID_TURN_REQUEST: body is not a strict valid TurnRequest JSON` 拒绝，并持续重试。UI 启动命令却在
+  Cloud ACK 前报告“远程批量启动完成：5/5”，各窗口角色一直保留 `UNKNOWN/空闲`。这是阻断所有任务启动的
+  P0，证明现有 G063 隔离合同未覆盖真实的 Client 序列化 -> Cloud 严格反序列化/协议校验边界。
+- **必须返修：** 先让 Cloud 的 strict-read 失败保留安全的具体校验原因（不得记录截图或敏感正文），用本次
+  LEADER/MEMBER + anchor group 的真实首包字段建立双仓 round-trip 合同；再修正不合法的启动 authority/preflight
+  投影。UI 不得在 Cloud ACK 前显示启动成功；首包 4xx 必须投影为明确启动失败并停止无意义重试。返修完成前
+  G063 不得关闭，也不得宣称可 fresh。
+- **启动返修（2026-08-11）：** 根因收敛为 18:38 Cloud 启动器用“源码树最新时间 vs classes 树最新时间”判断
+  classpath 是否新鲜；任意较新的无关 class 都可能遮住单个过期协议 class，导致新 Client 首包被旧 Cloud DTO 严格
+  反序列化拒绝。启动器现改为对 `pom.xml + src/main` 计算内容指纹，编译前后源码必须一致并写入
+  `target/cloud-runtime-source.sha256`，指纹不一致一律先重编译，资源复制保留旧时间戳也不会形成永久误判。Cloud
+  strict ingress 只记录安全的字段/映射失败原因；Client 首包确定性 4xx 会明确结束启动，不再无限重试；UI 必须等
+  Cloud ACK 后才报告启动成功。相关 Java 生产编译和先前定向合同已在用户本次禁测指令前通过；其后没有再运行任何
+  测试、编译、runtime、application、UI、capture 或 input。指纹启动器收尾按用户要求保持未测试，等待用户自行重启。
+- **Fresh P1（2026-08-11 19:17）：** 指纹启动返修后五窗已真实启动，锚点分组仍为同一
+  `anchor-8e335f...`，队长 `hwnd-37113A4` 运行 `TIANTING`，四个队员运行 `AUTO_BATTLE`。队长在
+  `19:17:42` 收到进入战斗边沿并于 `19:17:43` 执行 `Alt+8`，但四个队员（含 ID 3511 的
+  `hwnd-24197C`）均无战斗边沿、无 `Alt+8`。根因是 `CloudWholeTaskObserver.isRelevant(...)` 漏掉
+  `AUTO_BATTLE`，使队员直接获得 `Handle.inactive()`，没有注册到
+  `CloudFastExpectedCombatExitCoordinator.bindings`，队长广播时不存在接收端。返修只把
+  `AUTO_BATTLE` 纳入 observer 生命周期；G002 队员自身 `COMBAT_SIGNAL` interest 抑制、同组边界和不保存队员
+  战斗截图规则保持不变。Fresh 门为同一场战斗五窗均维护自动战斗，且四队员无自身战斗采样。
+- **19:31 首轮返修结果与收窄：** 四个队员均成功注册，队长进入战斗后向四人逐一广播；队长及四队员在
+  `19:31:35-38` 共五次 `Alt+8 result=true`，3511 对应 `hwnd-24197C` 在 `19:31:36.158` 成功。继续监控发现
+  初版返修虽把成员 interest 压成空集合，却仍启动完整 observer thread，四队员持续运行 G017/Tracker 探针并产生
+  整窗 `CAPTURE`/`HOLD_UNKNOWN`。二次收窄为 `AUTO_BATTLE` receiver-only Handle：只登记空 interest、
+  ready-event run 和 G002 binding，不 claim prepared owner、不创建普通 observer thread；关闭时只注销对应 binding
+  与 ready-event。需再次 fresh 证明五次 `Alt+8` 仍成立，同时成员无 observer first-cycle、G017 或 Tracker 捕获。
+- **19:37 二轮 fresh 与新增边界：** 五窗全部 `RUNNING`，四成员均记录 `G063 ... receiver only` 且没有成员
+  observer first-cycle/G017/Tracker probe。队长 `19:39:31` 进入战斗后四份组内广播全部送达，五窗在
+  `19:39:32-34` 均执行 `Alt+8 result=true`；3511 的 `hwnd-24197C` 于 `19:39:33.348` 成功，随后 Cloud
+  又从该窗画面命中自动战斗面板并读到剩余 `25` 回合，确认不是只启动队长。继续监控发现 Client 基础 Runner
+  仍会把成员自身物理战斗边沿送到 coordinator，与 leader broadcast 形成双 generation。三次收窄只在 Cloud
+  coordinator 丢弃 confirmed `localSupportMember` 的直接 `IN_COMBAT/COMBAT_EXITED`，成员 binding、广播接收、
+  `AUTO_BATTLE` 面板维护均保留；无本地队长的窗口仍使用自己的 Runner 战斗边沿。
+- **19:47 三轮 fresh：** 四成员 receiver-only、direct `IN_COMBAT/COMBAT_EXITED` 抑制和同组队长广播全部生效；
+  第一场队长及四成员共五次 `Alt+8 result=true`，3511 的 `hwnd-24197C` 于 `19:48:14.516` 成功；
+  `19:50:03` 五窗均脱战，四成员 direct exit 被忽略并收到队长 exit 广播。G063 广播边界本轮通过；后续队长
+  停顿已归因并转入 G005 的旧 Tracker 路径生命周期返修，不是成员自动战斗回归。
+- **20:12 四轮 fresh P1 与修复：** G002 同毫秒把队长入战广播给四成员，但生产
+  `RefreshDuePanelVerifyGate` 错用共同的 `requestedTaskCode=tianting` 作为 gate key。首个窗口刷新后，3511
+  明确记录 `refresh-due panel verify deferred by team gate ... retryAfterMs=29109`；约 94 秒战斗内只有部分窗口
+  获得刷新，证明整队 gate 会饿死 exact-window 自动战斗。修复只把 30 秒防抖键改成 exact `windowId`，每窗
+  独立维护，输入仍由既有队列串行；不改 Runner 战斗权威、G002 广播、模板或 `Alt+8` 动作。
+- **20:21 修复后 fresh：** 五窗后台启动成功，第一场同一代入战广播后，队长与四成员在
+  `20:21:42.227-20:21:44.797` 的约 2.6 秒内全部 `Alt+8 result=true`；3511 于 `20:21:44.797` 成功，
+  无 `team gate deferred`。五窗于 `20:22:10-11` 全部脱战，队长 `20:22:14.482` 已注册下一条 Tracker
+  寻路，五窗继续 `RUNNING`。Cloud production compile PASS，窗口 gate 隔离合同 `1/1 PASS`；整套 Maven
+  test 仍被卡外既有旧测试构造器/协议漂移阻断于全局 testCompile。
+
+## G062 包裹独占宏去除重复聚焦并改用小 ROI 快速捕获（2026-08-11）
+
+- **状态：P1 已修复 / 静态与回放通过 / 待 fresh。** 用户已批准修复鬼王队员 `单飞打手机` 使用摄妖香时包裹宏耗时
+  `62,657ms` 的问题；只调整通用包裹机械捕获与输入安全边界，不改变摄妖香、回城道具、页面顺序、模板、
+  阈值、点击动作或任务 phase。
+- **现场证据：** `16:19:33.511` 开始 `BAG_USE_INCENSE`，`16:20:35.908` 完成。两次包裹打开确认分别
+  被整窗 `PrintWindow(PW_RENDERFULLCONTENT)` 阻塞；同期其他窗口的小 ROI CAPTURE 也耗时约
+  `9.0s/10.5s/22.9s`，证明瓶颈不是 `sheyaoxiang_item.png` 匹配。物品模板匹配本身约 `1.7s`。
+  当前未推送 `BagService.pressBackgroundAltE()` 又在输入队列已经聚焦 exact HWND 后重复调用
+  `WindowFocusService.focusWithoutLock()`，两轮额外增加约 `10s`。
+- **批准修复边界：** frozen/exclusive 输入请求仍由 `InputActionWorker` 在事务入口聚焦一次；驱动 `Alt+E`
+  发送前只读确认当前前台 HWND 等于 exact binding，失败即拒绝发键，不再主动二次聚焦。包裹锚点和已打开
+  包裹内的物品格截图改为 exact HWND 的直接小 ROI `BitBlt`，禁止先 `PrintWindow` 整个 `1024x768` 再裁剪；
+  不可用时快速失败，不退回整窗同步捕获。
+- **精确写集：** `BagService.java`、`WindowFocusService.java`、`GameClientTracker.java`、
+  `BoundWindowCaptureService.java`、`docs/业务逻辑.md`、`docs/business-rules.json`、
+  `docs/rule-traceability/G062.json`、本卡、`docs/ACTIVE_WORK.md`、错误清单和 dashboard 数据。
+  不修改 Cloud，不启动 runtime/UI/capture/input，不修改受保护 `D:\mavenProject\DHXY`。
+- **验证门：** `BR-BAG-001` 规则门、Client production compile、touched-file `git diff --check`。fresh 后必须
+  看到每次驱动 `Alt+E` 只有一次队列入口聚焦，包裹锚点/物品格日志使用 fast ROI provider，且摄妖香开包
+  不再出现整窗 `PrintWindow` 长阻塞。
+- **实现与静态验证：** `BoundWindowCaptureService` 新增 exact HWND ROI 直接 `BitBlt` 且无整窗 fallback；
+  `GameClientTracker` 只透传当前绑定的小区域内存/文件捕获；`BagService` 的主包裹锚点 `90x70` ROI 与既有
+  `312x208` 物品格均改走该入口，`Alt+E` 前只读核对 exact foreground，不再重复聚焦。模板中心点坐标语义、
+  阈值、页序、点击与 phase 未改。`node scripts/check-business-rule-gate.js --card G062` PASS，
+  `mvn -q -DskipTests compile` PASS，touched-file `git diff --check` PASS；未启动 runtime/UI/capture/input，
+  仍需 fresh 实机确认耗时与 provider 日志。
+- **2026-08-12 天庭 fresh 失败：** leader `hwnd-24197C` 的启动补香
+  (`18:05:48.561-18:05:51.365`) 与首战后补香 (`18:09:10.472-18:09:13.263`) 都真实进入
+  `BAG_USE_INCENSE` 并各发送两次驱动 `Alt+E`；四阶段 fast ROI 均未匹配 `anchor_cunkuan.png`，
+  `ensureBagOpened()` 在任何 `sheyaoxiang_item.png` 页扫描前返回失败。Cloud 将该布尔失败笼统写成
+  `incense item not found`，并非 CD、开关、身份或天庭调用点跳过。
+- **保存帧与聚焦定义纠正：** fast ROI 实际由 `WindowCaptureEvidenceStore` 落盘。截图发生在第一次
+  `Alt+E` 完整释放后约 `700ms`、约 `1.2s` 延迟复查，以及第二次完整释放后约 `700ms`，不是发键前提前截图。
+  用户明确确认对话框不会阻止 `Alt+E`，先前“战后对话框直接阻挡热键”的推断撤销。按键前队列聚焦和
+  `BagService.isForeground()` 仅由 exact `GetForegroundWindow` 返回 true，这只证明 `EnumWindows` 绑定的顶层
+  HWND 在前台；现场枚举确认其下还有 `Win32Window` 游戏内容和 `SysTabControl32` 等子 HWND。当前代码不读取
+  `GetGUIThreadInfo().hwndFocus`，`focused=true` 主路径也不调用 `SetFocus`，所以不能证明键盘焦点位于能消费
+  游戏快捷键的窗口，也没有 HID 被游戏消费的回执。
+- **P1 原因与修复门：** 两个入口都必须增加真实 keyboard-focus（active/focus child HWND）证据、按键释放后的
+  复核和保存帧诊断，不能再把“顶层前台”写成“聚焦成功”。`checkBagOpened()` 的次级 `panelVisible` 尚未实现、等待又从 pushed baseline
+  的 `1200ms/700ms` 缩为 `700ms/500ms`，仍是独立安全缺口。未经用户批准不改代码；批准后必须用这些真实帧
+  建立 testcase，并把“顶层前台但键盘焦点不明 / 驱动未落键 / 开包确认失败 / 物品不存在”拆成可诊断结果。
+- **2026-08-12 18:23 回城道具确证：** 本轮排除聚焦失败。用户现场看到包裹打开，第一次尝试保存帧也显示
+  `initial(18:23:19.632)=关闭 -> first(18:23:20.771)=打开界面边缘 -> late(18:23:21.276)=仍打开 ->
+  second(18:23:22.418)=关闭`；`18:23:29.759-18:23:32.854` 第二轮完全重复。固定“存款”锚点位置落在展开的
+  左侧任务追踪覆盖区，因此主包已开时仍只得到 `notVisible`；未实现的 `panelVisible` 没有阻止第二次
+  `Alt+E`，它反而关掉包裹。两次都未进入 `tianting/huicheng.png` 当前页匹配、任务页校准或点击。
+  这是独立、已确认的 P1；批准后的窄修复为：增加不受任务追踪遮挡的次级包裹可见证据，已可见但主锚点缺失时
+  禁止二次 toggle，并用本轮真实帧完成 testcase replay 与标记输出。不得借此修改回城模板、页序或任务 phase。
+- **Git 根因复核与修复方向更正：** 用户指出包裹不是固定位置。旧提交 `66987933` 和 pushed
+  `origin/dev=4da93bea` 均通过 `updateGlobalVision()` 在整窗动态匹配真实锚点，并按
+  `windowId|MAIN_BAG` 缓存命中坐标。固定 `MAIN_BAG_ANCHOR_RELATIVE_X/Y=198/394` 与对应 `90x70` ROI
+  只存在于当前尚未提交的 G062 diff；它让首次开包也在假定位置搜索，且 `lastMainBagAnchorCache` 只被用于挪鼠标，
+  没有用于 ROI 定位。这是 G062 引入的业务语义回归。主修复必须恢复“无缓存整窗定位 -> 缓存真实坐标 ->
+  有缓存才用缓存中心小 ROI -> 缓存 miss 时整窗重定位并刷新”；次级面板证据只能防止误发第二次 toggle，不能
+  替代动态锚点。修复前需用户明确批准，完成后必须用可移动包裹位置的 testcase replay 和标记图验收。
+- **批准实现与验收：** 用户明确批准按以前已验证的动态定位恢复。`BagService` 已删除固定窗口相对
+  `(198,394)`；无 per-window 缓存时整窗动态匹配，已有真实缓存时先走缓存中心 `90x70` fast ROI，ROI miss
+  或捕获失败立即整窗重定位并由既有 `rememberMainBagAnchor()` 刷新缓存。开包等待恢复 pushed 的
+  `1200ms/700ms`；物品格仍使用真实锚点换算的 fast ROI。`BagCunkuanAnchorReplayTest` 用真实包裹帧证明失效
+  缓存 ROI miss 后整窗找回 `(218,394)`，标记输出为
+  `images/test-cases/bag/wuhuan-6056-main-bag-stale-cache-fallback-marked.png`；隔离测试 `3/3 PASS`、production
+  compile、`BR-BAG-001` gate、touched diff-check 均 PASS。全量 testCompile 被并行脏改缺少
+  `TurnContractFixtures.LocalPathingStartProofMechanics` 阻断，与 G062 无关。未启动 runtime/输入，fresh 必须
+  验证首次出现 `full-window main bag anchor matched`，后续出现 `source=cached-anchor matched=true`；移动包裹后
+  必须先记录 cached miss 再整窗命中新坐标，且不得反向关包。
+- **18:49 fresh 部分验收：** 新进程首次无缓存开包在 `18:51:57.036` 通过整窗找到真实锚点 `(574,411)`，
+  随即第 1 页匹配并使用摄妖香，`18:51:59.332 success=true`；首次动态定位和物品格 fast ROI 已实机通过。
+  用户随后确认 stop 全清本来正确；问题是新 run 的 G017 已进入 `ACCEPT_TASK`，天庭却漏掉接任务前的 Hot Start
+  回程道具探测。因此 G062 锚点 fresh 仍通过，但回城任务页与缓存快路须在 G069 补齐后重新验收。
+
+## G058 鬼王复用摄妖香状态帧延迟领取双倍（2026-08-11）
+
+- **状态：IMPLEMENTED / AWAITING FRESH。** 鬼王不新增战斗结束监听，也不为双倍单独截图。只在现有摄妖香完整状态 ROI
+  `(901,123,123,34)` 已被采集时，对同一张原始帧附带识别双倍图标和剩余时间；明确低于 `20` 分钟才登记
+  per-window 待办，缺图、缺图标或时间不可读均不登记。
+- **执行时机：** 检测时不立即打断当前流程；下一次鬼王接任务并由独立 Tracker title 明确确认后，在既有
+  after-accept 维护点消费 G056。G056 pathing 保持原 exact Runner terminal 和本地领取广播链，失败不重接任务。
+- **鬼王无盒子：** 删除鬼王对 `CommonBoxService` 的依赖及回城检测、after-accept 消费、绿链后消费三个入口；
+  鬼王不匹配盒子图片。共享盒子服务以及修罗/五倍调用保持不变。
+- **CD：** 只有 `lingshuang.png` 真实点击成功、Cloud 收到
+  `DOUBLE_EXPERIENCE_BROADCAST_HANDLED` 后，当前窗口才进入 `100` 分钟 CD；CD 内不运行双倍模板或时间识别。
+  摄妖香现有记忆快路、识别、补香和 fallback 顺序不改。
+- **基线：** Client/Cloud HEAD 分别为 `4da93bea` / `8474103` 且与各自 `origin/dev` 一致；鬼王与 G056 均为
+  当前工作树尚未推送的已批准增量，本卡不修改受保护 `D:\mavenProject\DHXY`。
+- **实现与静态门：** `PlayerStateService` 仅在鬼王观察开关开启、无 pending 且不在 CD 时，用完整
+  `123x34` 状态帧替代该次摄妖香缓存小 ROI；同帧先记录双倍待办，再按原摄妖香顺序继续。鬼王 title 确认后的
+  after-accept 维护点消费 pending；G056 `PATHING_STARTED` 继续等待 exact intent，领取成功启动 `6,000,000ms`
+  CD 并走既有 `3s` team handoff。鬼王源码已无 `CommonBoxService`、盒子 detect/consume 引用。Cloud
+  `mvn -q -DskipTests=false compile` PASS，相关 `git diff --check` PASS；
+  未启动 runtime/UI/capture/input。Fresh 需看到同一摄妖香 capture 后 pending、下一次接取成功后 G056、成功后
+  `cooldownMs=6000000`，CD 内无双倍识别日志。
+
+
+## G057 鬼王长寿村饱和度飞行辅助（2026-08-11）
+
+- **状态：SOURCE REPAIRED / AWAITING FRESH。** 2026-08-11 现场日志中 G057 arm、饱和度采样、
+  `changshou-enable-flight`、`PRESS_ALT_C` 均为 `0` 条。鬼王 `ghost-king:tracker-shortcut:*` intent 正常登记，
+  但当前实现错误等待稳定后的 Cloud `PATHING_COORDINATE_RESOLVED(map=长寿村)`；长寿村实际是导航途中经过地图，
+  本轮日志没有任何该结果，所以 G057 一次都没有执行。返修必须改为 Runner 移动途中从 G002 exact-HWND
+  共享帧识别当前地图标签，首次确认 `长寿村` 只武装；下一共享帧 tick 才裁剪窗口相对
+  `(688,71,67x38)` 并用平均 HSV 饱和度判定。`<=0.10` 为飞行，`>=0.20` 为落地，中间态不输入并
+  等下一 tick。
+- **返修：** 已删除 Cloud 坐标回包对 G057 的触发职责。Runner 每个 G002 shared-frame tick 先消费上一 tick
+  的 pending，再在当前 `GHOST_KING + ACTIVE/UNKNOWN + ghost-king:tracker-shortcut:*` intent 中裁剪既有坐标条
+  ROI `(46,59,178x35)`，以 `images/template/map_label/长寿村.png`、阈值 `0.85` 本地匹配地图标签。
+  命中只 arm；同一帧绝不判飞行或输入。intent 被替换、清空或离开 active 状态时 pending 直接丢弃。
+- **输入边界：** 只有明确落地才经全局 `InputActionQueue` 向 exact bound window 按一次
+  `Alt+C`；FakerInput 路径在队列事务内聚焦，同一 intent 最多一次，已飞行不发键。不改 Cloud 鬼王
+  phase、Tracker/看打逻辑或其他任务。
+- **现场数据：** 用户提供的两张完整窗口图在该 ROI 的平均饱和度分别是落地
+  `0.3679`、飞行 `0.0437`。本卡按 no-local-test 不新增视觉单测；G016 跨边界合同只验证
+  `analysis result -> 下一 tick -> exact input` 顺序与一次性。
+- **实现与静态门：** Client 新增 `FlyingSaturationLocalMechanics`，仅从 G002 shared frame 内存裁剪；
+  `WindowObservationSampler` 以 exact 鬼王 intent 武装/一次性消费，`WindowObservationRunner` 将当前
+  `taskCode` 交给分析结果入口。Client `mvn -q -DskipTests compile` PASS；G016 standing exception 下以
+  `junit-platform-console-standalone 1.10.2` 隔离执行新增顺序合同 `1/1 PASS`。标准 Maven 定向测试在执行前被
+  卡外旧测试引用缺失的 `TurnContractFixtures.LocalPathingStartProofMechanics` 阻断；整份旧合同类另有 4 条
+  共享帧采样次数历史断言失败，均未冒充通过。本卡两张 raw 与红框证据归档在
+  `images/test-cases/guiwang/g057/`。未启动 runtime/UI/capture/input。
+- **返修验证：** 两张现场原图在移动中地图标签 ROI 内的真实 OpenCV 分数分别为落地 `0.9928`、飞行
+  `0.9943`，标框输出为 `ground_map_label_marked.png` / `flying_map_label_marked.png`。Client compile 与
+  touched-file `git diff --check` PASS；标准 Maven 定向测试仍被卡外旧测试缺失
+  `TurnContractFixtures.LocalPathingStartProofMechanics` 阻断于全局 `testCompile`，随后按 G016 standing exception
+  用 `junit-platform-console-standalone` 隔离执行更新后的移动中入口合同，`1/1 PASS`，日志顺序为 map-label arm
+  → next tick saturation → 单次 `Alt+C`。未启动 runtime/UI/capture/input。
+- **Fresh gate：** 鬼王绿链移动途中首次进入长寿村后，日志必须先记录本地地图标签命中与 arm，下一 Runner tick
+  再记录饱和度结果；不得以稳定坐标回包作为触发入口；
+  落地只聚焦并按一次 `Alt+C`，已飞行零输入，其他窗口不得被按键。
+
+## G056 双倍不足二十分钟的一品侍卫本地领取广播（2026-08-11）
+
+- **状态：TEAM BACKGROUND FRESH PASSED。** 新增通用维护能力，不在本卡擅自接入修罗、五倍、鬼王或其他任务阶段；调用任务必须
+  显式消费返回状态并按自己既有状态机决定继续、park 或放权。
+- **触发规则：** 复用现有双倍状态识别；仅当双倍图标与剩余时间均被确认，且剩余时间严格小于 `20` 分钟时
+  才执行。图标缺失、时间不可读或截图不可用均失败关闭，不得猜测需要领取。
+- **队长流程：** 复用 G028 买鞋后的直接地图标签路径：`Alt+2` 打开世界地图，在窗口相对 ROI
+  `(479,404)-(672,548)` 原图匹配 `images/template/map/changan.png`，点击“长安”后在目的地小地图点击 exact
+  坐标 `(415,235)`；禁止改走世界地图输入框。只接受 Runner 对该 exact intent 的 `ARRIVED`。一品侍卫 NPC
+  只允许窗口相对固定点 `(662,396)`（由屏幕点 `(861,471)` 减 base `(199,75)`）
+  与黄字识别两种候选，禁止 memory、tooltip、公式和 Ctrl fallback。
+- **本地领取：** NPC 打开后，Client 在 small dialog ROI `(250,312,529,208)` 内直接使用原图模板
+  `images/template/dialog/maintenance/lingshuang.png` 匹配“领取二小时”并点击；不得洗字、OCR 或上传该图给
+  Cloud。现有医宝宝/修装备的窄 ROI 与模板保持不变。
+- **广播与放权：** 队长本地点击成功后，通用方法返回明确 broadcast handled 结果；具体任务据此复用现有维护
+  handoff/放权节奏。挂机队员由既有 per-window 本地维护广播 runner 在同一 small dialog ROI 匹配并领取，
+  不生成 Cloud 业务事件。
+- **写集：** Client 本地维护模板处理、whole-task 本地操作与双仓共享协议；Cloud 双倍状态读取、NPC 精确策略、
+  `TaskMaintenanceService` 通用方法及本地操作 client；治理为本卡、`ACTIVE_WORK.md` 和 dashboard。
+- **后台验收入口：** `G056DoubleExperienceAcceptanceTool --armed` 不启动 JavaFX、不经过任务 UI；指定窗口作为
+  队长执行 G056，其他已注册游戏窗口先启动生产 `AUTO_BATTLE` 队员队列及各自本地 broadcast runner。它只跳过
+  “双倍是否低于 20 分钟”状态门，不跳过长安标签、exact Runner 到达、NPC ClickSmart 或 Client 本地
+  `lingshuang.png` 点击；队长完成后必须等到每个窗口都有本轮本地领取时间戳，随后停止测试队员，结果写入
+  `logs/g056-double-experience-manual/<timestamp>/`。按用户要求不写 unit test。
+- **静态验收：** Client/Cloud `mvn compile` 均 PASS，新增共享操作和 G056 manual command 双仓一致；
+  `git diff --check` PASS。未运行 runtime/UI/capture/物理输入。Fresh 必须看到 exact 到达、一品侍卫固定点或
+  黄字候选、本地领取命中、队长放权及每个挂机成员各自点击一次；Cloud 不得收到领取模板图片。
+- **2026-08-11 team fresh P1：** 首轮后台验收只给指定队长启动 G056，另外四个已注册窗口没有启动
+  `AUTO_BATTLE`，因此其 `LocalMaintenanceBroadcastRunner` 从未运行；队长领取成功不能证明 broadcast。修复后验收
+  入口按真实队伍先启动队员消费者，再启动队长，并以各窗口本轮 `double-experience-two-hours` 成功时间戳作为门禁。
+- **13:42 team fresh：PASS。** 队长 `hwnd-37113A4` 在 exact `(415,235)` 到达后以固定 NPC 点打开一品侍卫并
+  本地领取；四个队员 `hwnd-24197C`、`hwnd-F101CE4`、`hwnd-1C617FA`、`hwnd-E31224` 随后均由各自
+  `dhxy-local-maintenance-*` runner 原图命中 `double-experience-two-hours` 并各点击一次，五窗口输入均通过统一
+  `InputActionQueue`。验收器终点改为五窗口点击证据齐全并自动停止整组，不再等待丢失成功结果的 UI 投影字段。
+
+## G055 鬼王完成 Story 接任务前精准清理（2026-08-11）
+
+- **状态：REPAIR IMPLEMENTED / AWAITING FRESH。** 鬼王 expected combat 脱战并回城后，完成 story 可能持续遮挡
+  下一轮地藏王接任务。Cloud 不再感知或处理该机械清理；Client 在地藏王 NPC FIFO 本地入口、任何 NPC 点击前，
+  对 exact bound HWND 的 small-story ROI 直接匹配 `images/template/dialog/guiwang/complete.png`。命中即本地点掉
+  Story，未命中不输入并继续原 NPC ClickSmart。
+- **Fallback：** 精准处理后若接任务 dialog 仍失败，`recoverAcceptDialogFailure` 先调用既有 `cleanUpAll`，再按
+  原阶段重试/恢复规则返回接任务导航。NPC 策略、回城道具、expected combat 权威和通用 story 点击坐标不变。
+- **写集：** Client `NpcArrivalFrameFifoLocalExecutor`；Cloud 删除 `GhostKingTask.prepareRound(...)` 的专用检查和
+  `DialogService.matchesCurrentStoryObjectiveTemplateNoDetect(...)`。协议、NPC ClickSmart、模板资源均不改。
+- **Fresh gate：** 正常鬼王脱战回城后，Client 应记录 `Ghost King local completion story matched` 并立即点掉
+  Story，随后进入地藏王 NPC 点击；Cloud 不得再记录或请求这次模板探测。未命中必须记录 local absent 并直接继续。
+- **2026-08-11 11:46 fresh P1：** 回程道具于 `11:46:25.520` 完成后，G055 对 `529x143` small-story
+  objective 快照返回 `complete.png matched=false`，并记录 `pre-accept completion story absent`；因此用户看到的
+  Story 消失不是 G055 的精准点击，而是 `11:46:33.263` 第一次地藏王 NPC 普通点击落在仍遮挡画面的 Story 上。
+  随后接任务图未出现，流程等到 `11:46:39.978` 的固定等待超时，再执行约 `2s` 的 `cleanUpAll`，并于
+  `11:46:50.057` 第二次点击 NPC，最终 `11:46:53.663` 才消费接任务对话框。回程完成到接任务成功约
+  `28.1s`。返修必须先保留并回放该次 `529x143` 原始帧，查清模板/洗图/ROI 的 false negative；未有标记图证据前
+  不得通过缩短超时或改写 `NpcClickSmart` 掩盖首因。
+- **11:46 离线回放根因：** 从当时真实 `640x300` Dialog 截图按生产坐标 `(50,95,529,143)` 裁出的 Story ROI
+  清楚包含白字“莫要得意，我还会再回来的。”，`complete.png` 是同一句前半段的 `95x23` 白字模板。生产代码却
+  调用 `washDialogOptionTemplateTextToBlackAndWhite`，该算法只保留绿色或高亮黄色选项文字，导致 Story ROI 洗后
+  白色像素为 `0`，而模板白色像素为 `364`，所以必然无法匹配。证据为
+  `images/test-cases/guiwang/g055/20260811_114625_story-objective-raw.png`、
+  `20260811_114625_story-objective-current-option-wash.png` 和
+  `20260811_114625_g055-false-negative-marked.png`。返修方向应使用既有 Story 白字洗图，不得调整业务时序掩盖错误。
+- **用户架构纠正（2026-08-11）：** `complete.png` 属于纯本地机械清理，Cloud 连命中结果都不需要知道。该检查
+  内嵌在既有地藏王 NPC FIFO 本地操作中，直接匹配原始 ROI，不上传图片、不新增请求、不洗字。11:46 真实 raw
+  testcase 与现有模板直接回放分数为 `0.9999998807907104`，因此保留现有模板，无需制作彩色模板。
+
+## G054 自动战斗面板拖动容差调整（2026-08-11）
+
+- **状态：IMPLEMENTED / AWAITING FRESH。** 用户确认自动战斗面板已经位于目标附近时不应因轻微模板定位偏差重复拖动。
+- **业务规则：** 面板推算中心到窗口相对目标 `(489,726)` 的欧氏距离由原 `20px` 容差调整为 `50px`；距离
+  `<=50px` 不拖，距离 `>50px` 才执行原有原子左键拖动。模板、目标点、中心偏移、拖动动作和战斗门均保持不变。
+- **写集：** Cloud 仅 `AutoCombatPanelService`；治理仅本卡、`ACTIVE_WORK.md` 和 dashboard。按用户要求不新增或运行测试。
+- **Fresh gate：** 下一次战斗中，距目标约 `22-33px` 的面板必须记录 `already in safe area`，不得再出现
+  `battle:dragAutoPanel`；真正超过 `50px` 的面板仍须拖到原目标点。
+
+## G005 天庭一次接任务周期内暗雷只判定一次（2026-08-11）
+
+- **2026-08-14 引妖香竞态返修（已实施，待 fresh）：** exact `hwnd-AD816B4` 在战后 ROI
+  `images/captures/20260814/hwnd-AD816B4/20260814_170710_315_24877_HWND_PRINTWINDOW_487_250_640x300.png`
+  清楚包含 `使用引妖香`。旧链先发布/点击绿链，异步 Tracker OCR 随后才给出 `YINYAO`；无移动进入 G017 后，
+  Client 的天庭 `RECOVERY_OPTIONS` 又被开关明确排除 `yinyao.png`，因此同一业务选项两条路都可能漏掉。
+  用户裁决：Tracker OCR 只保留暗雷/普通分类，彻底删除引妖香 OCR 分支；战后按 exact combat-exit 时间做不超过
+  `500ms` settle，然后在既有 `640x300` Dialog ROI 上登记一次本地 `TIANTING_YINYAO` 探测，最多等待
+  `1500ms`。命中则点击并清除被 Dialog 遮挡时准备的旧 Tracker action，等待面板刷新；未命中立即继续普通绿链。
+  绿链明确未移动时，天庭业务 fallback 的固定候选集必须包含 `yinyao.png`，不再依赖任何 OCR 开关；它不加入
+  全局 resident 模板。保留稳定动作键 `tianting.yinyao` 和 Client 点击新鲜度/窗口绑定门。
+- **本轮验收门：** 现场 raw frame 必须由生产 matcher 命中引妖香并生成红框/红点 marked replay；no-movement
+  sampler 合同必须证明无需 OCR 即点击 `yinyao.png`；Cloud 源码合同必须证明 Tracker OCR 已无引妖香分支、只保留
+  `DARK_THUNDER/OTHER`；两仓 production compile、定向合同、G005 规则门与 touched-file
+  `git diff --check`。Fresh 中战后命中必须先出现 `post-combat 引妖香 clicked locally`，未命中则不额外等待下一轮
+  OCR；同一 accepted cycle 尚未消费时，绿链无移动 fallback 仍可补命中引妖香；一旦真实点击被 Cloud 消费，
+  本周期后续 recovery 必须排除引妖香，直到下一次 fresh accepted title 才重新开放。
+- **静态/回放结果：** 两仓 production compile PASS。Client 隔离执行真实 sampler/fallback/现场帧回放合同
+  `22/22 PASS`；Cloud 隔离执行本次 post-combat 顺序、旧 action 清理及 Tracker OCR 分类合同 `3/3 PASS`。
+  raw/marked 分别为
+  `images/test-cases/tianting/g005-yinyao-fallback/20260814_170710_yinyao-dialog-raw.png` 与
+  `20260814_170710_yinyao-dialog-marked.png`，红框/红点均落在“使用引妖香”。标准 Maven named test 在目标执行前
+  被两仓既有卡外 testCompile 欠账阻断，未扩大写集修理。Fresh runtime 仍待下一次真实战后命中/未命中双路径确认。
+- **状态：2026-08-14 暗雷阈值/OCR 返修已实施并通过静态回放 / 待 fresh runtime。**
+  `2026-08-11 05:52` fresh run 的 exact 暗雷 action
+  `1d9573df-78d8-458b-9588-beae84720423` 已物理点击并真实移动，但 intent
+  `2a26161c-57ab-4168-81ad-c62cd4da6cc0` 注册时坐标基线为空；Runner 第一次读到 `(9,35)` 后直接在该点形成
+  `STOPPED_AWAY`。旧协议以派生移动时间戳表示移动，导致真实移动仍被判 `NO_MOVEMENT`，同一 action clean retry
+  五次。先前“暗雷无移动也直接放行”的临时修法已撤销：它会绕过普通/暗雷共享的真实移动合同。
+- **2026-08-12 23:09 fresh P1 与修复：** round 12 的失败重接连续五次物理点击李靖，Cloud 均报告
+  `tracker never showed`，随后 `accept exhausted after 5 real attempts -> FAILED`。保存帧
+  `images/test-cases/tianting/g005/visible-title-color-drift-raw.png` 实际清楚显示两项 `[天庭任务]`；
+  生产回放确认锚点得分 `0.999999`，彩色标题仅 `0.730300 < 0.82`，同模板灰度为
+  `0.999223`。修复仅给 `tianting` 标题增加“原彩色失败后灰度匹配”兜底，其他任务的模板、阈值、
+  ROI 和顺序完全不变。五次真实尝试耗尽后改为清当前接取回合的 attempts/navigation/arrival/probe/
+  prepared/pathing transient 状态并 `retry`，禁止终止整项天庭任务。
+- **本轮静态与回放验收：** Cloud `mvn -q -DskipTests=false compile` PASS；标准 Maven 定向测试仍被
+  写集外既有 aggregate `testCompile` 的旧 `DialogService` 构造器/协议夹具漂移阻断。按项目既有例外使用
+  `javac -proc:none` + JUnit Console 隔离执行真实帧标题回放与 accept-exhausted 合同，`2/2 PASS`；日志确认
+  灰度兜底得分 `0.9992`。标框输出为
+  `images/test-cases/tianting/g005/visible-title-color-drift-marked.png`，蓝框为生产 Tracker panel，红框为
+  实际命中的首个天庭任务框。Fresh gate：重启后该画面必须直接上报 title present，不得再点击李靖五次；
+  即使以后真实连续五次失败，也只能重开接取回合，五窗任务不得变为 `FAILED/STOPPED`。
+- **23:32 fresh 首段：** 新 Cloud 与五窗后台重启成功。现场同一旧失败画面两次记录
+  `grayscale fallback ... score=0.9992`，随后 Cloud 成功确认新接取 title、准备并点击 Tracker 绿链
+  `(332,283)`，消费“看打”并进入 `PARK_COMBAT`；不再出现五次点击李靖或 accept exhausted。当前为
+  round 1 首场战斗，完整 100 轮仍在监控。
+- **2026-08-13 20:37 fresh P1：封妖符首坐标被旧绿链 episode 阻断。** exact 窗口
+  `hwnd-AD816B4` 已依次实际点击 `duoxie.png` `(545,584)` 与 `fengyao.png` `(565,584)`，Client 也已按
+  `tianting:fengyao-answered` 成功清除 intent `14fa963d-57dd-4832-9389-64e3091b22a0`；Cloud 同时记录
+  `clientCleared=true mirrorCleared=true`，且业务事实已经是 `fengyaofu=true`。但
+  `trackerLinkRecoveryEpisode` 未随这个不可逆分支转换退役，`readFacts()` 的合成条件仍把它算作
+  `pathingActive=true`；决策顺序中 `PARK_PATHING` 又先于 `RUN_FENGYAOFU`，因此连续多个 25 秒周期都停在
+  `PARK_PATHING`，从未进入 `clickFengyaofuCoordinate(..., 0)`。这是本卡前一轮为“exact terminal 前禁止
+  重复 Tracker 点击”新增 episode 栅栏后的遗漏清理边界，不是 G029 锚点、坐标表或点击公式回归。
+  **返修边界：** 只在已执行的 exact `ACTION_FENGYAO` 成功释放对应旧 Tracker intent 后，同步退役
+  `trackerLinkRecoveryEpisode` 与腿时间戳；不得放宽普通寻路期间的重复点击栅栏。Fresh/合同必须覆盖
+  `Tracker 绿链 -> 多谢 -> 使用封妖符 -> pathing release -> RUN_FENGYAOFU -> coordinate 0`，并保留释放失败
+  立即终止的安全门。用户已批准返修；Cloud `TiantingTask.consumeWake(...)` 现只在
+  `releasePathingIntent(..., true)` 成功后清除 episode 与 `activeTrackerLegStartedAtMs`，并记录原 exact intent id；
+  失败分支仍先 `return` 并保留 hard-fail。新增 `executedFengyaoAnswerRetiresTheTrackerEpisodeBeforeCoordinateZeroDecision`
+  合同锁定成功/失败顺序。Cloud production compile PASS；标准 Maven 定向测试被写集外既有 aggregate
+  `testCompile` 构造器/协议夹具漂移阻断，隔离 `javac -proc:none` + JUnit Console 执行
+  `TiantingSubtaskLoopContractTest` 为 `53/53 PASS`。本次不修改坐标表、视觉匹配或 click point，故无需新建
+  点击目标标注图；fresh gate 是现场点击 FENGYAO 后必须先记录 `FENGYAO answer retired exact Tracker leg`，
+  下一次决策进入 `RUN_FENGYAOFU` 并实际提交 coordinate 0，不得再出现 `fengyaofu=true -> PARK_PATHING`。
+- **当前修复门：** Runner 在同一 exact intent 内观察连续有效逻辑坐标；任意一次 X/Y 不同即锁存
+  `coordinateMovementObserved=true`，直到该 intent 结束都不撤销。上一 intent 最后已知坐标可作为下一腿的初始
+  比较基线；首个无基线坐标只建立基线，不能伪造“未移动”。像素差只调度坐标识别。共享协议只传 Runner 的锁存
+  布尔，Cloud G017、天庭和归队消费者均不得按时间戳、最终坐标或分支特判重新推导移动。
+- **Fresh gate：** 重启 Client 与 Cloud 后，同一暗雷绿链只允许一次物理点击；Runner 日志必须在 intent 内先锁存
+  `coordinateMovementObserved=true`，终态携带该事实，Cloud 必须进入暗雷动作且不得出现同 action 的 G017 clean
+  retry。真正从未发生坐标变化的普通/暗雷绿链仍必须保持 `NO_MOVEMENT -> G017`，不能误放行。
+- **2026-08-14 12:12 fresh P1：暗雷第二段绿链丢失类型。** 队长 `hwnd-AD816B4` 在
+  `12:09:49` 的首段任务框为“前往瑶池……如有遇到游荡的妖怪，切勿放过”，生产模板分数
+  `0.3181`，按现行规则判 `OTHER` 正确；该原图保存在
+  `images/temp/match-miss/tianting-darkthunder/20-anlei-score-0.3181.png`。首段绿链于
+  `12:09:51` 点击并在瑶池形成 exact `STOPPED_AWAY`；第二段 `(423,261)` 于 `12:10:40` 点击，Runner
+  随后真实跨图移动并在长寿村外 `(86,17)` 形成 exact `STOPPED_AWAY`。但第二段点击没有把暗雷标签锁存进
+  `TiantingRoundContext`，所以 `readFacts()` 得到 `darkThunder=false`，决策错误进入普通任务的
+  `AWAIT_DIALOG -> RECLICK_TRACKER_LINK`。`12:11:49` 的原地重点又形成 `NO_MOVEMENT`，才触发 G017；随后同一
+  `(423,261)` 连续 clean retry，至 `12:13:22` 用尽预算并回城重接。Runner 到达事实和绿链坐标均正常，失败边界
+  位于“瑶池后新 task box 的暗雷分类/该 exact action 点击时的标签锁存”，不是路径终态或巡逻点。
+- **截图缓存纠正：** 第一段点击前 `209x78` 任务框 SHA 为 `bd430c5d...`；第二段点击前在同一
+  `(304,234 209x78)` 区域重新抓取并通过 consume 重验的 SHA 为 `69475233...`，两者明确不同。因此截图和
+  prepared action 已更新，`20-anlei-score-0.3181.png` 只是第一段模板 miss 的调试落盘图，不能代表第二段仍在
+  使用第一张图。后续已从 capture audit 找回实际参与第一次判定的 `observerSeq=463` 原始帧
+  `images/captures/20260814/hwnd-AD816B4/20260814_121036_828_9742_HWND_PRINTWINDOW_287_0_1024x768.png`；按生产坐标
+  裁 `(17,234 209x78)` 并用同一 `ImageFinder.find(..., 0.0)` 重放，精确复现
+  `center=(185,45.5), score=0.6917263269`。下一帧 `12:10:38.129` 同样得到 `0.6916691661`，不是日志串帧。
+- **低分根因与实图：** 最佳点确实是任务框中的“暗雷”二字，标注输出为
+  `images/test-output/g005-dark-thunder-investigation/observer-seq-463-taskbox-marked-4x.png`，实际 `30x13` 比较块为
+  `observer-seq-463-best-match-region.png`。ROI 和目标位置没有错；旧 `anlei.png` 把暗色背景一起截进模板，而任务
+  Tracker 是半透明面板，该帧背后为亮色地面/人物像素。生产当前以原彩色 RGB 做
+  `TM_CCOEFF_NORMED`，动态背景与字形反锯齿共同把肉眼相同的“暗雷”压到 `0.6917`。不得只下调阈值；返修需先
+  隔离/屏蔽背景后对字形匹配，并用真实暗雷与普通任务帧共同回放，OCR negative 不能代替“不是暗雷”的视觉证据。
+- **2026-08-14 简单纯模板方案实测：** 灰度、Canny 边缘及两组白字二值掩码在 exact 帧分别只有
+  `0.6892/0.2812/0.4016/0.3322`，均不优于现有原彩 `0.6917`，不采用。最小且有效的方案是保留暗背景
+  `anlei.png`，再增加从 exact 帧提取的亮背景 `30x13` 模板，两张以同一 `0.70` 阈值取最大值：exact 暗雷由
+  `0.6917 -> 1.0000`，两秒后暗雷由 `0.6694 -> 0.9804`，原有暗背景暗雷仍由旧模板保持 `0.9988`。对现存
+  `764` 张 `tianting-darkthunder` miss 样本重放，新亮背景模板 `>=0.70` 为 `0` 张，最高组合分仍只有
+  `0.4643`。建议不降阈值、不增加跨帧状态，只在现有 Cloud Tracker 分析点多跑一次纯 OpenCV 模板匹配；若要求
+  改为 Client 本地执行，则需要新增本地事实/协议传递，属于更大的架构改动。实现前仍待用户批准。
+- **2026-08-14 用户最终裁决（覆盖上一条双模板建议）：** 不增加亮背景模板，不做字形抠图或多模板；现有
+  `anlei.png` 的生产阈值直接由 `0.70` 调为 `0.65`。Cloud task-box OCR 在已隔离的天庭任务框内，只要结果保留
+  单个“暗”字，也按 `DARK_THUNDER`；原有 `雷战` 正向判据继续保留。必须增加 exact `0.6917` 真实帧与普通任务帧
+  回放，确认暗雷命中且普通样本仍低于 `0.65`；OCR 合同必须覆盖现场误读“暗富坊战斗”。
+- **实施与验收：** Cloud `TaskTrackerPanelService` 已将 `TIANTING_DARK_THUNDER_THRESHOLD` 改为 `0.65`，
+  `isDarkThunderOcrText(...)` 改为接受 `雷战` 或单个“暗”字；没有新增/替换模板。真实输入
+  `images/test-cases/tianting/g005/dark-thunder-light-background-raw.png` 以生产 `ImageFinder` 重放仍为
+  `0.6917263269`，现已命中；普通输入 `ordinary-taskbox-raw.png` 为 `0.3052`，仍不命中。标注输出为
+  `dark-thunder-light-background-marked.png`。Cloud production compile PASS；隔离执行阈值回放、G038 OCR policy 与
+  Tracker OCR classification 共 `6/6 PASS`，并在已跟踪的 `TiantingSubtaskLoopContractTest` 增加两项持久合同，
+  定向执行 `2/2 PASS`；现场误读“暗富坊战斗”归类 `DARK_THUNDER`。该合同类全量为 `52/55 PASS`，其余三项是本次
+  写集外既有方法名漂移。标准 Maven 定向测试仍被写集外既有 aggregate `testCompile` 构造器/协议夹具漂移阻断。
+  Fresh gate：同一现场 task box 必须直接由模板记录
+  `matched=true score≈0.6917 threshold=0.65` 并以 `branch=DARK_THUNDER` 单次点击；若模板低于 `0.65` 但 OCR 保留
+  “暗”字，也必须发布 `DARK_THUNDER`，不得再出现该 action 的 `branch=OTHER`。
+- **`false` 的唯一写入链已经由 Cloud 日志钉死：** 第二段 action
+  `15cdbd7e-c330-46c3-ab60-87463af83ad8` 的本地模板分数为 `0.6917 < 0.7`，先判 miss；随后 OCR 把真实
+  “长寿村外……暗雷战斗”错读成“长筹村外……暗富坊战斗”，而生产分类器只接受连续关键词 `雷战`，因此明确发布
+  `branch=OTHER definitive=true`。`clickTrackerLink()` 消费该 exact resolution 后记录
+  `action=RECLICK_TRACKER_LINK branch=OTHER`，随后 `withDarkThunder(false)` 把 false 写入 round context。
+  到达长寿村外后，下一张图模板分数 `0.7529 >= 0.7`，action
+  `aa7ed4fc-2862-4705-a84e-7a2ebc9466c2` 已正确点击为 `branch=DARK_THUNDER`，round facts 也已经变成
+  `darkThunder=true`；但该次点击原地不动，`consumeTrackerLinkTerminal()` 又在正常决策前无条件把 exact
+  `NO_MOVEMENT` 交给 G017，导致正确的暗雷状态仍没有机会进入 `RUN_DARK_THUNDER`，而是 clean retry 五次。
+- **待批准返修边界：** 第二段 task box 变化后，暗雷分类必须绑定新的 exact Tracker `actionId`；该 action 的
+  类型尚未终局时不得以默认 `OTHER` 永久锁存。物理提交成功时必须把同一 action 的终局类型带入 round context；
+  对应 intent 到达后，`darkThunder=true` 必须直接选择 `RUN_DARK_THUNDER`，禁止进入普通对话等待和 G017。
+  普通任务的 `NO_MOVEMENT -> G017` 保持不变。Fresh 必须出现“瑶池首段 OTHER -> 长寿村外第二段 DARK -> 单次
+  绿链 -> exact STOPPED_AWAY -> RUN_DARK_THUNDER”，且第二段不得再有 `g017-retry`。
+- **静态验收（2026-08-11 06:37）：** Client/Cloud `mvn -q -DskipTests=false compile` 均 PASS；隔离 JUnit Console
+  执行 Client `WindowObservationRunnerContractTest` 为 `19/19 PASS`，执行 Cloud
+  `TiantingSubtaskLoopContractTest + G017UnknownPhaseRecoveryPolicyContractTest` 为 `55/55 PASS`。Runner 合同明确覆盖
+  “从 `(183,94)` 移到 `(94,83)` 后又回到 `(183,94)`，锁存事实仍为 true”。标准 Maven named test 均在目标执行前
+  被工作树既有 aggregate `testCompile` 欠账阻断；Client 另有旧 terminal-frame 抓帧计数/ACK 套件 `4` 项失败，未把
+  这些写集外结果伪报为本卡通过。未启动 runtime/UI/capture/input，状态保持 AWAITING FRESH。
+- **04:19-04:20 fresh P1：** 同一普通绿链在 Runner
+  terminal 前被点击两次；旧战斗边沿晚于任务游标消费后，在新绿链腿上再次触发 `RUN_POST_COMBAT`，并清掉新腿
+  `TIANTING_COMBAT_OPTION` probe，最终停在可见“妖孽，看剑”对话框前。Cloud observer 同时仍调用
+  `BattleRadarService` 自行判战并改写 `GameContext`，违反 Runner 唯一战斗权威。返修必须关闭天庭 Cloud 雷达判战、
+  以物理绿链点击时间隔离旧脱战事件、在 exact Runner terminal 前禁止重复绿链、并禁止旧 post-combat 清理新 probe。
+  原 `2026-08-11 03:39-03:44` fresh 证明上一版实现把
+  “分类器判为暗雷”错误等同于“前台任务已消费并进入暗雷分支”：第一项异步 OCR 可提前占用整轮 latch，
+  后续现场明确包含“暗雷战斗”的 task box 因 `cycle.seen=true` 跳过本地模板，最终落入 G017 反复绿链。
+  实时队长原图裁出的 `209x78` task box 用生产 `ImageFinder.find()` 回放得分 `0.9978`（阈值 `0.70`），
+  已排除当前 ROI、模板和匹配算法问题。修复必须把 latch 提交权从 Observer 移到前台 `TiantingTask`：
+  只有 tracker action 的本地暗雷标签被点击分支消费，或 exact action 的迟到 OCR correction 被当前腿消费时，
+  才登记本周期已执行暗雷；仅识别、未消费或迟到旧 action 不得封锁后续 task box。
+- **04:20 P1 返修（2026-08-11）：** 天庭已从 `CloudWholeTaskObserver` 的 `probeCombat` 条件中排除，Cloud
+  不再通过 `BattleRadarService` 识别或改写天庭战斗状态；唯一来源为 Client Runner 战斗边沿，经
+  `CloudFastExpectedCombatExitCoordinator` 原样携带 `combatGeneration` 进入业务 wake。`TiantingTask` 现在按整次
+  task run 保留已完成 generation，拒绝已完成、异代以及早于当前物理绿链点击的脱战边沿；已提交的 Tracker
+  intent 在 exact Runner terminal 前持续占有该腿，决策层和点击执行层都禁止再次点击；旧 post-combat 只能清除
+  不晚于其脱战时刻安装的 probe，不能再拆掉新腿的 `TIANTING_COMBAT_OPTION`。Cloud production compile PASS；
+  隔离 `TiantingSubtaskLoopContractTest` `47/47 PASS`；G005 business-rule gate 与 touched-file
+  `git diff --check` PASS。标准 Maven named test 仍被写集外既有 aggregate `testCompile` 漂移阻断。Fresh gate：
+  重启 Cloud 后，普通绿链一次物理点击后必须等待同 intent 的 Runner terminal；一次真实脱战只允许一次
+  `RUN_POST_COMBAT`，随后新腿可正常消费“妖孽，看剑”，且天庭日志不得出现 Cloud Radar 判战。
+- **19:47 fresh P1 与返修（2026-08-11）：** 五窗第一场战斗和自动战斗广播均通过；脱战后 Client 已清除旧
+  `tianting:tracker-green-click:advance` intent，Cloud 也已准备新 Tracker action，但天庭每 25 秒仍判
+  `PARK_PATHING`。根因是普通绿链的 `trackerLinkRecoveryEpisode` 只认 `PATHING_TERMINAL`；绿色链接直接进入
+  战斗时，Runner 的 exact `IN_COMBAT` 已经终结该腿，Cloud 却未退役 episode 与 pathing 镜像。返修只在
+  `IN_COMBAT.createdAtMs > activeTrackerLegStartedAtMs` 时同时退役当前 episode、同 prefix 镜像和腿时间戳；
+  迟到/旧代际边沿仍不能解除 exact-terminal 前的重复点击栅栏。Cloud production compile PASS；隔离
+  `TiantingSubtaskLoopContractTest` `50/50 PASS`。标准 Maven named test 被卡外既有 aggregate `testCompile`
+  构造器/协议夹具漂移阻断。Fresh gate：第一场脱战后必须直接消费已准备的新绿链，不得再次出现同旧腿的
+  `pathingActive=true -> PARK_PATHING`。
+- **20:00 fresh 与跨 round 返修：** generation 1 进战时 exact Tracker leg 已退役，脱战后
+  `pathingActive=false`，流程完成 round 1、回城并进入 round 2，确认上一条 P1 已关闭。round 2 的 accept precheck
+  随后错误读取上一轮残留 prepared action 并判 `quest already tracked`；消费时 raw-RGB 正确给出
+  `change=CHANGED score=0.1171`，旧 action 被取走后当前轮进入 `PARK_IDLE`。返修在 `startedRounds > 1` 的
+  round 边界先清上一周期 prepared Tracker action，强制 observer 从当前面板重新准备；第一轮热启动路径不变。
+  Cloud production compile PASS；隔离 `TiantingSubtaskLoopContractTest` `51/51 PASS`。Fresh gate：round 2
+  不得再用上一轮 action 跳过接任务，必须完成当前轮接任务并消费 fresh Tracker action。
+- **05:13-05:17 fresh P1 与根因修复（2026-08-11）：** 队长 `hwnd-24197C` 在 `05:13:24.977` 消费新接任务周期
+  的第一条普通绿链；该任务框 OCR 为“前往瑶池（87,51）处详加打探，如有遇到游荡的妖怪，切勿放过”。旧
+  `isDarkThunderOcrText(...)` 把通用提示词“游荡的妖怪”也判为暗雷，导致第一条普通任务提前消费本周期唯一
+  暗雷 latch。`05:16:34` 后真实任务框已经明确显示“来回巡游以引出妖王（暗雷战斗）”，却因 latch 已被误占而
+  跳过暗雷分类；`05:16:37.779` 到达 `(86,17)` 后落入普通 G017 路径，并在 `05:16:41-05:17:12` 重复点击绿链。
+  这不是 ROI、模板阈值或进程未重启问题，而是 OCR 判据把普通文案当成业务标记。
+- **05:17 P1 修复与回放门：** Cloud `TaskTrackerPanelService.isDarkThunderOcrText(...)` 现在只认明确 `雷战`
+  标记（包含现场 `暗雷战斗`），不再接受“游荡的妖怪”。同一 `209x78` 任务框 ROI 的真实 ordinary/dark 输入分别为
+  `images/test-cases/tianting/dark-thunder-ocr/ordinary-taskbox-raw.png` 与
+  `dark-taskbox-raw.png`；标注输出为 `ordinary-taskbox-marked.png` 与 `dark-taskbox-marked.png`。生产 OCR 实测普通帧
+  返回通用提示并归类 `OTHER`，真实暗雷帧保留“暗雷战斗”并归类 `DARK_THUNDER`。Cloud `mvn compile` PASS；隔离
+  `junit-platform-console-standalone 1.10.2` 分类合同 `5/5 PASS`。标准 Maven named test 在运行目标测试前仍被写集外
+  既有 aggregate `testCompile` 构造器/协议夹具漂移阻断。Fresh gate：重启 Cloud 后，同一新接任务周期的普通
+  “游荡的妖怪”提示不得登记暗雷 consumed；首次真实“暗雷战斗”必须进入暗雷分支并在到达后执行暗雷动作，不能再
+  落入 G017 绿链重试。
+- **Fresh 返修（2026-08-11）：** Observer 已移除所有 latch 提交，只负责发布当前 generation 的分类结果；
+  `TiantingTask` 现在仅在物理绿链点击已经提交且该 action 为 DARK，或当前 exact action 的迟到 DARK OCR
+  correction 被前台消费时，调用 `markTiantingDarkThunderConsumed(...)`。仅分类出来、尚未被任务使用的结果
+  不再占用本轮唯一暗雷机会。Cloud production compile PASS；隔离 `TiantingSubtaskLoopContractTest`
+  `44/44 PASS`；G005 business-rule gate 与两仓 touched-file `git diff --check` PASS。标准 Maven named test
+  仍被写集外既有 aggregate `testCompile` 漂移阻断。Fresh gate：重启 Cloud 后，先前普通项的迟到 OCR 不得
+  令后续真实“暗雷战斗”跳过模板；真实暗雷 action 被前台消费后，本接任务周期后续才允许跳过暗雷分类。
+- **原静态实现：** 用户批准把现有“上一暗雷
+  task box 变化后只跳过下一次 OCR”收紧为整个李靖接任务周期的状态合同。Cloud production compile 与隔离
+  连通性合同已经通过；未启动 runtime/UI/capture/input，仍需下一次实机天庭任务验收。
+- **业务规则：** `BR-TIANTING-004`。第一次由 `暗雷.png` 或 definitive task-box OCR 确认暗雷后，当前同一
+  task box 保持暗雷；本周期后续所有不同 task box 直接按普通任务处理，并在进入分析前跳过暗雷模板与 OCR。
+- **生命周期：** 状态按 exact tenant/user/device/window 槽保存，pause/resume 与 task-run 重建不清除；下一次
+  `awaitAcceptedTitle()` 确认 fresh 天庭 title 后才递增 generation 并清锁。异步 OCR 必须携带 generation，
+  旧代际完成时不得登记状态或发布 resolution。
+- **接任务换代栅栏：** 第一张 fresh title 只负责确认新周期并递增 generation；该帧若是在旧 generation 下分析，
+  其 prepared action 与 OCR resolution 必须清掉。任务随后等待下一张在新 generation 下重新分析的 Tracker
+  action，才允许进入子任务，防止新周期第一项继承上一周期的“已出现暗雷”锁。
+- **写集与门禁：** Client 生产代码不改；Cloud 仅 ReadyEvent slot state、天庭 observer、tracker 分析入口、
+  天庭 task 与现有 G016 连通性合同。先通过 G005 业务规则门，再做 Cloud compile、隔离合同和 diff check；
+  不启动 runtime/UI/capture/input。
+- **静态验收（2026-08-11）：** Cloud `mvn -q -DskipTests=false compile` PASS；隔离编译并使用
+  `junit-platform-console-standalone 1.10.2` 运行 `TiantingSubtaskLoopContractTest`，`41/41 PASS`。标准命名
+  Maven test 被工作树内写集外的既有 aggregate `testCompile` 漂移阻断；本卡生产编译和隔离合同均无失败。
+  `node scripts/check-business-rule-gate.js --card G005` PASS；两仓 touched-file `git diff --check` PASS，dashboard
+  已重新生成。
+  Fresh gate：同一次接任务周期最多出现一次 latch；后续不同 task box 不再启动模板/OCR；暂停恢复不清锁；
+  下一次真正接到任务后必须先看到 generation reset，再由新代际 Tracker action 继续。
+- **2026-08-14 引妖香一次性周期门槛补齐（SOURCE PASSED / AWAITING FRESH）：** 新增
+  `BR-TIANTING-007`。引妖香与暗雷共用 exact slot 的 accepted-cycle 生命周期，但各自独立锁存：只有 fresh
+  accepted title 重置；pause/resume、task-run 重建和单次 probe miss 均不得重开。Client 真实命中并物理点击
+  `yinyao.png` 后上报 `tianting.yinyao|executed=true`，Cloud 只有消费该成功 action 才置位
+  `yinyaoConsumed=true`。锁存后，`runPostCombatBody()` 在 settle/arm 前直接跳过引妖香专用探针，G017/普通恢复
+  则改用 `TIANTING_RECOVERY_OPTION_NO_YINYAO`，仍保留开打、多谢、卓越、药王、封妖和接任务等其他选项。
+- **门禁连通性：** 两仓同步 `TIANTING_RECOVERY_OPTION_NO_YINYAO` wire enum；Client sampler 对该 operation 使用
+  明确不含引妖香的候选集。fresh accepted title 通过既有 `resetTiantingDarkThunderCycle(...)` 同时清除暗雷与
+  引妖香 latch；暂停恢复不调用该 reset。旧 `yinyaoArmCount` 重试计数已删除，不能再把“重试次数”误当成周期门槛。
+- **本轮验证：** Client/Cloud `mvn -q -DskipTests=false compile` 均 PASS；共享
+  `ObservationDialogOperation.java` SHA-256 均为
+  `3DD138A023CB02701F4BBA3719820C845C77E194396A7878C60428295AC3E80E`。Client 隔离执行本地 matcher/sampler
+  合同 `31/31 PASS`；Cloud 定向执行周期锁、战后探针和 action 消费合同 `4/4 PASS`。标准 Maven named test
+  仍被两仓既有写集外 aggregate `testCompile` 欠账阻断；未启动 runtime/UI/capture/input。Fresh 必须看到同一
+  accepted cycle 首次真实消费后日志 `yinyao accepted cycle consumed`，后续每场只出现
+  `post-combat 引妖香 skipped`，且 G017 不得再次点击引妖香；重新接到 fresh title 后才允许下一次匹配。
+
+## G053 天庭取消旧任务后重接（2026-08-11）
+
+- **状态：SOURCE REPAIR PASSED / AWAITING FRESH。** `2026-08-11 05:23:29-05:24:46` 实跑证明
+  `subtask-watchdog-expired -> RETURN_HOME -> ACCEPT_TASK` 主路径没有进入本卡的 cancel-only gate：Runner
+  持续上报 `title=present`，`05:24:44` 又确认李靖附近 `ARRIVED 天宫(146,116)`，但 Cloud 随后仍由
+  `ACCEPT_TASK` 的 `quest already tracked` 旧短路直接回到 `RUN_SUBTASKS`，武装
+  `TIANTING_COMBAT_OPTION` 并点击旧 Tracker 绿链。整轮没有一次 `TIANTING_CANCEL_TASK` interest。
+  返修必须让所有“失败后重接”入口携带显式 cancellation-pending 状态；该状态下 fresh title 存在时只允许
+  取消，收到真实取消 action 后才允许普通接任务，且必须禁止旧 prepared Tracker action/`quest already tracked`
+  短路重新执行失败任务。
+- **规则：** `BR-TIANTING-005`。错误回李靖重接前 fresh 读取 Tracker：有天庭 title 才允许下达取消专用
+  operation，没有 title 直接走普通接任务。刚点击 accept 但 title 有界等待仍未出现时，下一次重试先尝试
+  cancel-only；取消 action 被 Client 实际执行并回报后，Cloud 才回 `ACCEPT_TASK`。
+- **架构边界：** Cloud 决定“是否取消”；Client 只在明确 `TIANTING_CANCEL_TASK` interest 下匹配
+  `quxiao.png`、原子点击并上报 `tianting.cancelTask`。普通 `TIANTING_ACCEPT_TASK` 仍只匹配 `accept.png`；
+  两者互斥，取消模板不得进入 resident/recovery 集。
+- **基线：** Client `dev@4da93bea`、Cloud `dev@8474103`；两仓现有未提交增量全部保护，基线仓不改。
+- **验收：** G053 业务规则门、共享协议 byte-identical、两仓 compile、Client/Cloud 跨边界顺序合同；不运行
+  UI/runtime/capture/input，fresh 待用户实机。
+- **父级审查与返修：** 两轮发现 6 个 P1 并已关闭：cancel-only 排除遗留封妖 follow-up；fresh Tracker capture
+  unavailable 不再等同于 title absent；Client 回报携带 probe correlation，Cloud 仅消费当前已武装 correlation，
+  迟到旧取消事件被忽略；correlation 每次武装唯一且在 failed-click 处理前校验；capture 抛异常同样只保留重试。
+  取消成功还会清掉旧 prepared Tracker action，避免下一次 `ACCEPT_TASK` 被旧绿链短路。
+- **05:23 fresh 主路径返修（2026-08-11）：** Cloud 新增跨 round 保留的 `failureReacceptStage`。watchdog
+  超时或 G017 明确失败在进入 `RETURN_HOME` 前登记 `CANCEL_IF_PRESENT`；`resetRoundLatches()` 不得清除此状态。
+  下一轮 `ACCEPT_TASK` 先 fresh 读取天庭 title 并清旧 prepared Tracker action：title 在时只能武装
+  `TIANTING_CANCEL_TASK`，收到真实取消 action 后转为 `ACCEPT_AFTER_CANCEL`；title 不在才可直接普通接取。
+  `quest already tracked` 旧短路只允许 `NONE` 正常入口，不能再把失败任务放回 `RUN_SUBTASKS`。
+- **静态验收（2026-08-11）：** 两仓 production compile PASS；Client sampler 真实匹配/点击合同 `21/21 PASS`，
+  Cloud 顺序/竞态合同现为 `48/48 PASS`；共享协议 SHA-256 byte-identical，G053 business-rule gate PASS，
+  touched-file `git diff --check` PASS。标准 named Maven test 被写集外既有 aggregate `testCompile` 构造器、旧协议
+  枚举与旧天庭测试签名漂移阻断；最终独立复审 `P0/P1/P2=0/0/0`，本卡源码与隔离合同无失败，fresh runtime 尚未执行。
+  视觉证据为 `images/test-cases/tianting/cancel-option/cancel-option-raw.png` 与
+  `cancel-option-marked.png`，红框/十字由生产 matcher 的实际 hit 生成。
+
+## G052 通用暂停热恢复战斗门回归（2026-08-11）
+
+- **状态：SOURCE IMPLEMENTED / STATIC REVIEW P0-P1-P2=0-0-0 / COMPILE DEFERRED FOR ACTIVE RUNTIME / FRESH REQUIRED。** 用户确认本卡不是天庭专用逻辑，而是所有任务共用的
+  暂停恢复入口：战斗中恢复只维持自动战斗并等待 Runner 脱战；脱战并取得 fresh observation 后，才允许任务读取
+  Dialog/Tracker/回程道具或导航。天庭已有修复只是首个 task-specific 版本，不能替代通用门。
+- **规则与基线：** `BR-START-001`、`BR-TIANTING-002`；Client `dev@4da93bea`、Cloud
+  `dev@8474103`，均以各自 `origin/dev` 为最新推送基线。Cloud `TiantingTask.java` 开工前相对推送基线
+  无差异，说明缺陷已经存在于最新推送，不是本轮未提交 G051 增量造成。
+- **fresh 证据：** `00:59:28` 暂停旧 run；`01:00:15` 战斗中 `PAUSE_RESUME`；`01:00:16` Client
+  同 run 上报 `title=absent dialog=none`。Cloud 的 G017 启动仲裁没有先执行战斗门，提前 ACK 该 pair 并进入
+  `ACCEPT_TASK`。Runner 在 `01:01:46.130` 正确确认脱战，但任务此时已经在李靖导航链，最终停止日志仍为
+  `phase=ACCEPT_TASK`。这不是 Runner 漏报，也不是回程道具分支；是战斗画面隐藏 Tracker 后，Cloud 用错误时机
+  的 negative 决定了 phase。
+- **修复边界：** 天庭首轮在任何 startup Title/Dialog 消费和启动补给前先尊重 scoped
+  `GameContext.IN_COMBAT`；战斗期间只调用既有自动战斗 tick 并 park 在 Runner
+  `COMBAT_STATE_CHANGED`。脱战后移除并重新武装 G017 两个 interest，使战斗期 pair 因 revision 过期；随后只消费
+  fresh pair。禁止 Cloud Radar/二次视觉战斗判断，禁止修改正常冷启动、导航、Tracker/Dialog 算法及其他任务。
+- **验收：** G052 连通性/顺序合同必须证明战斗门在 `performStartupFirstAidCheck` 与
+  `consumeG017StartupPhase` 之前；战斗期间持续维护但不 ACK G017；脱战后 rearm 并只由 fresh title 决定
+  `RUN_SUBTASKS/ACCEPT_TASK`。完成后运行业务规则 gate、Cloud 定向合同和 production compile；fresh 必须重现
+  “战中暂停恢复”，日志不得在 `NOT_IN_COMBAT` 前出现 `startup terminal consumed: phase=ACCEPT_TASK`。
+- **实现与静态验收（2026-08-11）：** `TiantingTask.execute` 现先进入 `awaitStartupCombatExit`，停止发生在该
+  park 内时正常返回 `STOPPED`。战斗门只调用
+  `AutoCombatService.handleCombatTick(...CLIENT_RUNNER_EXIT)`，并仅等待 Runner
+  `COMBAT_STATE_CHANGED`；没有 Cloud Radar。若 `IN_COMBAT` 在 G017 已武装后迟到，两个 startup interest 会先被
+  移除，脱战后以新 revision 重建，旧战斗帧的 `title=absent` 无法 ACK。Cloud production compile、Client compile、
+  `G052` business-rule gate 和隔离运行的 `TiantingSubtaskLoopContractTest` 33/33 均通过，相关 diff check 通过。
+  完整 Cloud `testCompile` 仍被工作树内既有的无关测试漂移阻塞（旧 `DialogService`/`MemoryService` 构造器及
+  `TurnPendingRouteOutcome` 参数等），不是 G052 编译或合同失败。fresh 仍为唯一未关闭门禁。
+- **2026-08-11 鬼王复发与通用化裁决：** `10:36:39.846` 鬼王在战斗中 `PAUSE_RESUME`，但新 run 的
+  `GameContext.State` 默认 `FREE`，任务于 `10:36:40.707` 抢在 Runner 首帧前读取战斗画面 Tracker 并以
+  `anchor absent` 进入接任务；Runner 到 `10:37:53.696` 才确认脱战。用户明确否决“在鬼王状态机再补一层等待”。
+  修复上移到 `CloudTurnTaskRuntime/CloudWholeTaskObserver` 通用入口，并由 Client 首个 observation 持续提供明确
+  `COMBAT_SIGNAL`；若首帧为 `VISIBLE`，Client 保持该启动 duty，直到 Cloud 接收 Runner 的第一份 `ABSENT`
+  脱战帧。通用门未释放时 observer 只接收战斗边沿，禁止 G017、Tracker、Dialog、回程和导航 probe；收到
+  `ABSENT` 后还必须等下一份 accepted observation，避免脱战瞬间尚未重绘的 Tracker 负结果，之后才调用具体
+  任务。鬼王任务层只保留 `Tracker -> 回城道具 -> 接任务`。
+- **通用门实现（2026-08-11）：** Client `WindowObservationRunner` 每次 start（含 suspend/resume）重新武装启动
+  combat duty；`WindowObservationSampler` 即使没有常驻 combat interest 也上报同一共享帧的机械事实，`VISIBLE`
+  后持续上报直到 accepted `ABSENT`。Cloud `CloudTurnTaskRuntime` 在调用任何 `GameTask.execute(...)` 前同步等待
+  observer gate；observer 在门内仅处理 Runner 边沿和启动 combat fact，屏蔽全部任务 probe。确认战斗时公共门以
+  `CLIENT_RUNNER_EXIT` 维护自动战斗；Runner 的 fresh `ABSENT` 加一份更新的 accepted observation 后才放行。
+  stop 在门内映射为正常 `STOPPED`。
+  鬼王 task-specific 战斗等待已删除，回城道具仲裁保留。当前 Client/Cloud JVM 正在运行（Cloud 监听 `18080`，
+  Client UI 进程存活），按仓库规则没有在活动 runtime 上执行 Maven；已完成 business-rule gate 与 touched-file
+   静态检查，双仓 production compile 必须在重启前的安全窗口补跑。
+- **11:33 启动阻断与修复：** 正式重启入口在 Client compile 阶段实锤失败：通用门新增代码把
+  `ObservationFact` record 的访问器误写为不存在的 `type()`，正确字段/访问器为 `factType()`。仅修正该调用后，
+  同一正式入口完整成功；`11:36` Client PID `53548` 存活并注册 `5/5` 窗口，Cloud PID `54852` 监听
+  `18080`，OCR PID `58036` 监听 `18762`，两端启动 error log 均为空。此修复只关闭编译/启动阻断，不改变
+  G052 战斗门语义；fresh 业务验收继续按原门禁执行。
+
+## G051 世界地图拼音首字母候选 OCR 与坐标记忆（2026-08-10）
+
+- **Repair #6：用户指定七地图 fresh 通过（2026-08-10 23:55）。** 本轮验收范围按用户要求只保留
+  `大雁塔二层`、`大雁塔一层`、`凤巢一层`、`斧头帮总部`、`龙窟三层`、`龙窟一层`、`瑶池`；
+  之前目录中其他不可导航目标未重测、未计入失败。候选列表仍使用完整 canonical 名 `matchExact(...)`，
+  不允许模糊候选点击。候选点击后的已选输入框才允许针对当前唯一已知目标使用
+  `OcrTextMatcher.bestEditDistance(...) <= 1` 纠错，而且必须恰好只有一行满足。`瑶池(yc)` 在候选 ROI
+  内先向下滚动三步、等待 1000ms，再按同一精确算法选择；没有 `Enter` 或路线结果点击。
+- **Repair #6 证据：7/7 PASS。** `大雁塔二层` 最终证据
+  `logs/g051-manual/20260810-235453/dytec-大雁塔二层`；其余六项分别位于
+  `logs/g051-manual/20260810-234910`、`20260810-234943`、`20260810-235015`、
+  `20260810-235048`、`20260810-235122`、`20260810-235156` 的对应目标子目录。每项均有 raw、marked、
+  after-selected-input、OCR、`evidence.json` 和 `result.json`。Cloud/Client compile 与相关 diff check 均通过。
+
+- **Repair #5：候选后禁止 Enter（2026-08-10 22:48）。** 首轮 armed 日志确认工具在每个目标的
+  精确候选点击后仍发送 `Enter`，继而显示路线结果，形成用户未批准的额外输入。生产 memory/OCR
+  候选路径与 armed 验收均改为点击精确候选后停止，验收只用已选输入框的 exact OCR 作为通过证据，
+  不再按 `Enter`、不再打开或 OCR 路线结果。Client 原子输入门禁同步从
+  `输入 -> ASCII -> 500ms -> 候选点击 -> 200ms -> Enter` 收紧为
+  `输入 -> ASCII -> 500ms -> 候选点击 -> 200ms`。点击寻路后的第二次 `Alt+2` 是 latest pushed
+  基线关闭背后世界地图的既有动作，本轮按用户确认保留。armed 工具新增
+  `--target=<canonical map>` 单目标入口，返修只允许单目标实机验证，不再直接循环 72 项锁住真实输入。
+- **Repair #5 fresh：单目标通过（2026-08-10 22:53）。** `--armed --target=长安` 经真实
+  `WindowTurnLoop -> Cloud NavigationService -> Client InputActionQueue/FakerInput` 完成；证据目录
+  `logs/g051-manual/20260810-225313/ca-长安` 返回 `COMPLETED`，已选输入框 exact、关闭和总结果均为 true。
+  客户端运行日志对 `PRESS_ENTER|keyboard:ENTER|show-route-results` 检索为 0，证明候选点击后没有 Enter。
+  本次只验一个目标；72 项完整目录尚未在本返修后重跑。
+
+- **Repair #4：连续 MapSurvey 终态 ACK 竞态（2026-08-10 22:13）。** Fresh Cloud 纯后台重测中，首项 `长安`
+  已真实 `COMPLETED / exact target selected`，且保存了 raw/marked/OCR/result 证据；第二项 `洛阳城` 尚未输入便被
+  `MapSurvey command already active` 阻断。根因是终态 Future 在设置 retained `mapSurveyResultAckId` 时完成，目录调用方
+  立即提交下一项，抢在 live loop 下一 turn 冲刷 ACK 之前。`WindowTurnLoop.attachMapSurveyCommand(...)` 现只在这个
+  retained-ACK 窗口等待既有 loop 完成 ACK，ACK 清除后唤醒并接受下一条 exact command；不扩容命令槽、不允许
+  command 与 ACK 同帧，也不修改导航、OCR、候选坐标、FakerInput 或任务业务。必须重启 fresh Cloud 后继续纯后台
+  72 项验收，不能以首项通过代替全量通过。
+
+- **纯后台 armed 运行结论与 Repair #3（2026-08-10 22:03）。** Fresh Cloud 加载后，`长安` 已通过真实生产链并返回
+  `COMPLETED / exact target selected`，证明 `Runner -> Cloud NavigationService -> ASCII FakerInput -> 候选 ROI
+  -> Cloud OCR exact match -> Client click` 可以后台闭合。后续独立验收轮的 raw full-frame 明确显示窗口正在
+  “第 2 回合”战斗；战斗中 `Alt+2` 无法打开世界地图，工具按既有 stale 栅栏 fail closed 为
+  `clean empty route input could not be established`。Repair #3 只在 armed 工具提交首条 MapSurvey 前调用生产
+  `StartupCombatGateService`：复用 Runner 同一 `LocalCombatSignalMechanics` 在 exact HWND 上后台观察，确认脱战后
+  才开始验收。不得为此改变生产导航、OCR、候选坐标或任务业务语义。72 项仍需重新完整 fresh 才能关卡。
+
+- **首次 armed 启动失败与修复（2026-08-10 21:51）。** 首次真实启动在第一项目标前错误创建 JavaFX Stage；
+  日志明确显示工具传入的 `SpringApplicationBuilder.properties(...)` 被 `application.properties` 的
+  `bot.run.show-ui=true` 覆盖。该轮已终止，未产生有效目标结果。工具现改用仅当前进程生效的高优先级
+  `bot.run.show-ui=false`、`bot.run.auto-start=false`，保留后台窗口扫描、Turn、截图和 FakerInput，禁止创建 UI。
+
+- **父级终审：SOURCE REVIEW PASSED / MANUAL ARMED NOT RUN（2026-08-10）。** Repair #2 经父级逐文件复核，
+  `P0/P1/P2=0/0/0`。父级独立复跑 Client compile、Cloud compile、两仓 `git diff --check`、72 项
+  maps/token 覆盖和 6 份共享文件 SHA-256 均通过；armed 工具仍未运行。下一门仅是用户打开一个游戏窗口后显式
+  `--armed` 的真实后台验收，必须逐目标保存生产链 raw/marked/OCR/result 证据并全部 PASS。
+
+- **父级 Review #2：REPAIR REQUIRED（2026-08-10）。** Repair #1 已关闭首轮 3 个 P1，但父级逐文件复核新增
+  `P0/P1/P2=0/2/0`，仍不得进入 fresh：
+  1. `MemoryService.settlePendingWorldMapRouteOutcome(...)` 把 `pending.intentId == null` 当成 intent 匹配；G051
+     已写死只有同一个 nonblank exact `intentId`、同一个 canonical target 且 `ARRIVED` 才能记成功。缺失 intent
+     必须 fail closed，并按失败/失效处理，不能形成候选记忆。
+  2. Client/Cloud 共享协议 `TurnInputAction.java` 当前文本等价但 SHA-256 不同，违反双仓协议 byte-identical 门禁；
+     必须统一真实文件字节并由父级重新核哈希。禁止借返修改导航顺序、OCR、输入坐标或任务业务。
+
+- **Repair #2 交付状态：AWAITING_PARENT_REVIEW（2026-08-10）。** 本轮严格只关闭 Review #2 两项：
+  1. Cloud `MemoryService.settlePendingWorldMapRouteOutcome(...)` 保留旧 route-result memory 的历史
+     `null intentId` 兼容语义；仅对 G051 search-candidate 增加独立 strict predicate：pending/current
+     `intentId` 都必须 nonblank 且 exact equals。缺失 pending intent、缺失 current intent、错误 intent 或目标不匹配
+     均不调用 `recordSuccess`，而是进入候选 failure/invalidation。
+  2. Client/Cloud `TurnInputAction.java` 已统一真实字节，SHA-256 均为
+     `BFB17BA635A089BFB6DCC18403EEF1E719A2C363AC00189490E94B078315BE55`。
+  3. 静态验证：Client `mvn -q -DskipTests compile` PASS；Cloud
+     `mvn -q -DskipTests=false compile` PASS；双仓 `git diff --check` PASS；dashboard 已刷新。
+  本轮未改导航顺序、OCR、输入坐标、任务业务或 armed 工具；未运行 runtime/UI/capture/input/单元测试/armed。
+
+- **父级终审状态：REPAIR REQUIRED（2026-08-10）。** Worker 初交付的 compile/diff gate 虽通过，但父级逐链
+  审核发现 3 个 P1，当前不得标记源码完成或进入 fresh：
+  1. `G051WorldMapCandidateAcceptanceTool` 自己直连 `/ocr/words` 并在 Client 内调用 matcher，绕开生产
+     `NavigationService -> Cloud OCR/候选裁决 -> Turn -> Client FakerInput` 链；该工具 PASS 不能证明生产连通性。
+     返修后 armed 验收必须调用生产候选选择入口，工具只负责逐目标驱动与保存生产证据，不得复制一套 OCR 决策。
+  2. `WorldMapSearchTargetCatalog` 只列 10 个目标，而修罗、五倍、抓鬼、江湖历练等生产路径会从 Tracker/OCR
+     得到动态规范地图名；当前 `prepareWorldMapSearchResults(...)` 对目录外目标直接 fail closed，会让既有动态地图
+     导航回归。返修必须以 Cloud `config/maps.json` 的完整已知规范地图集合为审计边界，为每个会进入世界地图搜索
+     的规范目标提供显式、可审计的拼音首字母 token；armed 工具必须遍历同一生产目录。
+  3. 当前 `大雁塔二层` token 写成 `dytel`，不符合“每个汉字拼音首字母”规则，正确值为 `dytec`。返修需要
+     逐项核对目录 token，并让 Client/Cloud 目录保持同源一致。
+- **fresh gate：** 上述 P1 全部关闭、父级复跑双仓 compile/gate 并确认验收工具真实经过生产链以前，禁止写
+  `SOURCE PASSED`；实机工具仍只允许用户打开一个窗口后显式 `--armed` 运行。
+
+- **Repair #1 交付状态：AWAITING_PARENT_REVIEW（2026-08-10）。** 保留以上 Review #1 记录；本轮按父级
+  P1-1 至 P1-6 与 P2 清单返修，未运行 runtime/UI/capture/物理输入，也未修改保护基线：
+  1. armed 工具已删除 Client 自建 HTTP `/ocr/words`、matcher、截图和直接输入。它只通过现有 task-free exact-window
+     `WindowTaskControlService -> WindowTurnLoop -> TurnMapSurveyCommand -> CloudMapSurveySessionService ->
+     CloudMapSurveyService` transport，最终调用生产 `NavigationService` 的同一候选 owner；Cloud 返回 raw/marked/
+     selected-input/OCR/result 证据，工具只负责落盘。
+  2. 生产/工具共享 catalog 已覆盖 Cloud `config/maps.json` **全部 71 个 canonical key**，再保留 G050 已批准但尚未
+     进入 maps.json 的 `阎王书房(ywsf)`，合计 **72 项**。每项 token 均为显式字典，不做 runtime 发音推断；
+     `大雁塔二层` 已修正为 `dytec`，并复核“层/城/村外/总部”等后缀。
+  3. Client G051 输入在任何物理动作入队前做整条 action 预检，只接受
+     `输入框点击 -> ASCII -> 500ms`，以及记忆命中的
+     `输入框点击 -> ASCII -> 500ms -> 候选 ROI 点击 -> 200ms` 两种形状；其他 ASCII、Unicode、修饰键
+     或坐标越界均 fail before enqueue，不再吞并连续 INPUT/WAIT。
+  4. stale route panel 不再复用旧 input：必须成功关闭、重新打开 world map、重新点击 `xunlu` 建立天然空输入框；
+     关闭失败即 fail closed。armed 每项目标结束的 close 失败会立即中止整轮，绝不继续追加下一 token。
+  5. 候选稳定从 PNG byte-identical 改为固定 `98x117` ROI 的像素容差判定；Cloud 仍独占 OCR 和完整规范名精确匹配。
+     工具只注册一个 exact `WindowRuntimeContext`，实际截图/输入全部由该 bound HWND 的 Turn 生产链完成，不再调用
+     `GameClientTracker.locateWindow/capture`。
+  6. 候选记忆仍只复用 `MemoryService.settlePendingWorldMapRouteOutcome(...)`：修罗、五倍、五环 V2/V3、抓鬼、
+     江湖历练、天庭七条生产消费路径均调用同一结算；仅同 `intentId`、同 canonical target 的 `ARRIVED` 写成功，
+     `STOPPED_AWAY`、wrong intent、wrong target 只失败/失效，cancel 不写成功。
+- **Repair #1 静态证据：** Client `mvn -q -DskipTests compile` PASS；Cloud
+  `mvn -q -DskipTests=false compile` PASS；`maps.json=71/catalog maps=71/missing=0/extra=0`。共享
+  `TurnMapSurveyCommand`、`TurnMapSurveyResult`、catalog、matcher 的双仓 SHA-256 分别一致。两仓
+  `git diff --check` PASS，`BUSINESS RULE GATE PASSED (G051)`，dashboard 已刷新；armed 工具按禁令未运行。
+
+- **状态：SOURCE IMPLEMENTED / COMPILE + STATIC GATE PASSED / MANUAL FRESH REQUIRED。** Client/治理目标工作树为
+  `D:\mavenProject\DHXY-cr271` `dev@4da93bea`；Cloud 目标工作树为
+  `D:\mavenProject\dhxy-cloud-brain` `dev@8474103`；保护基线 `D:\mavenProject\DHXY` 只读。
+- **恢复前置：** 用户要求先恢复今天回滚前的 Client 本地代码。Codex 已先创建安全 stash
+  `safety-before-restore-pre-origin-client-20260810`，随后无冲突应用原 stash
+  `a1b78edcce4620d49c0598a210879e8051434861`（原名
+  `before-origin-dev-rollback-20260810-client`）。原 stash 保留未删除；本次只恢复 Client，不改 Cloud。
+- **目标：** 世界地图路线搜索禁止 `PostMessage`、`WM_CHAR`、剪贴板、中文输入法和 Unicode 注入。
+  Client 只通过 FakerInput 驱动输入 ASCII 拼音首字母并执行鼠标点击；首次候选通过 Cloud OCR 精确定位，最终导航
+  成功后保存窗口相对点击点，后续同目标直接命中记忆，不再 OCR。
+- **首字母规则：** token 必须是目标地图每个汉字对应拼音的第一个字母，例如“长安”=`ca`、“长安城”=`cac`。
+  正式实现使用经过确认的目标地图 token 字典；多音字也必须由该字典给出确定 token，禁止依赖当前机器输入法或
+  在运行时猜读音。
+- **已验证输入约束：** 路线输入框打开时为空，不执行 `Ctrl+A`，不连续退格清空；上下方向键只查游戏历史，不能
+  选择候选。输入 `ca` 会同时出现“长安”和“长安城”，因此不得固定点击第一行，也不得用前缀命中代替完整地图名。
+- **候选下拉 ROI：** 用户确认当前窗口 base 绝对屏幕为 `(884,337)`；候选下拉框绝对区域为
+  左上 `(1386,682)`、右下 `(1484,799)`，即窗口相对 ROI
+  `x=502, y=345, width=98, height=117`。窗口尺寸固定；正式实现和记忆只保存窗口相对坐标，执行时计算
+  `screenPoint = currentWindowBase + rememberedRelativePoint`，不得保存本次屏幕绝对坐标。
+- **首次记忆 miss 流程：**
+  `打开空路线框 -> FakerInput 输入 ASCII token -> 等候候选 ROI 稳定 -> Client 截取候选下拉 ROI ->
+  Cloud 分割候选行并逐行 OCR -> 规范化后与完整 targetMap 精确相等 -> Cloud 返回目标行窗口相对中心点 ->
+  Client FakerInput 点击 -> 继续既有黄字或绿字路线链 -> 为本次候选挂 pending，不立即写成功记忆`。
+- **统一成功信号：** 不用黄字点击和阎王书房绿字点击分别记成功。两种路线最终都必须登记 exact
+  `TurnPathingIntent`；只有 Runner 对**同一个 `intentId` 且同一个规范化目标地图**发布 `ARRIVED`，才把 pending
+  候选写成成功记忆。这直接复用现有 `MemoryService.settlePendingWorldMapRouteOutcome(...)` 的 watcher-proof
+  语义。仅仅出现黄字/绿字、提交点击、开始移动或角色停下都不算成功；`STOPPED_AWAY`、intent 被替换、目标不一致
+  或任务取消均不写成功记忆，下次继续走 OCR。
+- **记忆 hit 流程：**
+  `打开空路线框 -> FakerInput 输入相同 token -> 查询 (normalizedTargetMap, token, geometryProfile) ->
+  currentBase + relativePoint -> FakerInput 直接点击 -> 继续既有路线链 -> exact ARRIVED 再确认本次命中`。
+  hit 路径不得截图或请求 OCR；若最终未得到匹配的 exact `ARRIVED`，该次不能增加成功次数，达到现有失败失效策略后
+  回到 OCR miss，不允许在旧文本上清空或猜点重试。
+- **记忆模型：** key 至少包含 `normalizedTargetMap + searchToken + geometryProfile`；value 包含
+  `relativeX + relativeY + candidateRow + verifiedAt + sourceEvidence`。窗口尺寸固定，`geometryProfile` 仍保留尺寸/DPI
+  栅栏，防止配置漂移后误点。记忆需要跨任务、跨进程持久化，不能只存在当前 Java 进程。
+- **职责边界：** Client runner 只观察/截取候选 ROI、携带 exact-window metadata 并执行 Cloud 返回的动作；Cloud
+  拥有候选行分割、OCR、完整目标相等判断、token/记忆读写和失效裁决。所有真实键鼠动作继续经过同一输入队列和
+  FakerInput；OCR 期间可释放公平 turn，PreparedAction ready 后再唤醒 exact window 点击。记忆 hit 的输入和点击
+  保持一个不可插队的原子序列。
+- **验收：** 保存原始候选图和 marked replay，标出候选 ROI、每一行 OCR 框、识别文字、最终目标框和窗口相对
+  点击点；至少覆盖 `ca -> 长安/长安城` 精确区分、miss pending、exact ARRIVED 后持久化、下一次 hit 零 OCR、
+  窗口平移后的 base 投影、`STOPPED_AWAY` 不写成功，以及 wrong target/token/geometry/intent 不得复用。
+- **禁止事项：** 不重新引入 `PostMessage` 中文输入，不修改黄字/绿字既有业务顺序，不把“候选行点击已提交”当成功，
+  不创建黄字与绿字两套记忆裁决，不控制当前游戏 UI 做设计验证。
+- **固定目标目录：** 生产与手动工具共用 `WorldMapSearchTargetCatalog`，覆盖 `config/maps.json` 的 71 个
+  canonical key，另含 G050 `阎王书房(ywsf)`，总计 72 项；`大雁塔二层=dytec`。每项带 owning source，动态
+  Tracker/OCR 目标只要归一化为该 canonical map 集合即可进入生产搜索；集合外名称继续 fail closed。
+- **源码落地：** Client 新增 FakerInput ASCII action、候选 ROI/点击的 exact-window 输入序列及 pending carrier；Cloud
+  使用同一目录完成候选行 OCR 分组与完整名称精确匹配，并将候选相对点并入现有
+  `MemoryService.settlePendingWorldMapRouteOutcome(...)`。memory hit 不截图/OCR；动态未知地图 fail closed。
+- **手动验收工具：** `G051WorldMapCandidateAcceptanceTool` 已写，默认 dry-run，只有显式 `--armed` 才允许真实输入。
+  它逐目标保存 raw/marked/after/OCR/PASS，并在候选点击后只用已选输入框 exact 中文目标确认；不按 `Enter`、不点击路线结果，
+  因而不会让角色跑遍地图。`--armed --target=长安` 单目标 fresh 已通过；其候选选择 PASS 不替代生产 exact `ARRIVED`
+  记忆裁决，72 项完整目录仍待后续验收。
+- **静态验证：** Client `mvn -q -DskipTests compile` PASS；Cloud 因仓库 Enforcer 禁止 `skipTests=true`，使用
+  `mvn -q -DskipTests=false compile` PASS；两仓 `git diff --check` PASS。G051 business-rule gate 与 dashboard
+  已同步。生产链静态闭合，单目标 fresh 已通过，完整目录仍待后续验收。
+
 ## G049 天庭引妖香按 Tracker 分支处理并在任务内去重（2026-08-09）
 
 - **状态：SOURCE REPAIRED / 用户要求暂不验证，待 fresh。** Client/治理 worktree 为 `D:\mavenProject\DHXY-cr271`
@@ -153,6 +1727,13 @@
   `first-washed.png` 为 `278 bytes`，正式 `4x` OCR 输入 `560x112 / 973 bytes`，现有 sidecar `1612ms`
   返回 `今日已完成次数：|18` 并解析为 `18`。production compile PASS，G048 隔离 JUnit `5/5 PASS`，
   `git diff --check` PASS；未启动 runtime，fresh 仍待验证。
+- **2026-08-11 G005 后续裁决（覆盖本卡旧关键路径顺序）：** fresh 已证明把 Tracker OCR 放在绿链前会产生
+  `10s` HTTP timeout + 固定 `10s` cooldown，并使角色站在原地。当前权威顺序改为：prepared action 发布后立即
+  点击绿链，模板/OCR 只在移动途中按同一 `actionId` 迟到纠正；OCR 缺失或超时不得返回 `LinkClick.NONE`。
+  同一语义 task box 按原 RGB 归一化相关系数 `0.80` 合并为唯一 in-flight，删除 ARGB CRC、固定 cooldown 与
+  同图自动重发。Java 请求全局单飞；sidecar 单次推理 `8s` 硬超时后终止并重建隔离 worker。上一暗雷任务完成且
+  task box `CHANGED` 时直接按普通任务推进并跳过暗雷 OCR。Cloud compile、Python 语法门、天庭隔离合同
+  `36/36` 与精确 diff-check 均 PASS；fresh 需验证绿链立即消费且不再出现固定 `10s` OCR 重发。
 
 ## G047 NPC 点击成功后取消同 session 剩余识别（2026-08-09）
 
@@ -384,7 +1965,7 @@
 
 ## G041 FakerInput 驱动级键鼠本地接入（2026-08-06）
 
-- **状态：DONE / DRIVER READY / FRESH INPUT PASSED。** 目标 worktree 为
+- **状态：SOURCE REPAIRED / COMPILE PASSED / FRESH NAVIGATION REQUIRED。** 目标 worktree 为
   `D:\mavenProject\DHXY-cr271`（`thin-client-design`）；受保护基线
   `D:\mavenProject\DHXY` 和 Cloud `D:\mavenProject\dhxy-cloud-brain` 均不修改。
 - **用户批准边界：** 采用第三方 `Ryochan7/FakerInput v0.1.1` 虚拟 HID 驱动。`Alt+5`、`Alt+6`、
@@ -436,6 +2017,44 @@
   `No default constructor found`。生产构造器已改为显式 `@Autowired`；不增加无参构造器，不改变设备连接时机，
   默认后端仍不得连接 FakerInput。Client compile 已通过，旧失败进程已清理；须由下一次无输入 Client UI 启动
   烟测关闭本 finding。
+- **2026-08-10 中文导航输入回归（P1，REOPENED）：** `G041` 的鼠标与普通键盘驱动路由虽已启用，
+  但 `FakerInputProvider.typeTextUnicode(...)` 因 HID 不承载 Unicode，实际实现为“写系统剪贴板 + 驱动
+  `Ctrl+V`”。共享世界地图路线仍依赖“点击寻路、`Alt+2` 后目标编辑框自然保持焦点”，没有显式点击
+  `base + (252,194)` 的“到”输入框。`2026-08-10 05:10:17.869` 驱动执行
+  `TYPE_TEXT_UNICODE text='天宫'` 并返回 `result=true`，但 `05:10:20.565` 保存帧仍显示旧的
+  “洛阳城 -> 灵兽村/长寿村/长安”结果；两次 retry 的路线 ROI hash 均为
+  `f990814efb6152b3d41bd607d3f5a90c61ebd6368adb8fc88acfc1fca1e81549`。这证明成功回执只表示
+  HID 报告已发送，不表示目标子编辑框已消费文字。
+- **历史证据纠正：** `03:00:51-03:00:59` 的鬼王链不能再作为中文输入成功证据；其
+  `03:00:55.650` 保存帧中“到”输入框同样为空，只是路线列表恰好保留了“阎王书房”的旧查询结果，随后
+  legacy 绿链点击成功。此前 G050 把该链解释为“文字真实输入成功”属于误判。
+- **中文输入修复已实施：** 保持 FakerInput 为唯一普通键鼠后端，不恢复 `SendInput` 或 `PostMessage` 文本
+  fallback。共享路线搜索在寻路面板出现后显式点击“到”输入框，并把
+  `CLICK input -> CTRL+A -> clipboard/FakerInput Ctrl+V -> CLICK search` 作为同一个 frozen exact-window
+  `InputActionQueue` 请求执行，只聚焦一次且不允许其他窗口插队。Client 的 Turn 执行器现会将连续
+  INPUT/正 WAIT 片段统一装入一个队列请求；Cloud 同一导航 action 不再拆成多个独立焦点事务。
+- **2026-08-10 absolute mouse dead-letter 返修：** fresh 日志中 `(986,358)` 与 `(526,651)` 的真实落点存在
+  数像素至数十像素偏差，旧实现三次重试始终发送同一 normalized absolute report，最终进入
+  `InputActionDeadLetter` 并中断导航。现改为每次 `GetCursorPos` 后按 `target-actual` 修正下一份 absolute HID
+  report，最多 6 次、误差不超过 1 像素即成功；主屏外目标和最终仍无法收敛继续 fail-closed，未回退 relative HID。
+- **审查与验证：** 并发导航增量最初存在 `long -> int` 编译错误，已只补类型转换。Client production compile
+  PASS，Cloud production compile PASS，目标源码 `git diff --check` PASS；坐标/设备隔离测试 `10/10 PASS`。
+  标准 Client testCompile 仍被本卡外旧 `LocalPathingStartProofMechanics` 引用阻断。fresh 必须重启 Client 和
+  Cloud，并以单个混合 `input-sequence`、路线输入框真实出现目标文字及搜索结果更新验收；`result=true` 单独不算通过。
+- **2026-08-10 05:49 fresh 纠正（P1）：** 现场确认导航没有点错输入框，而是根本没有完成输入框点击。错误增量把
+  pushed Cloud 的三个独立事务（点击输入框、`Ctrl+A + TYPE_TEXT`、点击查询）合并为
+  `atomicRouteTargetSearch`，点击后仅等待 `100ms` 即继续发送键盘；日志中各 action 的 `result=true` 只表示
+  FakerInput 调用返回成功，保存帧仍显示输入框为空。该错误原子化已从
+  `NavigationService.prepareWorldMapSearchResults(...)` 删除，普通寻路与复用已打开路线面板两条分支均恢复
+  `origin/dev@847410396b3fda1cc00174910401713ff30cede4` 的原输入顺序；输入框/查询坐标未修改。配套的 Client
+  `LocalTurnActionExecutor` / `TurnInputStepExecutor` 混合 INPUT/WAIT 自动合并也已恢复
+  `origin/dev@4da93bea737c20e73f177002383fbcbc94a790c9`。Cloud `mvn compile` 与 Client production compile
+  均 PASS。必须重启 Client 与 Cloud 后 fresh 验证，验收仍以输入框真实出现目标地图名为准。
+- **用户要求完整恢复 Git 输入链：** 此前遗漏的 `FakerInputProvider` 六次闭环 absolute mouse 增量及其测试也已
+  撤销。Client 的 `FakerInputProvider`、`LocalTurnActionExecutor`、`TurnInputStepExecutor`、
+  `InputActionWorker`、`WindowAwareInputCoordinator` 现相对 `origin/dev@4da93bea` 源码零差异；Cloud
+  `NavigationService` 的导航行为相对 `origin/dev@8474103` 零差异，仅保留鬼王现有调用所需、与输入无关的
+  `navigateToMap` public 可见性。Client production compile PASS。
 
 ## G040 天庭脱战后旧暗雷帧占槽导致普通任务继续巡逻（2026-08-05）
 
@@ -606,7 +2225,7 @@
 - **根因 B（P1 实机回放）：** G037 exact-window 原图及标注图证明旧左点窗口相对 `(82,381)` 落在 Tracker
   ROI `(0,100) 280x604` 内，右键被面板吃掉。G005 权威设计早已要求
   `isOccludedByUi` / `clickablePatrolPointsFor` 拒绝此类点，但生产代码漏实现，坐标表也仍保留矛盾旧点。
-  修正后的蟠桃园左点为同一 Y 上、面板右侧的 `(300,381)`；合同同时检出御马监 `(201,465)`、长寿村外
+  当时修正后的蟠桃园左点为面板右侧的 `(300,381)`（其 Y 已由 2026-08-11 用户裁决再次覆盖）；合同同时检出御马监 `(201,465)`、长寿村外
   `(273,469)` 也落在该 ROI，分别保持原 Y 校正为 `(300,465)`、`(300,469)`。瑶池与所有右点保持不变。
 - **批准修复边界：** 恢复蟠桃园 `右、右、左、右...`；仅修正已证实不可点击的蟠桃园左点，并落实既有
   UI 遮挡门。只修正三个已证实处于 Tracker ROI 的左点；右点、右键动作、每次 `1000ms` 间隔、坐骑判断、
@@ -618,14 +2237,23 @@
   全部其他 dirty/untracked，不回滚、不覆盖、不清理、不提交。
 - **验收：** 合同固定蟠桃园 `右、右、左、右、左...`，证明四张地图均保留两个非 UI 遮挡点，并证明
   瑶池/御马监/长寿村外仍为 `左、右...`；production compile 与 diff-check 通过后重启 Cloud，再通过 G033
-  高权限宿主继续天庭 100 次。fresh 必须在蟠桃园看到前两次均为右点、第三次为 `(300,381)`，并实际进入
+  高权限宿主继续天庭 100 次。fresh 必须在蟠桃园看到前两次均为右点、第三次为 `(300,421)`，并实际进入
   战斗，不得再次以零完成触发同一 watchdog。
 - **静态与回放证据：** Cloud production compile PASS；隔离执行 `TiantingGeometryTest` 与
   `TiantingDarkThunderPlanTest` 的 13 条相关合同全部 PASS。现场原图
   `images/test-cases/tianting-dark-thunder/g037-pantao-live-raw.png`，标注输出
-  `images/test-output/g037-tianting-dark-thunder/pantao-live-sequence-marked.png`；输出显示 LEFT=`(300,381)`、
+  `images/test-output/g037-tianting-dark-thunder/pantao-live-sequence-marked.png`；当前输出显示 LEFT=`(300,421)`、
   RIGHT=`(420,421)`，序列 `R -> R -> L -> R -> L`，两点均位于 Tracker 右侧。仓库全量 `testCompile`
   仍被既有过期测试源码的构造器/已删除枚举引用挡住，非 G037 引入，未扩大写集修理。
+- **2026-08-11 用户裁决覆盖旧 Y（当前权威）：** 旧 LEFT=`(300,381)` / RIGHT=`(420,421)` 虽已避开
+  Tracker，却仍会在切回左点时向上偏移 `40px`。现统一使用右点 Y，蟠桃园 LEFT=`(300,421)`、
+  RIGHT=`(420,421)`，序列保持 `右、右、左、右、左……`。标注输出
+  `images/test-output/g037-tianting-dark-thunder/pantao-live-sequence-marked.png` 已更新为同一水平线；
+  `TiantingSubtaskLoopContractTest` 锁定两点 `y==421` 与完整五步序列。当前 fresh gate 相应改为：前两次均点
+  RIGHT=`(420,421)`，第三次点 LEFT=`(300,421)`，后续左右点 Y 不得漂移。
+- **2026-08-13 G075 最新覆盖：** 上述 2026-08-11 点集与“同一 RIGHT 原地两次”已被用户实机观察推翻。
+  废弃旧左 `(300,421)`，老右 `(420,421)` 作为新左，按原 `120px` 间距向右镜像新右 `(540,421)`；实际
+  点击为 `老右 -> 新右 -> 老右 -> 新右……`。G075 卡、合同与标注图为当前权威。
 - **Repair #1（2026-08-05 22:49）：** fresh run
   `remote-turn-e09e94ac-96e2-4a38-9e0f-b78275ad5fee` 已权威推进到
   `completedSubtasks=6`，随后在蟠桃园暗雷入口第一次飞行模板返回 `UNKNOWN`；`1.5s`
@@ -910,6 +2538,41 @@
   `learnStatus=promoted`，下一次相同玩家坐标首先发布 `MEMORY` candidate，且到达后不再创建 direct FIFO。
 
 ## G029 天庭封妖符已知 Dialog 语义恢复（2026-08-05）
+
+- **2026-08-11 实现与静态验收：** Cloud `DialogService.measureOptionRows(...)` 已从
+  `white * 2 < green` 收紧为 `white == 0`；同一 band 行内任意白像素都会把整条绿色带计入 `proseGreen`。
+  `TiantingTask.runFengyaofu(...)` 在目标 pending 时每次先比较 fresh task box：`CHANGED` 直接离开、
+  `INDETERMINATE` 等待、`UNCHANGED` 才进入 post-combat/target-no-combat STORY；STORY 实际清除后重新武装
+  task-box 比较，不能直接选下一坐标。Cloud production compile PASS；隔离 JUnit 为 `5/5 PASS`（严格行 4 条、
+  时序 1 条），其中单白像素回放记录 `green=670 white=1 -> optionBands=0`。标记图位于
+  `target/testcase-replay/g029-strict-option-row/same-row-white-rejected-marked.png`。标准 Maven 定向 test 仍被
+  卡外旧测试构造器/协议签名漂移阻断，未扩大写集。未启动 runtime/application/UI/capture/input；fresh 仍需验证
+  实际封妖符完成后不再先分类 Dialog。
+
+- **2026-08-11 02:34 fresh P1 / REOPENED：** `ACTION_FENGYAO` 已真实消费并进入
+  `fengyaofu=true`，坐标 `0` 也已到达并发送目标点击与 `Alt+A`。但是分支进入时把
+  `latestTaskBoxFingerprint=7c2c225a` 直接钉成比较基线；该图实际仍是前一阶段“前往蟠桃园找道童并拿到封妖符”。
+  目标动作后首次可读图 `44ec2a89` 已是“请按照封妖符上所示地图前往查探”。两张不同阶段的图被比较为
+  `CHANGED / score=0.3677625`，代码因此错误退出封妖符分支，下一拍落入通用
+  `RECLICK_TRACKER_LINK` 并点击 `(393,276)`。随后同一 action 的 OCR 明确仍为
+  “请按照封妖符上所示地图前往查探”，证明这不是目标动作完成后出现的新任务，而是进入分支时沿用了
+  `ACTION_FENGYAO` 之前的旧基线。
+- **2026-08-11 post-FENGYAO 基线返修已交付：** 用户批准后，`ACTION_FENGYAO` 现在只建立封妖符 ownership，
+  并把当时的 `latestTaskBoxFingerprint` 留作前一阶段标记；`TiantingRoundContext.enterFengyaofu()` 不再钉住
+  “找道童拿封妖符”的旧图。`runFengyaofu(...)` 在任何坐标逻辑之前，复用现有只读
+  `captureTaskBoxSnapshot()` 等待 prepared action 发布一张与旧阶段 `CHANGED` 的 task-box，再以
+  `withFengyaofuBaseline(...)` 恰一次钉住 post-FENGYAO 基准。基准缺失/仍同图时只等待；超出现有
+  fail-closed 预算则不点坐标直接回李靖。四坐标、模板、ROI、tooltip-only、战斗/STORY 门及 raw-RGB `0.80`
+  阈值均未改。Cloud `mvn -q -DskipTests=false compile` PASS；隔离 `javac -proc:none + JUnit Console 1.10.2`
+  执行本次三条合同 `3/3 PASS`。标准 Maven named test 仍被卡外旧构造器/协议测试漂移阻断；未启动 runtime。
+
+- **2026-08-11 REPAIR / 用户最新裁决：** 封妖符目标点击并按 `Alt+A` 后，该动作本身可能已经完成当前小任务，
+  因此第一业务事实必须是 fresh 完整 task box 比较，不能先检测 STORY/OPTION。`CHANGED` 立即退出分支；
+  `INDETERMINATE` 继续等待；只有 `UNCHANGED` 才允许处理该坐标产生的 STORY，并进入下一坐标恢复。同期 Dialog
+  分类器确认存在第二个回归：绿色带所在的同一批 Y 行只要出现任意白字像素，整条带都不是 Option；旧的
+  `white * 2 < green` 比例门会把少量白字同行的正文链接误判为 Option，必须删除。精确写集限定为 Cloud
+  `DialogService.java`、`TiantingTask.java` 及两个既有定向合同；Client 只更新 G029 规则、追踪、卡片、
+  `ACTIVE_WORK` 和 dashboard。不得启动 runtime/application/UI/capture/input。
 
 - **状态：SOURCE REPAIRED + ISOLATED CONTRACT PASSED / FRESH REQUIRED。** `15:11:40` 队长出现 `多谢`，`15:11:45` 出现并持续显示
   `使用封妖符`，随后封妖符坐标卷轴已打开，但 Cloud 仍反复点击 Tracker 绿链。
@@ -1387,6 +3050,20 @@
 
 ## G017 通用任务启动/绿链无移动 Dialog 仲裁与本地动作语义同步（2026-08-04）
 
+- **2026-08-11 02:47 fresh P1 / WATCHDOG 被 HOLD 遮挡（用户已批准返修）：** 封妖符错误退出后，G017 retained Tracker
+  recovery 长时间返回 `HOLD`。`TiantingTask.runSubtasks()` 在第一个业务门先调用
+  `continueUnknownPhaseRecovery(...)`，`HOLD` 立即 `retry`；既有 180 秒 `subtask watchdog` 位于其后，因而
+  这段恢复期间完全执行不到。现场最终在 G017 放行后才记录 `watchedMs=739638` 并回程，证明计时值存在，
+  但上限被控制流延后了约十二分钟。批准的最小返修是让已武装的 out-of-combat subtask watchdog 在 G017
+  `HOLD` 前裁决；继续保留 `IN_COMBAT` 先清钟，且不得把 UNKNOWN/HOLD 本身解释成失败。不改 180 秒常量、
+  回李靖重接动作、G017 Dialog 仲裁或其他任务分支。
+- **2026-08-11 watchdog 返修已交付 / 待 fresh：** `TiantingTask.runSubtasks()` 已把现有战斗清钟与 180 秒
+  到期裁决前移到 `continueUnknownPhaseRecovery(...)` 之前；因此 G017 仍可等待 Runner 权威事实，但不能再把已到期
+  的小任务无限 HOLD。到期仍复用原有 `clearDialogProbeInterest -> releasePathingIntent -> RETURN_HOME`，常量与
+  回李靖重接业务不变。`TiantingSubtaskLoopContractTest` 新增顺序合同，隔离执行 `1/1 PASS`。Cloud Maven compile
+  被写集外 `CloudWholeTaskObserver.java:599` 的 `scheduleTiantingDarkThunderOcr(...)` 参数数量漂移阻断；编译器未报告
+  本次改动文件错误。未启动 runtime，下一轮 fresh 验收需看到约 180 秒到期直接记录 watchdog 并回程，不能再出现
+  `watchedMs=739638` 后才触发。
 - **2026-08-09 09:49 fresh P1 与返修交付：** `hwnd-D8A1558` 在 `御马监 (183,94)` 点击暗雷绿链并建立
   唯一 intent `044b67ee-fd17-4bf7-9bf1-c7bbd8bb6b06`，实际移动至 `瑶池 (94,83)`；Runner 直到抵达后才做
   第一轮坐标 OCR，把 `(94,83)` 错当 intent 基线，第二轮同坐标遂发布无 movement proof 的
@@ -2144,6 +3821,8 @@
   左右巡逻点，从下一侧直接继续移动遇怪。
 - 蟠桃园巡逻首段例外（2026-08-04 用户确认）：停下后固定先右点右键两次，之后才进入
   `左 → 右 → 左 → 右 ...` 的每秒交替；其他已量地图保持原交替起点。
+- 2026-08-13 G075 覆盖上述坐标含义：第一次“右”是老右 `(420,421)`，第二次“右”是向右镜像出的
+  新右 `(540,421)`，随后在这两个点间交替；不得再把两次“右”解释为同一坐标原地连点。
 - 只有 Tracker 内容变化、战斗来源不是暗雷巡逻，或连续性证据已因暂停/停止/新 run 失效时，才走现有
   Tracker/绿链流程。没有 fresh Tracker 时必须等待，禁止用 stale 画面猜测。
 - 现场已证实当前缺口：`hwnd-F99187E` 于 `02:46:16.389` 确认脱战，Cloud 在
@@ -8028,6 +9707,34 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 
 | Card | Owner | Status | Files | Goal |
 | --- | --- | --- | --- | --- |
+| G081 | Codex | 双仓编译通过，待 fresh | 天庭暗雷、按需饱和度事实、共享观察 interest | 仅确认暗雷后请求一次共享帧飞行分类；确定后撤销 interest，移除该分支 `Alt+U` 面板检测。 |
+| G080 | Codex | P1 源码已修、离线验收通过，待 fresh | Runner 共享帧、pathing movement、位置缓存、replay 证据 | 删除固定 `45x12` 横向框；生产方法动态裁括号内完整坐标，用户 marked 图确认及五张多地图 replay 通过。 |
+| G079 | Codex | P1 源码已修并编译通过，待 fresh 验证 `100ms` 补给右键 | 公共 maintenance 窗口、Runner 缓存急救、共享补给右键 | 公共消费者已可达；人物/宝宝 HP/MP 右键由 `0ms` 改为 `100ms` hold，本轮不新增 post-action 复拍。 |
+| G078 | Franklin / Codex review | P1 源码返修与父级 review 通过，待 fresh | 通用归队协调器、天庭战后 title/地图/Tracker 仲裁、单一 PARK owner | fresh title/Tracker 已改为权威；地图差异仅废弃旧腿，不再直接重接任务。待实跑验证同一暗雷继续巡逻且不重复点绿链。 |
+| G077 | Codex | 双端生产编译与 5 项独立合同通过，待双端重启 fresh | 暂停进度快照、Client/Cloud 启动协议、天庭累计次数 | 暂停仍清瞬时状态，但 UI 保留累计次数；同任务同总数热恢复从原次数继续并按剩余次数收尾。 |
+| G076 | Codex | P1 直接故障已修，待 fresh 验证光牛的滑子实际补蓝 | 本地队员 Runner 脱战门、缓存补给计划、共享右键 hold | 自身脱战 `1500ms`、缺蓝识别及公共消费者已通过；共享右键改为 `100ms` hold，不再按下即释放。 |
+| G075 | Codex | 源码、实机图回放、合同与 Cloud 编译通过，待重启 fresh | 蟠桃园暗雷巡逻点、点击序列合同 | 保留第一下老右点，第二下点击右侧镜像新点，之后在两点间交替。 |
+| G074 | Codex | 源码、合同与隔离 Cloud 编译通过，待重启 fresh | 战后补给截图时机、实际右键、`elapsedMs` | 即时战后恢复先稳定等待 `1500ms` 并记录实际耗时，再执行任何恢复截图。 |
+| G073 | Codex | 两处源码、契约与 Cloud 编译通过，待 fresh | 五环战后恢复、任务栏 ROI 战斗保护、Runner/Radar 权威 | 战后恢复及 ROI 变化均不再调用 Radar，统一等待 exact Runner 战斗事实。 |
+| G072 | Codex | P1 源码、契约与 Cloud 编译通过，待双端重启 fresh | 独立自动战斗 Runner 脱战、战后人物/宝宝补给 | 战中只维护面板；exact 脱战后立即跑既有 `FULL_RECOVERY`，输入失败保留补给额度。 |
+| G071 | Codex | 调查闭环，无生产代码变更 | 天庭 60/60 收尾、回程道具落地验证、步行 fallback | 22:55 是最终收尾回城，不是重新接第 61 次任务。 |
+| G070 | Codex | 源码、合同、编译与活动 runtime fresh 通过 | 天庭开打结果、场外 watchdog、Runner 战斗边顺序 | 开打已执行后等待 exact 入战，禁止 watchdog 抢跑回城。 |
+| G069 | Codex | 源码与针对性合同通过，待安全重启 fresh | 全回程道具任务首轮 Hot Start；补天庭与五倍缺口 | Tracker 未接管且即将接任务时，先处理专属回程道具；stop 仍全清。 |
+| G068 | Codex | P1 源码与针对性合同通过，待重启 fresh | 队列 child exact 观察身份、终态恢复 queue suffix | child 切换会重发 exact startup 身份；天庭失败仅恢复 `[TIANTING]` 后缀，已成功鬼王不再重做。 |
+| G067 | Codex | 双仓编译与本地回放通过，待重启 fresh | 鬼王归队末尾 `Alt+T`、Client 本地 ROI/模板判定、Cloud 状态栅栏 | 首轮开面板即放权；本地 `not_returned_yet.png` 命中持续 park，未命中关面板后才继续。 |
+| G066 | Codex | 双仓编译通过，待重启 fresh | 天庭/鬼王标题十秒上限、鬼王专用取消协议与 `quxiao.png` 执行链 | 鬼王接取不确定时先真实取消再重接；禁止抓鬼模板和通用最后项冒充取消。 |
+| G064 | Codex | 双仓编译与隔离合同通过，待 fresh | UI 领取双倍开关、exact-run 设置协议、Cloud 双重领双门 | 关闭后不识别双倍、不生成待办、不导航长安或点击一品侍卫；手动 G056 保留。 |
+| G063 | Codex | 五窗 fresh 通过；继续 100 轮后台监控 | 头像锚点同队分组、启动协议、Cloud scoped 广播与窗口独立自动战斗刷新 | 五窗同组广播稳定；自动战斗 30 秒防抖改为 exact `windowId`，3511 与其余四窗同场均完成 `Alt+8`。 |
+| G062 | Codex | 首次整窗开包 fresh 通过；回城验收被 G069 阻断 | 首次整窗锚点、per-window 缓存 ROI、缓存 miss 整窗重定位 | 18:51 首次整窗找到 `(574,411)` 并成功使用摄妖香；天庭启动漏掉接任务前回程道具探测。 |
+| G061 | Codex | 源码与 Cloud 编译通过，待重启 fresh | 鬼王回城后 NPC SmartClick、expected-dialog 前检、FIFO 启动 | defer 请求已跳过重复整图 option 前检，固定点 FIFO 与任务专属 probe 保持原序。 |
+| G060 | Codex | 两层异常恢复与鬼王内部收口编译通过，待双端 fresh | Turn 单槽重发、Cloud 终态诊断、热恢复 run、鬼王事件等待与同轮重置 | 鬼王删除接任务固定 `5s` 失败门；前九次失败回接任务起点，第十次连续失败终止。Cloud `FAILED/SKIPPED` 仍按原配置热恢复。 |
+| G059 | Codex | 源码、双仓编译与隔离连通测试通过，待重启 fresh | UI 设置启动快照、双仓启动协议、Cloud per-run 配置读取 | 维护、前置、盒子和补给设置随 exact task run 发送，禁止 Cloud 默认值覆盖 UI。 |
+| G058 | Codex | 源码已实现，待鬼王 fresh | 鬼王摄妖香同帧双倍待办、100 分钟 CD、移除鬼王盒子入口 | 双倍低于 20 分钟只登记，下一次接任务成功后领取；鬼王不检测或消费 common box。 |
+| G057 | Codex | 源码返修完成，待 fresh | 鬼王移动途中识别长寿村、下一共享帧饱和度判定、exact-window `Alt+C` | 已移除稳定坐标依赖；两张现场图地图标签回放 `0.9928/0.9943`，G016 顺序合同 `1/1 PASS`。 |
+| G053 | Codex | 源码返修与隔离合同通过，待 fresh | 天庭所有失败重接入口、取消专用本地探针、取消后重接 | 跨 round 保留取消栅栏；失败重接且旧 title 在时必须先取消，禁止旧 Tracker 再次执行。 |
+| G052 | Codex | 通用门源码已实现；活动 runtime 下暂缓编译，待重启 fresh | 全任务暂停热恢复、Runner 战斗事实、Cloud 启动门、G017/Tracker/Dialog 仲裁 | `PAUSE_RESUME` 必须先等 Runner 明确战斗事实；战中只维护自动战斗，fresh `ABSENT` 后再等一帧才放行任务状态机。 |
+| G051 | Codex+Banach | 完整目录已跑，52/72 通过，20 项待修 | 世界地图拼音首字母、候选下拉 OCR、持久化相对坐标记忆、exact ARRIVED 裁决 | 72 项真实后台链全部完成；Alt 粘滞已加释放栅栏且未复现锁定，20 个 OCR/候选确认失败项已有逐项目录证据。 |
+| G050 | Codex | 意外脱战 title 仲裁已修，待重启 fresh | 鬼王独立任务、阎王书房导航、地藏王点击、本地接任务 probe、脱战恢复仲裁 | `INCIDENTAL COMBAT_EXITED` 后本地查鬼王 title：存在才复用缓存绿链；不存在则清缓存并按真实任务战斗完成恢复。 |
 | G049 | Codex | 源码返修完成，按要求暂未验证，待 fresh | 天庭引妖香 Tracker 分支、本地去重与刷新后绿链 | 点引妖香后丢弃旧绿链 action，只消费刷新后的新 action；已有新绿链时等待不超过剩余 grace。 |
 | G048 | Codex | 源码与保存帧回放通过，待 fresh | 天庭 Tracker OCR 调度、日计数校准、端到端计时 | 日计数改为 `140x28` 纯黑白红字单次 OCR，并加 exact-run fence 与 ready-event；保存帧 OCR 1.612 秒，待 fresh。 |
 | G047 | Codex | 静态通过，01:38 fresh 已证明成功终止，待长跑 | Cloud NPC FIFO outcome 栅栏、取消语义、顺序合同 | `TOOLTIP VERIFIED` 后同 session 无后续候选；失败后下一次 poll 才继续的合同 3/3 通过。 |
@@ -8036,7 +9743,7 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | G044 | Codex | 修复进行中，待编译、合同与后台 fresh | 五环 ready-event 新旧顺序、普通 Story 显式动作、后台连续测试 | 禁止旧 `TASK_NOT_FOUND` 压过更新事实；非战斗普通 Story 立即关闭并恢复 tracker。 |
 | G043 | Codex | 源码、编译、合同及接任务 fresh 链通过；后续转 G044 | 五环接任务 presence 武装、跨边界顺序合同、后台连续测试 | NPC Dialog 后的 observation producer 与 PreparedAction 点击链已恢复。 |
 | G042 | Codex | 双项源码、编译与隔离合同通过，待 fresh | 修罗接任务后出村预寻路临时开关、纯右键禁停避让 | 临时关闭灵兽村出口预寻路；纯右键巡逻跳过 Dialog sweep，左键与 Dialog callback 保持避让。 |
-| G041 | Codex | 完成：驱动、静态门与真实输入 fresh 通过 | FakerInput 设备桥、absolute HID、角色感知输入路由 | 普通键鼠默认走 FakerInput；队长非单人任务的 `Alt+5/6` 也走驱动，队员/单人任务保留 HWND，`Alt+8` 始终 HWND。 |
+| G041 | Codex | 源码已修，待 fresh：中文输入焦点与 absolute mouse dead-letter | FakerInput 设备桥、absolute HID 闭环、角色感知输入路由、中文路线输入 | 路线输入使用单个 frozen mixed-input 队列事务；鼠标按真实落点闭环纠偏。双仓编译通过，须重启双端现场验收。 |
 | G040 | Codex | 源码与合同通过，fresh 进行中 | 天庭 Tracker 整图比较、原子 action 替换、定向合同 | 不按时间猜任务新旧；同图保留，异图按 expected action ID 原子替换，避免普通任务继承旧暗雷巡逻。 |
 | G039 | Codex | 源码与隔离合同通过，待 fresh | 自动面板拖拽标记、双仓协议与 Client 战斗门合同 | 仅允许显式自动面板拖拽在战斗内执行，保持其他鼠标输入 fail-closed。 |
 | G038 | Codex | fresh 分支通过，G033 继续 | 天庭 OCR 文案、原 action 延迟重试、定向合同 | 识别新版“游荡的妖怪”暗雷文案，并让首次 OCR 传输失败仍能修正已点击的 exact action。 |
@@ -8047,7 +9754,7 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | G033 | Codex | 封妖符/V3隔离静态门通过，待 Client 重启与 fresh | 后台控制、逐小任务审计、快捷暂停、V3 scene guard | 清除旧快捷键 owner；V3 清场不再作用于天庭，当前 UI 下次正常重启后注册 F11。 |
 | G032 | Codex | 完成：整栈启动恢复并通过真实启动验收 | `restart-local-dhxy-stack.ps1`、启动日志、进程登记 | Cloud/OCR 就绪后父启动器继续创建 JavaFX Client，且保留启动日志。 |
 | G031 | Codex | 源码与定向合同通过，待 fresh runtime | `TiantingTask`, `NpcClickService`, 天庭接任务合同、dashboard 生成器 | exact `ARRIVED` 后禁止再次同步坐标或重新导航；复用现有 Client FIFO 消费器，并让 ready 事件携带当前任务类型。 |
-| G029 | Codex | 封妖符只读 task-box 返修通过，待 fresh | `TiantingTask`、封妖符任务框比较、隔离合同 | 旧绿链仍禁止点击，但 `UNCHANGED` 的任务框可读并立即继续下一坐标，不再误等 100 秒。 |
+| G029 | Codex | SOURCE REPAIRED / 待 fresh | `DialogService`、`TiantingTask`、封妖符结果顺序、定向合同 | 已改为等待并钉住 post-FENGYAO Tracker 基线后才允许点坐标；拿符前旧图不再参与完成判断。 |
 | G027 | Codex | Done：内存诊断 fresh 通过 | `ImagePreprocessor`、内存诊断不落盘合同、G033 fresh 证据 | `cloud-memory:` 不再误落盘；Dialog 与五环业务未改。 |
 | A1 | 何黎 | Done | `WindowReadyEventBus`, `WindowReadyEventType` | Add the minimal event sequence API and wait diagnostics. |
 | A2 | 何黎 | Done | `WindowTaskRunner`, `WindowRuntimeContext` if needed | Make observer/ready/prepared timing visible without changing business behavior. |
@@ -48184,3 +49891,405 @@ Status: `IMPLEMENTED / SOURCE REVIEW PASS / FRESH RUNTIME REQUIRED`
 - **Fresh gate：** 同时重启两端；首次“暂时没有”后应看到 replay `1/5` 至成功或最多 `5/5`，期间 Cloud
   `openNpcArrivalFrame` 只出现首次一次且 Client 输入点相同；只有五次仍失败才出现新的 demand/frame，整段不得
   再出现 NPC frame deadline 或 FIFO WAIT timeout。
+## G050 新建独立鬼王任务并复制抓鬼业务基线（2026-08-10）
+
+**状态：独立基线与静态门通过，待后续业务改造**
+
+- **用户裁决：** 新增任务“鬼王”，先完整复制抓鬼/抓小鬼任务，之后在鬼王独立代码上逐项修改。
+- **边界：** 新增独立 `TaskType.GHOST_KING`、`TurnTaskCode.GHOST_KING`、Cloud
+  `GhostKingTask` 及独立 phase/context/outcome/wait 类型；补齐 Client UI/次数配置/双向映射、Cloud 工厂
+  provider/descriptor/显式 `@Import`。不得把鬼王别名映射到 `CatchGhostTask`。
+- **本阶段业务：** NPC、地图、模板、Dialog、本地操作、维护、寻路、战斗、归队和 fallback 暂时与当前抓鬼
+  完全一致；不接入用户提前放入的 `guiwang` 模板，不改变抓鬼现有逻辑。
+- **门禁：** `BR-GHOSTKING-001` traceability gate；双仓 production compile；G016 注册连通合同验证
+  `UI TaskType -> TurnTaskCode -> Cloud descriptor/provider -> GhostKingTask identity`。不启动 runtime、UI、截图或输入。
+- **实现：** Client 新增独立 `GHOST_KING/ghost_king/鬼王` 任务身份、次数设置及持久化、任务卡入口、
+  Turn 双向映射和抓鬼同等的观察/回城 replay/expected-combat 白名单；Cloud 新增独立 prototype
+  `GhostKingTask` 及 6 个配套状态类型，并接入 factory descriptor/provider、显式 `@Import`、队伍预检、
+  runtime、observer、Tracker 与战斗退出协调链。共享协议三文件双仓 byte-identical。
+- **复制完整性：** 将鬼王 7 个文件中的 package、类名、任务码、日志 slug 与中文名逆映射回抓鬼后，逐文件
+  全文等价；当前模板和本地 Dialog API 仍刻意复用抓鬼。用户已放入的 `images/template/guiwang/` 与
+  `images/template/dialog/guiwang/` 未接线、未覆盖，等待后续逐项业务修改。
+- **验证：** 业务规则门 PASS；Client/Cloud `mvn -q -DskipTests=false compile` 均 PASS；共享协议 3 文件
+  SHA-256 双仓一致；G016/G050 注册合同按 `junit-platform-console-standalone 1.10.2` 隔离执行 `1/1 PASS`；
+  两仓 `git diff --check` PASS。标准 named Maven test 在目标测试执行前被仓库既有 aggregate `testCompile`
+  欠账阻断，主要为旧 `DialogService` 构造器和天庭测试签名，不在本卡扩修。未启动 runtime/application/UI/
+  capture/input，尚未做 fresh；本卡仅交付可继续改造的独立基线。
+- **2026-08-10 鬼王差异 1：删除暗雷怪。** 用户确认鬼王不存在暗雷怪。Cloud 已从鬼王 context 删除
+  `darkThunder*` 五项状态，从 phase/dispatch/watchdog 删除 `RUN_DARK_THUNDER`，并删除移动途中 task-box
+  暗雷分类、终点下坐骑、四点巡逻和巡逻 option 验证整条分支；共享 `TaskTrackerPanelService` 不再为
+  `ghost_king` 匹配抓鬼暗雷模板。鬼王绿链后统一继续普通 Runner 看打/进战路径；抓鬼、天庭及其他任务不改。
+- **2026-08-10 鬼王差异 2：脱战直接回城，不读战后 title、不预扫。** 鬼王启动、接任务验证及绿链解析改用
+  独立 `images/template/guiwang/title.png`。expected battle 的 Runner `COMBAT_EXITED` 直接进入 `RETURN_HOME`，
+  删除 `POST_COMBAT_REFRESH_TRACKER` 和战后 250ms Tracker 读取；回城直接以 `guiwang/return_item.png` 调用
+  `FIND_AND_USE_TASK_PAGE`，每次点击后校验地图为地府，最多两次，失败才进入既有普通导航兜底。鬼王没有
+  `ReturnItemPrescanService.afterTrackerGreen/whilePathing/useCached` 调用；普通导航成功后本轮结束，不在同一轮
+  内直接重接。Client/Cloud compile PASS，G050 隔离合同 `1/1 PASS`；未启动 runtime/UI/capture/input。
+- **2026-08-10 鬼王差异 3：独立接任务模板。** Tracker title 继续使用已经接通的
+  `images/template/guiwang/title.png`。修复鬼王接任务仍误调用抓鬼 `CATCH_GHOST_ACCEPT_DIALOG_TEMPLATE`
+  的残留：新增鬼王独立 local-service operation 与 Client 本地执行器，接入
+  `images/template/dialog/guiwang/accept.png`；匹配成功后的 `ACCEPTED -> 验证鬼王 title` 业务顺序不变。
+  该阶段当时不接 `complete.png/jinzhan.png`，也不改变抓鬼接任务/取消任务链；后续 `jinzhan.png` 接线见差异 4。
+  Client/Cloud production compile PASS；G050 与 Client Spring wiring 两项隔离合同均 `1/1 PASS`；
+  `TurnLocalOperation`、`TurnProtocolValidator` 双仓 SHA-256 一致。仓库既有 aggregate testCompile
+  欠账仍会阻断标准 Maven 定向 test，与本次接线无关。尚无鬼王接任务完整窗口 testcase，fresh 时必须确认
+  日志出现 `WHOLE_TASK_GHOST_KING_ACCEPT_DIALOG_TEMPLATE`，点击“在下愿为三”后识别到鬼王 title。
+- **2026-08-10 鬼王差异 4：独立近战模板。** 鬼王继续复用修罗/抓鬼已验证的“点 Tracker 绿链 ->
+  Runner 本地持续 probe -> fresh-frame 复核 -> 原子点击 -> expected combat 登记”机制，不新增云端 OCR、
+  Dialog fallback 或第二套状态机。修复 Client `DialogService` 把 `GHOST_KING` 错误映射到抓鬼
+  `dialog/zhuagui/jinzhan.png` 的残留，改为鬼王独立 `images/template/dialog/guiwang/jinzhan.png`；ROI 继续
+  复用能完整容纳该模板的既有 small-dialog 区域。静态合同验证抓鬼/鬼王模板路径独立、鬼王模板可解码且
+  可容纳于 ROI；尚无鬼王完整窗口 raw testcase，本项必须以 fresh 日志确认 `task=GHOST_KING` 命中后真实点击并进入战斗。
+- **2026-08-10 鬼王差异 5：阎王书房专属导航与地藏王点击。** 接任务与回程道具失败 fallback 均改为
+  map-only `NavigationService.navigateToMap(...)`：世界地图搜索 `阎王书房`，复用已有 legacy 路线结果并点击
+  最后一条绿色路线，不再向小地图提交 NPC 逻辑坐标。到达后 NPC Click FIFO 顺序为窗口相对固定点
+  `(578,486)`（X±3/Y±20）→ 记忆 → Tooltip → 黄字；新 profile 在队列末端即结束，禁止紫名/公式/Ctrl。
+  `NavigationService.navigateToMap` 仅提升为可复用 public API，其他任务调用和默认黄字目的地路线不变。
+- **2026-08-10 通用位置能力：缺失地图名模板双边自动学习。** `PlayerStateLocationRecognizer` 明确区分
+  packaged-template / Cloud-learned-template / trusted OCR 来源；只有 OCR fallback 已通过标准化与坐标合理性检查
+  才可学习。沿用 `696a12b0` 的地图名、图片密度、规范宽高和“高置信其他地图”拒绝门：先以 typed
+  `MAP_LABEL_TEMPLATE_SAVE` 将 PNG 保存到 Client `images/template/map_label/<地图>.png`，只新增不覆盖；Client
+  返回 `SAVED/EXISTS` 后才写 Cloud 私有 `map_label_samples.json`。任一侧失败不推翻本次 OCR 坐标，未写的一侧
+  保持可在后续 OCR 中重试；后续位置同步先查 Cloud 动态模板。
+- **静态交付：** Client/Cloud `mvn clean compile` 均 PASS；四份 local-service 协议文件双仓 SHA-256
+  byte-identical；`G050GhostKingRegistrationConnectivityTest` 按 `junit-platform-console-standalone 1.10.2`
+  隔离运行 `1/1 PASS`；业务规则 gate 与双仓 `git diff --check` PASS。按 no-local-test 规则未启动 runtime、UI、
+  capture 或 input，也没有伪造视觉 replay。
+- **Fresh gate：** 实机一场鬼王必须出现 `runner reported combat exit; return home immediately`，其后直接出现
+  `direct return-item attempt`；接任务时应看到 `阎王书房` map-only legacy route，ARRIVED 后第一次候选落在
+  地藏王固定区域，固定点失败才继续记忆/Tooltip/黄字；期间不得出现紫名/公式/Ctrl。首次遇到缺失地图模板且
+  OCR 成功时应同时出现 Client `MAP_LABEL_TEMPLATE_SAVED/EXISTS` 与 Cloud `CLOUD_LABEL_SAVED/EXISTS`，并在
+  两侧对应目录/私有存储看到同一地图名模板。仍需确认不得出现 `post-combat fresh title` 或鬼王 return-item prescan。
+- **2026-08-10 03:00-03:02 fresh 失败（P1，用户已批准返修）：** 队长 `hwnd-1AC127C` 在
+  `03:00:52.465` 真实执行 `TYPE_TEXT_UNICODE text='阎王书房'`，`03:00:53.095` 按 Enter，
+  `03:00:59.340` 点击 legacy 路线绿链；因此地图名输入与路线点击均已接通。人物随后到达阎王书房，
+  但停止前再无队长业务动作，地藏王固定点/记忆/Tooltip/黄字均未启动。复核坐标采样后纠正最初诊断：
+  阎王书房画面有地图名和 X/Y，且未知地图缺少 `maps.json` transform 时合理性检查保持 permissive；真实根因是
+  legacy 绿链分支点击后只调用 `traceWindowPathingIntent(...)` 并返回 `PATHING_STARTED`，该 trace 明确不修改
+  pathing state，也没有携带或补登记 `TurnPathingIntent`。因此队长连 `coordinate-strip` 观察都未启动，Cloud
+  一直 park 在 `WAIT_TARGET_PATHING_TERMINAL`。返修在绿链点击成功后补登记目标地图为 `阎王书房`、X/Y 为空的
+  exact typed intent；Runner 仍是终态唯一权威。ARRIVED 后调用既有 `syncMyPosition()`：首次 OCR fallback 双边
+  学习模板，后续模板优先且不重复覆盖。不得在 Cloud 用超时猜 ARRIVED，也不得绕过终态直接点 NPC。
+- **返修与验证：** `GhostKingTask.navigateToTaskNpc(...)` 在 legacy 绿链返回 `PATHING_STARTED` 后调用
+  `registerAcceptNpcMapOnlyPathingIntent(...)`，登记 source=`ghost-king:acceptNpc:legacy-map-route`、
+  targetMap=`阎王书房`、X/Y=null 的 exact typed intent；登记失败不得进入假等待，而是走已有导航恢复。
+  Runner ARRIVED 后、地藏王输入前调用既有 `syncMyPosition()`，首次 OCR fallback 触发 Client/Cloud 双存，已有模板
+  后保持 template-first、不重复覆盖。Cloud `mvn -q -DskipTests=false compile` PASS；G050 standalone 合同
+  `1/1 PASS`。标准定向 Maven test 被本卡外既有 aggregate `testCompile` 欠账阻断，未扩修。Fresh 必须看到
+  `accept-NPC map-only pathing registered`、坐标观察、`ARRIVED`、双边模板保存状态和地藏王候选执行。
+- **2026-08-10 03:27 第二次 fresh 失败（P1，已返修）：** 队长两次记录
+  `TYPE_TEXT_UNICODE text='阎王书房' result=true`，但 `03:28:02` 的
+  `images/temp/hwnd-1AC127C/latest_vision.png` 明确显示“到”输入框为空、列表仍为地府默认路线。前一次把
+  `result=true` 当成文字已落框的结论作废。代码对照确认：迁移前 Client 在同一个
+  `submitExclusiveAndWait(...)` 中连续执行点寻路、等待、Alt+2、等待、输入、等待、Enter；Cloud 迁移后拆成
+  四个 exact-window turn，每次顶层聚焦会破坏路线输入框的子控件焦点。返修在
+  `prepareWorldMapSearchResults(...)` 中把原顺序恢复成一个七 step 的
+  `navigation:mapSearch:atomicXunluRouteInput:<target>` turn；不新增坐标、不切成 `navigateToNPC`、不改变搜索结果
+  滚动/最后绿链/typed intent/地藏王业务。Fresh 只有在现场输入框真实出现 `阎王书房` 且结果收敛后才通过，
+  单独的驱动 `result=true` 不构成验收。Cloud production compile PASS；G050 standalone 合同 `1/1 PASS`；
+  `BR-GHOSTKING-001` gate 与双仓 `git diff --check` PASS。未启动 runtime/application/UI/capture/input。
+- **2026-08-10 03:50 第三次 fresh 纠偏（P1，已返修）：** 七步
+  `navigation:mapSearch:atomicXunluRouteInput:阎王书房` 在 Client 仍被拆成单独鼠标/键盘队列请求，现场“到”输入框
+  继续为空，证明第二次返修结论错误。对照同窗口 `03:00:51-03:00:59` 的成功证据，五环/修罗共用导航原顺序
+  `clickXunlu -> closeWorldMapAfterXunlu -> typeXunluTarget -> submitXunluTarget` 已真实输入“阎王书房”并点击 legacy
+  绿链；因此删除七步特化，完整恢复这四段已验证顺序。鬼王仍只在搜索结果阶段选择 legacy 最后绿链，未修改
+  五环/修罗、输入框坐标、Client 输入执行器、typed map-only intent 或地藏王点击。Cloud production compile PASS；
+  G050 隔离合同 `1/1 PASS`。Fresh 必须看到上述四个 action 依次完成、现场输入框出现“阎王书房”并点击目标绿链；
+  `TYPE_TEXT_UNICODE result=true` 单独仍不构成通过。
+- **2026-08-10 04:28 共享导航回归（P1，已撤回）：** 上述“第三次源码返修”结论作废。修罗
+  `hwnd-1AC127C` 已进入 `navigate to map: 灵兽村`，随后四个分散 turn 执行完却未把“灵兽村”留在路线输入框；
+  目的地核验只读到“长/寿村”，`navigation.toMap` 返回 `MAP_NOT_REACHED`。根因是 G050 为修鬼王而覆盖了
+  五环/修罗共用的 `prepareWorldMapSearchResults(...)`，分散 turn 的重复顶层聚焦破坏子输入框焦点。现已恢复
+  `click xunlu -> wait -> Alt+2 -> wait -> text -> wait -> Enter` 单 turn 原子合同，并把 G050 源码合同改回保护该
+  共享不变量；Cloud production compile PASS，standalone G050 合同 `1/1 PASS`。鬼王文字输入问题仍未通过 fresh，
+  后续修复必须放在鬼王专属入口，禁止再修改共享导航语义。
+- **2026-08-10 04:37 第四次 fresh 根因闭合（P1，已返修）：** Cloud 已加载七步
+  `atomicXunluRouteInput:天宫`，Client `LocalTurnActionExecutor` 也收到同一个 action，但执行日志仍显示
+  `CLICK_LEFT`、`ALT_2`、`TEXT_INPUT`、Enter 分别提交给输入队列，并在点击和 `ALT_2` 前重复聚焦。根因不是
+  Cloud action 结构，而是 Client 只合并“鼠标 + WAIT”，遇到键盘就截断，协议原子性在物理执行边界失效。
+  返修改为将同一个 action 中连续 `INPUT/WAIT`（鼠标、快捷键、Unicode 文字、Enter）完整映射后一次提交
+  `submitFrozenExactWindowActionsAndWait(...)`，全段只聚焦一次、不可被其他窗口插队；既有 combat mouse fence
+  仍对序列中的普通鼠标动作生效。Client production compile PASS；G050 cross-repo standalone 合同 `1/1 PASS`。
+  Client 标准 `test-compile` 被卡外既有 `LocalPathingStartProofMechanics` 缺失阻断。Fresh 必须看到客户端仅一条
+  `turn:input:steps-0-6:input-sequence` 请求，内部依次执行点击/Alt+2/文字/Enter，且输入框真实出现目标地图。
+- **2026-08-10 上次 push 基线复核与撤回（P1，待 fresh）：** 重新逐文件对照 Client
+  `origin/dev@4da93bea737c20e73f177002383fbcbc94a790c9` 与 Cloud
+  `origin/dev@847410396b3fda1cc00174910401713ff30cede4` 后确认：上次 push 的共享导航不是七步
+  `atomicXunluRouteInput`，Client 也没有混合鼠标/键盘原子执行器。已精确撤回本轮两处偏离：Cloud 恢复
+  `clickXunlu -> closeWorldMapAfterXunlu -> typeXunluTarget -> submitXunluTarget` 四段顺序；Client
+  `LocalTurnActionExecutor` / `TurnInputStepExecutor` / 对应合同恢复为 push 中的 mouse-only sequence 与键盘单步
+  执行。`NavigationService.navigateToMap(...)` 仅保留 G050 鬼王调用所需的 `public` 可见性，其他导航正文与
+  push 一致。Client/Cloud production compile PASS；G050 cross-repo standalone 合同 `1/1 PASS`。标准 Cloud
+  Maven test 因卡外既有测试构造器/API 漂移无法 `testCompile`，未扩写集。Fresh 只验证推送基线四个 action
+  是否恢复现场地图文字输入；如仍失败，应基于该基线日志继续定位，不再修改共享输入执行器猜测修复。
+- **2026-08-11 Cloud 回退丢件恢复（P1 已修，待 fresh）：** 运行日志显示 Client 发送
+  `taskCode=GHOST_KING` 后 Cloud 以 `INVALID_TURN_REQUEST` 拒绝。Git 证据确认 G050 从未进入 commit；Cloud
+  于 2026-08-10 06:21 创建 `before-origin-dev-rollback-20260810-cloud`（stash commit `a198746`）后 reset 到
+  `origin/dev@8474103`，使当前运行工作区丢失鬼王协议、任务源码和注册接线。现已禁止整包 apply，只从该 stash
+  精确恢复 G050 的 7 个 `GhostKingTask` 文件、协议/工厂/runtime/observer/Tracker/地图模板学习接线、资源及
+  `G050GhostKingRegistrationConnectivityTest`，保留现有 G051、天庭、移动事实和其他 dirty 工作。Cloud
+  `mvn -q -DskipTests=false compile` PASS；五份共享协议与 Client 规范化后 byte-identical；G050 合同已按
+  `junit-platform-console-standalone 1.10.2` 隔离执行 `1/1 PASS`。测试中的旧 G050 四段地图输入断言同步为当前
+  已批准 G051 `WorldMapSearchTargetCatalog + ASCII 候选选择` 合同，并确认 `阎王书房/ywsf` 仍在目录中；未改
+  生产导航语义。Fresh gate：同时重启 Client/Cloud 后，鬼王启动不得再出现 strict JSON
+  `INVALID_TURN_REQUEST`，必须进入 Cloud `GhostKingTask`。
+- **2026-08-11 恢复后 Cloud 启动循环依赖（P1 已修，待鬼王 fresh）：** `08:34:13-08:34:37` 的新一轮已不再出现
+  `INVALID_TURN_REQUEST`，但 sidecar 在宣告 ready 后退出，五窗统一报 `NETWORK / HTTP request failed`。完整异常链为
+  `PlayerStateService -> CloudMapSurveyService -> NavigationService -> NpcClickService -> PlayerStateService`；根因是
+  G050 地图标签自动学习把 `CloudMapSurveyService` 作为 `PlayerStateService` 构造期硬依赖。现改为 Spring
+  `ObjectProvider<CloudMapSurveyService>`，只在 `syncMyPosition()` 真正识别位置时延迟解析，保留地图模板学习且打断
+  Bean 装配环。Cloud `mvn -q -DskipTests=false compile` 与 `git diff --check` PASS；真实 launcher 启动后 Java
+  `PID 10388` 持续监听 `127.0.0.1:18080`，`GET /api/cloud/decision` 返回 `405 POST required`，原
+  `BeanCurrentlyInCreationException` 未再出现。Fresh gate：当前 Client 可直接重新启动鬼王，五窗必须获得 Cloud
+  启动确认并进入 `GhostKingTask`，不得再出现 strict JSON 或 NETWORK 启动失败。
+- **2026-08-11 08:45 鬼王接任务被通用 fallback 抢跑（P1 已修，待 fresh）：** 队长 `hwnd-37113A4`
+  第一次点击地藏王已经打开接任务弹窗，但 NPC FIFO 返回 `verified=false`；随后的
+  `accept-npc-click-retry-after-arrival` UI cleanup 检出 OPTION 并执行
+  `FALLBACK_CLICKED click=(676,538)`，因此 phase 未进入 `ACCEPT_TASK_DIALOG`，Client
+  `GHOST_KING_ACCEPT_DIALOG_TEMPLATE` 没有执行机会。现场原图/ROI/marked replay 位于
+  `images/test-cases/guiwang/live-leader-current-{raw,local-roi,marked}.png`；生产 `ImageFinder` 对
+  `accept.png` 的 score 为 `0.9999998211860657`，正确点击中心为窗口相对 `(304,435.5)`。根因是鬼王复制时
+  漏掉了修罗 `ACCEPT_NPC.expectedDialogTemplatePath` 合同。Cloud 鬼王现补
+  `images/template/dialog/guiwang/accept.png` 的 expected-dialog 可见性验证，资源与 Client SHA-256
+  `0BBD80B37F8BD1A6957DDDCB8C97F0EFA238C0964EF0B81C1D4DBAB89F8BF6F0` 一致；验证阶段不点击，成功后仍由
+  Client 本地鬼王模板执行真实点击。未修改共享 `NpcClickService`、Client ROI/阈值或输入。Fresh 必须依次看到
+  FIFO `verified=true`、phase 进入 `ACCEPT_TASK_DIALOG`、`LOCAL_SERVICE` 返回 `ACCEPTED`，且不得再出现该
+  `accept-npc-click-retry-after-arrival:fallback`。Cloud `mvn -q -DskipTests=false compile` 与 touched-file
+  `git diff --check` PASS；未启动 runtime 或发送输入。
+- **2026-08-11 09:08 第一轮修复 fresh 失败，P1 根因修正并返修（待 fresh）：** 新 Cloud 进程创建于
+  `09:07:38`，所以 `remote-turn-8096d4a8-39e6-410f-b70b-ab43d5b0f306` 已加载第一轮补丁；但固定点
+  `(576,492)` 于 `09:08:33.628` 点开地藏王 OPTION 后，Client FIFO 仍在 `09:08:35.432` 返回
+  `VERIFICATION_FAILED`，Cloud 又执行 `accept-npc-click-retry-after-arrival:fallback` 并点击 `(671,538)`。
+  第一轮把原色 `accept.png` 错接到了 green-washed `expectedDialogTemplatePath`：Client 验证器会先洗图，因而
+  与生产原色回放 `0.9999998211860657` 不矛盾。现改为 `expectedDialogRawTemplatePath`，并设置
+  `deferDialogVerificationToTask=true`：NPC FIFO 只确认该候选输入已提交，真正的 option 归紧接着的 Client
+  `GHOST_KING_ACCEPT_DIALOG_TEMPLATE` 原色匹配与点击。鬼王 `accept-npc-click-retry-after-arrival`、
+  `accept-npc-click-retry` 及 `accept-dialog-recovery` 三个接任务分支均删除通用 UI cleanup；本地模板未命中时
+  fail-closed 重试鬼王 phase，不得再点最后一项。共享 `NpcClickService`、Client `DialogService`、修罗及其他任务
+  均未修改。Cloud production compile 与 touched-file `git diff --check` PASS；未启动 runtime/input。Fresh 必须
+  看到第一次地藏王点击后直接进入 `ACCEPT_TASK_DIALOG`、Client local-service 返回 `ACCEPTED`，并且完整运行中
+  不得再出现上述三个鬼王 accept fallback source。
+- **2026-08-11 09:18 第二轮 fresh 失败，撤销鬼王特殊验证分支（P1 已修，待 fresh）：** 新进程
+  `remote-turn-19060daa-5137-4d50-b068-693099a2dc38` 到达阎王书房后连续记录
+  `NPC smart click fresh frame already contains expected dialog`，但 Client 同期没有任何
+  `npcClick:fifoCandidate:*:地藏王` 输入。Cloud 因此在未点击 NPC 时错误进入 `ACCEPT_TASK_DIALOG`，随后本地
+  option 必然 `NOT_MATCHED`，最终 recovery limit exceeded。根因是上一轮新增的
+  `expectedDialogRawTemplatePath + deferDialogVerificationToTask` 偏离修罗已验证合同，并使原色模板参与点击前的
+  whole-frame expected-dialog 短路。现撤销该特殊分支，鬼王恢复为与修罗 byte-for-byte 同形的
+  `expectedDialogTemplatePath(ACCEPT_OPTION_TEMPLATE)` 配置；三个鬼王专属 fallback 删除仍保留，不修改共享
+  `NpcClickService`。Fresh 必须先出现真实 `npcClick:fifoCandidate:*:地藏王`，再进入
+  `ACCEPT_TASK_DIALOG` 并由 `GHOST_KING_ACCEPT_DIALOG_TEMPLATE` 返回 `ACCEPTED`；点击前不得再出现上述
+  `already contains expected dialog`。Cloud production compile 与治理文档 `git diff --check` PASS；未启动
+  runtime/UI/capture/input。
+- **2026-08-11 鬼王接任务结构复核（P1，修复中）：** 用户要求按刚刚真实跑通的天庭接任务链实现。代码与
+  fresh 日志对照确认：天庭在点击李靖前安装 `TIANTING_ACCEPT_TASK + probeOnly=true`，Client 对共享周期
+  `640x300` 对话框帧持续匹配、fresh exact-HWND 复核、一次性 claim 后点击，并用 retained edge 唤醒 Cloud；
+  鬼王当前却在点击地藏王后单次调用 `resolveGhostKingAcceptDialog(...)`。最新鬼王实际已算出 `(570,489)`，但
+  `FakerInput cursor move failed` 被压成 `NOT_MATCHED`，因此“模板没匹配上”的旧结论不成立。批准修复为新增鬼王
+  专属 probe operation/action/retained edge，点击地藏王前武装，Client 持续匹配并 fresh 复核，Cloud 按 exact
+  correlation 消费；成功后验证鬼王 title，输入失败重装兴趣。正常接任务不再使用一次性 local-service 路径，
+  不再靠 ROI/阈值猜修。
+- **2026-08-11 鬼王接任务天庭式 probe 已交付（P1 源码闭合，待 fresh）：** Cloud
+  `GhostKingTask` 会在导航/点击地藏王前安装 `GHOST_KING_ACCEPT_TASK + probeOnly=true`，然后 park 等待专属
+  `GHOST_KING_DIALOG_ANSWERED`；Client 复用天庭同一个 `640x300` shared-cycle ROI、阈值和匹配器，先匹配
+  `images/template/dialog/guiwang/accept.png`，再对 exact HWND 做 fresh 复核、一次性 claim 和原子点击，并发布
+  `GHOST_KING_DIALOG_CLICKED` retained edge。Cloud 只消费 exact `probeCorrelation`；`executed=false` 会创建新的
+  interest identity 重试输入，成功后清兴趣并进入鬼王 title 验证。正常接任务源码已确认不再调用
+  `resolveGhostKingAcceptDialog(...)`，也不再把输入失败压成 `NOT_MATCHED`。
+- **验证：** Client `mvn -q -DskipTests=true compile` PASS；Cloud
+  `mvn -q -DskipTests=false compile` PASS；`ObservationDialogOperation` 与 `ObservationKeyEventType` 双仓
+  SHA-256 byte-identical；`BUSINESS RULE GATE PASSED (G050)`；touched-file `git diff --check` PASS。真实现场图
+  `images/test-cases/guiwang/live-leader-current-raw.png` 通过生产天庭式 ROI replay `1/1 PASS`，标注输出为
+  `images/test-cases/guiwang/live-leader-current-tianting-pipeline-marked.png`；跨仓 G050 connectivity 隔离合同
+  `1/1 PASS`。标准 Client named Maven test 仍在目标类执行前被卡外既有
+  `TurnContractFixtures.LocalPathingStartProofMechanics` 缺失阻断，未扩大写集。未启动 runtime/UI/capture/input。
+- **Fresh gate：** 同时重启 Client 与 Cloud 后跑一轮鬼王；日志顺序必须是
+  `accept probe armed before NPC input` 在任一地藏王输入前出现，随后 Client 输出
+  `Ghost King dialog option clicked ... template=accept.png ... click=(...)`，Cloud 输出
+  `ghost king accept dialog handled by client`，最后进入鬼王 title 验证。正常链不得再出现
+  `WHOLE_TASK_GHOST_KING_ACCEPT_DIALOG_TEMPLATE`、`NOT_MATCHED` 或通用 fallback 抢点。
+- **2026-08-11 10:02 fresh 重复接任务（P1 已修，待重启）：** 第一次固定点点击地藏王后，本地 probe 于
+  `10:02:42.560` 已成功点击 `accept.png`；但鬼王 `NpcClickRequest` 漏了天庭已有的
+  `deferDialogVerificationToTask=true`，NPC FIFO 随即把已被 probe 点掉的 dialog 判成
+  `VERIFICATION_FAILED`，继续点击 Tooltip，并于 `10:02:49` 开第二次 NPC session，导致再次接任务。现已补齐
+  天庭同款 ownership contract：首个 NPC 候选提交后 FIFO 立即结束，接任务结果只由本地 probe 与 fresh title
+  判定。Cloud production compile PASS；按用户要求未新增或运行测试。Fresh 不得再出现第一次
+  `Ghost King dialog option clicked` 后的 Tooltip 候选或第二个 NPC arrival session。
+- **2026-08-11 10:09 fresh 接任务后仍循环接任务（P1 已修，待重启）：** 现场完整窗口已经显示
+  `鬼王任务`，并存在 `龙窟六层`、`鬼王` 两条绿色链接；模板与 title ROI 均正确。根因是 Cloud
+  `TaskTrackerPanelService` 只接入了鬼王 title 匹配，却漏掉 `ghost_king` 的任务码规范化、天庭式下划线绿链
+  提取、内部 links 分流及 Tracker 内容高度分流，导致 title 命中后解析结果仍被强制降为空 links，任务走
+  `tracker-miss-or-no-green -> ACCEPT_TASK_CLICK_NPC` 再次接任务。现已把 `ghost_king` 补入上述四处既有
+  分支，未新增鬼王暗雷逻辑、未修改 Client 或匹配阈值。Cloud `mvn -q -DskipTests=false compile` PASS，
+  touched-file `git diff --check` PASS；按用户要求未运行测试。Fresh 必须在接任务成功后解析出非空鬼王绿链并
+  进入 Tracker 点击，不得再以 `tracker-miss-or-no-green` 返回接任务阶段。
+- **2026-08-11 10:37 fresh 脱战未使用回城道具（P1 根因修正，未改代码）：** 队长
+  `hwnd-37113A4` 于 `10:36:39.846` 在战斗中暂停恢复并创建新 taskRun；`10:36:40.707` 日志已经证明
+  `resolveStartupTrackerOrAccept(...)` 立即在战斗画面读取 Tracker，得到 `anchor absent` 后按当前代码直接进入
+  地藏王接任务链。Runner 到 `10:37:53.696` 才权威确认真实脱战，因此先前把断点归到
+  `waitCombat(...) / runner-unattributed-combat-exit` 属于位置偏晚的诊断，现予撤回。真正缺口有两层：热启动仍在
+  战斗时不应读取 Tracker；脱战后的启动仲裁只实现了 `Tracker -> accept`，漏了中间的鬼王回城道具判断。用户确认的
+  规则是：热启动若仍在战斗则只等待 Runner 脱战；脱战后重新读取 Tracker，有 Tracker 就继续任务；没有 Tracker
+  就检查鬼王回城道具，找到则使用并验证，找不到才回阎王书房接任务。不得恢复 expected-combat claim，也不得在
+  战斗画面提前用 Tracker miss 决定接任务。Fresh gate 必须看到严格的 `combat exit -> Tracker -> return item ->
+  accept fallback` 顺序。
+- **2026-08-11 通用门落地：** 鬼王内临时 `awaitStartupCombatExit(...)` 已删除，避免把公共暂停规则复制进具体
+  状态机。G052 公共 runtime gate 负责在 `GameTask.execute(...)` 前等待 Runner 的明确 combat fact，并在
+  `VISIBLE` 后封锁所有任务 probe 直到 fresh `ABSENT`。鬼王只保留脱战后的
+  `Tracker -> return item -> accept` 业务仲裁。当前活动 runtime 未重启，Maven compile 按规则暂缓；fresh 必须
+  同时证明战斗期没有鬼王 Tracker miss，以及脱战后优先使用 `guiwang/return_item.png`。
+- **2026-08-11 11:52 鬼王回城慢链 fresh（P2，待用户批准修法）：** 队长 `hwnd-37113A4` 于
+  `11:52:28.276` 被 Runner 权威确认脱战；Cloud 在 `236ms` 内消费 `COMBAT_STATE_CHANGED`，并明确输出
+  `runner reported combat exit; return home immediately`，因此 fast 脱战门本身生效。耗时来自同一个
+  `RETURN_HOME` 内部：第一次 `BAG_RETURN_ITEM` 于 `11:52:28.537` 下发，Client 两次 `Alt+E` 均未确认主包裹
+  anchor，至 `11:52:37.139` 才以未使用结束，耗时 `8603ms`；随后鬼王执行 `return-item-verify-cleanup`，其中
+  Cloud dialog inspect/fallback 产生三次 `640x300` 截图及一次 `(709,556)` 点击，Client 全量九模板 UI cleanup
+  又从 `11:52:49.376` 扫到 `11:52:57.936`，虽最终判定 `UI already clean`，仍额外耗时 `8560ms`；第二次
+  `BAG_RETURN_ITEM` 于 `11:52:58.196` 下发，`11:53:01.250` 命中 `guiwang/return_item.png`，并于
+  `11:53:03.154` 成功结束。脱战至回城成功共约 `34.9s`。当前鬼王只复用了修罗“Runner 脱战后立即进入
+  RETURN_HOME”的前半段；按本卡既有裁决明确不使用 `ReturnItemPrescanService`，所以没有修罗缓存快路，且
+  `useReturnItemAndVerifyStartMap(...)` 在第一次失败后无条件调用完整 `cleanUpAll(...)`。拟议修法：保留 Runner
+  fast 边沿和最多两次回城尝试；第一次失败后仅做一次有证据的 dialog obstruction 处理并立即重试，只有明确
+  generic-close PRESENT 或第二次仍失败才允许全量 UI cleanup，禁止在已经由 Cloud fallback 清掉 dialog 后再跑
+  8 秒空清理。未获用户批准前不改业务代码。
+- **11:52 首次回城输入根因补证：** `BAG_RETURN_ITEM` 通过 `submitExclusiveAndWait(...)` 进入全局输入队列，
+  因此确实在回城宏开始前执行 exact-window focus；但 `11:52:28.869-28.871` 的实际结果是
+  `foregroundOk=false, focused=false`，代码仍按 best-effort 继续。当前 backend 为 `FakerInputProvider`，其
+  `requiresForegroundKeyboard()=true`，所以 `BagService.pressBackgroundAltE(...)` 在此 backend 下不会走
+  `BoundWindowKeyboardService` 的 HWND 后台快捷键，而是直接调用驱动物理 `pressAltE()`；方法名具有误导性。
+  随后两次 `Alt+E` 都未出现包裹 UI。到 `11:52:45.433` 通用 fallback 对同一窗口执行真实鼠标点击并重新取得
+  物理输入上下文后，第二轮 `BAG_RETURN_ITEM` 在 `11:52:58.278` 未再出现 focus 警告，首次 `Alt+E` 即于
+  `11:53:01.071` 确认包裹 anchor。因此首次失败更符合“驱动键盘在未确认聚焦时继续发送，目标窗口未收到”而非
+  “已证明存在 Dialog 阻挡”；后续 Dialog/全量 UI cleanup 是失败后的通用恢复，不是首次失败原因的证据。
+- **驱动包裹焦点门已实现：** `WindowFocusService.focusWithoutLock(...)` 现在返回 exact HWND 是否真的成为当前前台窗口，
+  普通输入协调器仍可按既有 best-effort 语义继续；`BagService.pressBackgroundAltE(...)` 在
+  `requiresForegroundKeyboard()=true` 时会在持有输入 worker/全局锁的事务内最多确认两轮焦点，只有
+  `focused=true` 才调用驱动物理 `pressAltE()`。两轮都失败则返回 false 且不发送按键；旧
+  `BoundWindowKeyboardService` HWND 后台快捷键分支不变。Client production compile 与 touched-file
+  `git diff --check` PASS。Fresh 重启后必须看到 `[bag] driver Alt+E focus confirmation ... focused=true`
+  先于每次驱动 `Alt+E`；若两轮均为 false，必须看到明确 rejected 日志且该窗口不产生 `Alt+E`。
+- **2026-08-11 14:25 假 incidental 脱战复用旧绿链（P1 已修，待重启 fresh）：** 队长
+  `hwnd-37113A4` 于 `14:25:16.080` 正确上报 expected `COMBAT_EXITED`，`195ms` 后又收到假
+  `unexpected IN_COMBAT`；回城道具已于 `14:25:20.621` 使用成功，但假战斗退出后 Cloud 未检查鬼王 title，
+  直接复用 accept-time 缓存绿链，最终在阎王书房点击龙窟六层旧路线并 `STOPPED_AWAY`。现将意外战斗打断前的
+  phase 写入 `GhostKingRoundContext`；`INCIDENTAL COMBAT_EXITED` 后最多 `2s` 调用既有 Client 本地
+  `MATCH_TEMPLATE` 检查 `images/template/guiwang/title.png`。title 存在才保留 future/intent 并进入
+  `TRY_TRACKER_SHORTCUT`；title 不存在则清除 future、点击坐标和 intent，普通阶段进入 `RETURN_HOME`，已经处于
+  `WAIT_TEAM_RETURN` 的链原位恢复，禁止第二次回城。Cloud production compile PASS；G050 隔离行为合同
+  `2/2 PASS`。标准 Maven 定向 test 被本卡外既有 testCompile 构造器/协议欠账阻断。Fresh 必须看到
+  `incidental combat exit title arbitration ... titlePresent=false interruptedPhase=WAIT_TEAM_RETURN`，随后直接继续
+  team-return/下一轮，不得再出现旧 Tracker 绿链点击或第二次回城道具。
+
+# G051 Fresh #2：完整目录 52/72 通过（2026-08-10 23:21）
+
+- 修复 FakerInput `Alt+2` 后 ASCII 首字母可能被解释为 `Alt+字母` 的粘滞风险：ASCII 输入前强制发布
+  全释放 HID 状态并等待 150ms。`洛阳城/lyc` 单目标先行通过。
+- 完整 72 项真实后台链已跑完，证据目录 `logs/g051-manual/20260810-230939`：52 PASS、20 FAIL。
+  `Enter/Ctrl/Shift/方向键/Ctrl+A/全局热键触发` 均为 0，未复现 `Alt+L` 锁定。
+- 失败分为两类：14 项 `Cloud exact candidate selection failed`；6 项候选点击后无法视觉确认。
+  失败名称与 token 已同步到 `docs/ACTIVE_WORK.md`，每项 raw/marked/result 证据保存在对应子目录。
+
+## G061 鬼王回城后接任务固定点被同步视觉前检阻塞（2026-08-11）
+
+- **状态：源码与 Cloud 编译通过，待重启 fresh。**
+- **现场证据：** `16:40:33.385` 回城道具动作完成；`16:40:34.949-35.780` 完成一次
+  `Alt+4 + 180ms + 1024x768 CAPTURE`；`16:40:42.651` 本地 `complete.png` 命中；
+  `16:40:43.661` 真正点击地藏王，总间隔 `10.276s`。最近正常轮次回城完成到 NPC 点击为
+  `8.322s、9.635s、10.137s、10.276s、11.047s、18.694s、19.150s`；一次跨长时间的异常轮次不计入。
+- **根因：** 鬼王点击请求已有固定窗口点，策略为 `FIXED_POINT_MEMORY_TOOLTIP_YELLOW`，且明确
+  `deferDialogVerificationToTask(true)`。然而 `NpcClickService.runSingleFrameNpcClickPlan()` 仍在启动异步 FIFO
+  前同步执行 `DecisionEngine.isNpcExpectedDialogVisible()`；其内部洗整张 `1024x768` 图，并使用
+  `TemplateMatcher.findBest()` 全图寻找 `guiwang/accept.png`。日志 `startupMs` 常见 `5.1-6.5s`，并出现
+  `10.2s/14.9s`。相比之下，Client 在消费 FIFO 前匹配并关闭 `complete.png` 只约 `109ms`。
+- **实现：** `NpcClickService.runSingleFrameNpcClickPlan()` 仅在
+  `deferDialogVerificationToTask=false` 时调用 `isNpcExpectedDialogVisible()`；defer 请求在同一 fresh frame 后立即
+  注册并解锁原有异步 FIFO。固定点仍为第一候选；Client 鬼王完成 Story 本地处理、任务专属接任务 option probe、
+  后续 memory/tooltip/黄字顺序和失败 fallback 全部保留，不把业务判断迁回 Client。
+- **验证：** Cloud `mvn -q -DskipTests=false compile` PASS；touched-file `git diff --check` PASS。未运行 UI、输入或
+  runtime；须重启 Cloud 后 fresh，对比 `return_item success -> 地藏王 CLICK_LEFT` 时间，目标从常见 `8-19s`
+  降至约 `3-4s`。
+
+## G060 单次 Turn 网络故障不应终止窗口任务（2026-08-11）
+
+- **状态：源码与隔离连通合同通过，待 fresh。** 影响鬼王队员“黑精的皮牛” `hwnd-1C617FA`；不是鬼王 phase
+  判断或本地输入失败。
+- **现场证据：** `2026-08-11 16:12:53.896` Client 记录 `kind=NETWORK`、
+  `HTTP request failed; acknowledgement is unknown`；紧接着 `WindowTurnLoop` 记录
+  `stopRequested=false stopCheckpoint=false failed=true`，observation runner 在 `observerSeq=1247` 被关闭，
+  `16:12:54.039` runtime reset。其余四窗继续交换 Turn，证明不是整个 Cloud 进程停止。
+- **代码根因：** `WindowTurnLoop.exchangeOnce()` 在传输异常时不会清除 `previousOutcome`、`previousPng` 或尚未确认的
+  start request，注释要求下一轮原样重发；但 `runTurns()` 捕获普通 `TurnTransportException` 后无条件 `return`，
+  使保留机制不可达。异常日志只打印包装消息，没有底层 `IOException` cause，因此现场不能进一步区分 timeout/reset/EOF。
+- **传输层复核：** Turn 目标是本机 `http://127.0.0.1:18080/api/v1/client/turn`，不是外网；Client 的 connect/request
+  timeout 分别为 `3s/65s`。失败前 Cloud 下发 `actionId=44d17a52-1951-4dd3-a7b5-3179c919e159` 的 `CAPTURE`，Client
+  在 `16:12:40.395` 收到、`16:12:53.668` 完成，随后约 `228ms` 即报 `NETWORK`，排除 `65s` request timeout 和
+  `3s` connect timeout。Cloud 没有消费该 outcome，随后对同一 run 报 `OUTCOME_TIMEOUT_UNCERTAIN`；同期无 Cloud
+  重启且其他窗口继续交换。现有证据把故障限定为本机 TCP/HTTP 连接在 outcome POST 到达 Cloud 之前被关闭/中断，
+  最可能是连接复用期间的瞬时 EOF/reset；但 `WindowTurnLoop` 第 `615-620` 行没有记录已保留在异常对象中的 cause，
+  因而无法从事后日志严谨区分 `SocketException: Connection reset` 与 HTTP header EOF。
+- **用户裁决：** 只要用户没有明确停止，远程窗口执行中的所有 `TurnTransportException` 与本地
+  `RuntimeException` 都不得终止 loop、关闭 observer 或把窗口投影成异常；即使暂时原地不动，也必须保留 exact
+  请求状态持续重试。只有用户明确 stop/checkpoint stop 或 Cloud 已接受的正常任务 terminal 才能结束。
+- **实施：** 现有 `previousOutcome/previousPng/startRequest/command` 明确作为每窗口一个未确认 Turn 的内存
+  retry outbox；它不是终止自动处理的 DLQ。`WindowTurnLoop` 对通信异常和本地运行时异常记录完整 throwable、类型、
+  kind、HTTP 状态、Cloud error code、连续失败次数、保留 actionId 与 PNG 大小；不写 `lastFailure`，也不允许后续 Turn
+  越过未确认项。重试节奏为 `250ms -> 500ms -> 1s -> 2s -> 4s -> 最高5s`，按 `windowId+attempt` 加确定性
+  `±20%` 抖动，任一次成功交换立即把失败次数归零。暂停等待中的无归属 interrupt 只清标后继续等待。
+  `WindowTaskControlService` 已完全删除同步 ACK 等待循环；所有窗口先启动各自 Turn loop，matching ACK 通过
+  `startAcknowledgement` future 异步投影 `markRemoteStarted`。本地 ACK 投影异常也使用同一退避策略重试；用户取消或
+  start epoch 被替换后才丢弃迟到 ACK。observation runner 启动异常补完整堆栈，并在后续 turn 重试创建。
+- **验证：** Client 主源码 `mvn -q -DskipTests compile` PASS；隔离 `WindowTurnLoopContractTest` `8/8` PASS，覆盖
+  `NETWORK`、显式/普通 `HTTP_STATUS`、本地 `RuntimeException` 均在同一 live loop 自动重试且只有显式 stop 才结束；
+  另覆盖退避区间、5 秒上限、ACK future；异步 ACK 门禁定向合同 `1/1` PASS，并禁止生产启动方法调用
+  `awaitStartAcknowledged`；touched-file `git diff --check` PASS。标准 Maven `test` 仍在执行目标前被既有无关
+  `TurnContractFixtures.LocalPathingStartProofMechanics` 缺失阻断；完整 control 合同另有 3 项既有任务映射/角色预期
+  漂移，本卡未改其业务语义。未启动 UI、runtime、capture 或物理输入。
+- **Repair #2 现场（2026-08-11 18:27）：** 鬼王队长 `hwnd-37113A4` 于 `18:26:07.594` 点击接任务
+  option；`18:27:08.832` Client 接受无 reason 的 Cloud `SKIPPED`，旧合同随即写 `lastFailure`、停止
+  observation runner（`observerSeq=2086`）并把窗口投影为异常，现场没有用户 stop。Cloud 的
+  `CloudTurnTaskRuntime.runQueue()` 初始 aggregate 是 `SKIPPED`，而旧 `catch (Error)` 只打印日志、不把结果改成
+  `FAILED`、不保存异常类型/reason；这是“业务代码抛 `Error` 后产生无原因 `SKIPPED`”的完整代码路径。旧运行已经
+  丢弃异常对象，因此事后不能诚实还原本次具体 `Error` 子类；只能确定不是正常业务 `SUCCESS/STOPPED`。
+- **Repair #2 用户裁决：** G060 不只覆盖单次 HTTP/本地异常。只要用户没有停止，Cloud
+  `FAILED/SKIPPED` 也不得把窗口标为异常或永久停止。旧 Cloud run 可以终结，但 Client 必须保持窗口所有权，按原
+  task queue、次数、failure policy、角色/队伍事实和 UI runtime settings 创建新的 `PAUSE_RESUME` run；提交失败继续
+  有界退避重试。只有更新的用户 lifecycle epoch 能取消恢复；`SUCCESS/STOPPED` 仍正常结束。
+- **Repair #2 实现：** Cloud 把 escaped `Error` 提升为 typed `FAILED`，写入 exact
+  `TASK_TERMINAL/QUEUE_DECISION`（exception class、reason、phase），并在 terminal 与 `CONTINUATION` 同响应时仍附带
+  queue diagnostics。Client 先持久化 queue events，再接受 terminal；matching `FAILED/SKIPPED` 只关闭旧 loop，
+  `WindowTaskControlService` 去重并异步替换 exact run，恢复期间 `synchronizeRemoteRuntimeStates()` 不允许投影
+  stopped/failed。恢复去重键是 exact `startRequestId`：新 run 若立即再次失败，会覆盖旧代际并建立自己的恢复；旧回调
+  使用条件删除，不能清除新代际。显式 pause/stop/new start 通过 epoch fence 取消迟到恢复。
+- **Repair #2 验证：** Client production compile PASS；隔离 `WindowTurnLoopContractTest` `8/8`、recoverable
+  terminal restart connectivity `1/1`、Cloud `G060RecoverableTerminalContractTest` `1/1` PASS；touched-file
+  `git diff --check` PASS。标准 Client test compile 仍被本卡外缺失
+  `TurnContractFixtures.LocalPathingStartProofMechanics` 阻断。并发中的 untracked 鬼王改动曾短暂产生
+  `recoverAcceptDialogFailure` 少传 context 的编译错误，完成后最终 Cloud production compile 已复跑 PASS；因此当前双仓
+  production compile 均通过。未运行 runtime/UI/capture/input；需双端重启 fresh，验收
+  `FAILED/SKIPPED -> recovery pending -> fresh PAUSE_RESUME ACK` 且 UI 不出现异常。
+- **Repair #2 鬼王内部收口（用户最终裁决）：** 删除接任务本地 probe 的固定 `5_000ms` 失败门；exact probe
+  武装后只等待 `GHOST_KING_DIALOG_ANSWERED` 或显式用户停止，不因 elapsed time 清 interest。普通 phase failure、
+  loop guard、可恢复异常与非终态失败结果会清理旧 accept probe/pathing intent，并将同一轮重置到
+  `ACCEPT_TASK_NAVIGATE_TO_NPC`。旧两次 recovery ceiling 删除，但十次连续失败业务上限保留：前九次重置，第十次进入
+  `STOPPED` 终态，确保 G060 的 `FAILED/SKIPPED` 热恢复不会把业务上限重新拉起。Cloud production compile PASS；静态搜索确认旧
+  `accept-dialog-timeout` 与 `timeoutMs(5_000)` 均不存在。fresh 需验证接任务输入超过五秒时不再提前失败，并验证
+  连续失败计数达到十次时正常终止。
+
+## G059 UI 运行设置随任务启动同步到 Cloud（2026-08-11）
+
+**状态：源码、双仓编译与隔离连通测试通过，待重启 fresh**
+
+- **问题：** JavaFX 设置页已经正确保存用户选择，但 pushed `TurnTaskStartRequest` 只发送任务码、次数和失败策略。
+  Cloud 因而继续读取自己的 `BotProperties` 默认值。已确认 UI 巫医周期为 `60` 分钟，Cloud 仍以默认 `30` 分钟
+  判断；同类断线还覆盖修装备、启动立即维护、召唤兽技能清理、启动前置检查、common box 与四项血法补给。
+- **边界：** 任务次数及野外/自动战斗时长已经通过 `taskMaxRuns` 传输，不重复造字段。G059 只改变配置来源，
+  不改变修罗、鬼王、抓鬼、五倍、江湖历练等任务的维护触发点、phase、模板、点击、导航或 fallback 顺序。
+- **设计：** Client 在每次远程任务启动时，从当前 UI-backed `BotProperties` 生成不可变
+  `TurnTaskRuntimeSettings`；Cloud 将其绑定到 exact window/task-run 的 immutable metadata。任务和共享服务优先
+  读取该快照，不写 Cloud 全局单例，不允许一个窗口的设置覆盖另一窗口。
+- **验收：** 双仓协议文件 byte-identical；Client 构造的启动请求必须携带 UI 的 `3600000ms` 等原值；Cloud
+  角色预检前后都保留同一快照；启动前置、周期维护、召唤兽技能、盒子和补给全部读取 context 快照。双仓 compile
+  通过后仍需同时重启两端 fresh，以日志确认 `runtimeSettings` 摘要与 UI 一致。
+- **静态结果：** 三份变更协议文件双仓 SHA-256 byte-identical；Client UI 映射与 Cloud metadata 隔离连通测试
+  `2/2 PASS`；双仓 production compile PASS；touched-file `git diff --check` PASS。标准 Maven 定向 test 被本卡外
+  既有 aggregate `testCompile` 欠账阻断，未扩大写集。未运行 runtime/UI/capture/input。

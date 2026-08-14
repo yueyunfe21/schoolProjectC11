@@ -32,7 +32,27 @@
       "AUTO_BATTLE"
     ],
     "taskMaxRuns": [1, 0, 0, 1],
-    "failurePolicy": "CONTINUE_ON_FAILURE"
+    "taskInitialCompletedRuns": [0, 0, 0, 0],
+    "failurePolicy": "CONTINUE_ON_FAILURE",
+    "runtimeSettings": {
+      "summonSkillCleanEnabled": false,
+      "summonSkillCleanIntervalMs": 2700000,
+      "healPetMaintenanceIntervalMs": 3600000,
+      "repairEquipmentMaintenanceIntervalMs": 0,
+      "maintenanceRunImmediatelyOnStart": false,
+      "leaderCommonBoxEnabled": true,
+      "memberCommonBoxEnabled": false,
+      "taskStartupPreparationEnabled": false,
+      "doubleExperienceClaimEnabled": true,
+      "playerHpSupplyEnabled": true,
+      "playerHpSupplyThreshold": 70,
+      "playerMpSupplyEnabled": true,
+      "playerMpSupplyThreshold": 50,
+      "petHpSupplyEnabled": true,
+      "petHpSupplyThreshold": 30,
+      "petMpSupplyEnabled": false,
+      "petMpSupplyThreshold": 70
+    }
   },
   "continuation": null
 }

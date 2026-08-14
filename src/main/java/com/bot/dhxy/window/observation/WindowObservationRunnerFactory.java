@@ -13,8 +13,7 @@ public interface WindowObservationRunnerFactory {
      * @param deviceId exact device identity
      * @param windowId exact logical window identity
      * @param hwnd exact native window handle at acknowledgement time
-     * @param taskCode Cloud-authoritative effective task code(s) from the accepted acknowledgement; falls back to
-     *                 requested codes only for a legacy acknowledgement that omitted the projection
+     * @param taskCode exact Cloud-authoritative child task code; never a comma-joined queue identity
      * @param taskRunId observation-plane run identity (the acknowledged start request id)
      * @return a stopped runner, or {@code null} when no observation transport is available in this process
      */

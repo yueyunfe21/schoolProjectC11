@@ -3,6 +3,7 @@ package com.bot.dhxy.window.control;
 import com.bot.dhxy.config.BackgroundTaskTestProperties;
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.task.model.TaskType;
+import com.bot.dhxy.ui.GameUiSettingsStore;
 import com.bot.dhxy.window.discovery.GameWindowRegistrationService;
 import com.bot.dhxy.window.execution.WindowTaskSnapshot;
 import jakarta.annotation.PreDestroy;
@@ -38,7 +39,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Opt-in control plane for real Wuhuan and Tianting test runs without JavaFX interaction.
+ * Opt-in control plane for real Wuhuan, Tianting, and Catch Ghost test runs without JavaFX interaction.
  *
  * <p>The service never implements task mechanics. Start commands scan/register the real bound game windows and then
  * enter the same {@link WindowTaskControlService} path used by the UI. Control files are accepted only for this JVM's
@@ -55,6 +56,7 @@ public class BackgroundTaskTestControlService {
 
     private final BackgroundTaskTestProperties properties;
     private final BotProperties botProperties;
+    private final GameUiSettingsStore gameUiSettingsStore;
     private final GameWindowRegistrationService registrationService;
     private final WindowTaskControlService windowTaskControlService;
     private final ConfigurableApplicationContext applicationContext;
@@ -96,6 +98,36 @@ public class BackgroundTaskTestControlService {
      */
     public WindowTaskCommandResult startTiantingTest(int maxRuns) {
         return startTest(TaskType.TIANTING, maxRuns);
+    }
+
+    /** Start a real Catch Ghost run through the production path, using the configured default run count. */
+    public WindowTaskCommandResult startCatchGhostTest() {
+        return startCatchGhostTest(properties.getDefaultMaxRuns());
+    }
+
+    /**
+     * Start a real Catch Ghost run through the production window/task path.
+     *
+     * @param maxRuns number of requested task rounds; must be positive for this bounded test entry.
+     * @return the normal multi-window start result returned by the production control service.
+     */
+    public WindowTaskCommandResult startCatchGhostTest(int maxRuns) {
+        return startTest(TaskType.CATCH_GHOST, maxRuns);
+    }
+
+    /** Start a real Ghost King run through the production path, using the configured default run count. */
+    public WindowTaskCommandResult startGhostKingTest() {
+        return startGhostKingTest(properties.getDefaultMaxRuns());
+    }
+
+    /**
+     * Start a real Ghost King run through the production window/task path.
+     *
+     * @param maxRuns number of requested task rounds; must be positive for this bounded test entry.
+     * @return the normal multi-window start result returned by the production control service.
+     */
+    public WindowTaskCommandResult startGhostKingTest(int maxRuns) {
+        return startTest(TaskType.GHOST_KING, maxRuns);
     }
 
     /** Return the current production window snapshots without taking input ownership. */
@@ -192,6 +224,9 @@ public class BackgroundTaskTestControlService {
                     "已有窗口任务正在运行；请先 pause/resume 或 stop，不得叠加新的实机测试", snapshots);
         }
 
+        // The no-UI host never builds MainWindowController, so load the same persisted settings explicitly.
+        gameUiSettingsStore.loadInto(botProperties);
+
         int previousMaxRuns;
         if (taskType == TaskType.WUHuan_V2) {
             previousMaxRuns = botProperties.getWuhuanMaxRuns();
@@ -199,18 +234,32 @@ public class BackgroundTaskTestControlService {
         } else if (taskType == TaskType.TIANTING) {
             previousMaxRuns = botProperties.getTiantingMaxRuns();
             botProperties.setTiantingMaxRuns(maxRuns);
+        } else if (taskType == TaskType.CATCH_GHOST) {
+            previousMaxRuns = botProperties.getCatchGhostMaxRuns();
+            botProperties.setCatchGhostMaxRuns(maxRuns);
+        } else if (taskType == TaskType.GHOST_KING) {
+            previousMaxRuns = botProperties.getGhostKingMaxRuns();
+            botProperties.setGhostKingMaxRuns(maxRuns);
         } else {
             throw new IllegalArgumentException("Unsupported background test task: " + taskType);
         }
 
         try {
-            log.info("G033 starting no-UI live task test: task={} maxRuns={}", taskType, maxRuns);
+            log.info("G065 starting no-UI live task test: task={} maxRuns={} doubleExperience={} "
+                            + "healPetIntervalMs={} repairEquipmentIntervalMs={}",
+                    taskType, maxRuns, botProperties.isDoubleExperienceClaimEnabled(),
+                    botProperties.getXiuluoHealPetMaintenanceIntervalMs(),
+                    botProperties.getXiuluoRepairEquipmentMaintenanceIntervalMs());
             return registrationService.scanRegisterAndStartIndependentWindows(taskType);
         } finally {
             if (taskType == TaskType.WUHuan_V2) {
                 botProperties.setWuhuanMaxRuns(previousMaxRuns);
-            } else {
+            } else if (taskType == TaskType.TIANTING) {
                 botProperties.setTiantingMaxRuns(previousMaxRuns);
+            } else if (taskType == TaskType.GHOST_KING) {
+                botProperties.setGhostKingMaxRuns(previousMaxRuns);
+            } else {
+                botProperties.setCatchGhostMaxRuns(previousMaxRuns);
             }
         }
     }
@@ -268,6 +317,8 @@ public class BackgroundTaskTestControlService {
                 switch (action) {
                     case "start-wuhuan" -> result = ControlResult.from(startWuhuanTest(maxRuns));
                     case "start-tianting" -> result = ControlResult.from(startTiantingTest(maxRuns));
+                    case "start-catch-ghost" -> result = ControlResult.from(startCatchGhostTest(maxRuns));
+                    case "start-ghost-king" -> result = ControlResult.from(startGhostKingTest(maxRuns));
                     case "pause" -> result = ControlResult.from(pause());
                     case "resume" -> result = ControlResult.from(resume());
                     case "stop" -> result = ControlResult.from(stop());

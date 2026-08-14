@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("start-wuhuan", "start-tianting", "status", "pause", "resume", "stop", "shutdown", "monitor")]
+    [ValidateSet("start-wuhuan", "start-tianting", "start-catch-ghost", "start-ghost-king", "status", "pause", "resume", "stop", "shutdown", "monitor")]
     [string]$Action,
 
     [ValidateRange(1, 2147483647)]
@@ -203,7 +203,7 @@ if ($Action -eq "monitor") {
 }
 
 $controlHost = Get-LiveHost
-if ($Action -in @("start-wuhuan", "start-tianting", "status") -and $null -eq $controlHost) {
+if ($Action -in @("start-wuhuan", "start-tianting", "start-catch-ghost", "start-ghost-king", "status") -and $null -eq $controlHost) {
     $controlHost = Start-ControlHost
 }
 if ($null -eq $controlHost) {

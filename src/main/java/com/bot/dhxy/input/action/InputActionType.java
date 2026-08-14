@@ -23,6 +23,8 @@ public enum InputActionType {
     PRESS_CTRL_A,
     /** Type Unicode text through the active input provider. */
     TYPE_TEXT_UNICODE,
+    /** Type lowercase ASCII letters/digits as physical HID usages. */
+    TYPE_TEXT_ASCII,
     /** Paste text through the active input provider. */
     PASTE_TEXT,
     /** Press Enter. */

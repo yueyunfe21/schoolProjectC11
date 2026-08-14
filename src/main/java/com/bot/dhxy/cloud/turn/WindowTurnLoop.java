@@ -25,7 +25,6 @@ import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.StringJoiner;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
@@ -33,7 +32,9 @@ import java.util.function.Supplier;
 /** Explicit long-wait turn lifecycle for one immutable device/window identity. */
 public final class WindowTurnLoop {
 
-    private static final String TASK_START_REJECTED_CODE = "TASK_START_REJECTED";
+    private static final long[] FAILURE_RETRY_BASE_DELAYS_MS = {250L, 500L, 1_000L, 2_000L, 4_000L, 5_000L};
+    private static final long FAILURE_RETRY_MIN_DELAY_MS = 100L;
+    private static final long FAILURE_RETRY_MAX_DELAY_MS = 5_000L;
 
     private static final Logger log = LoggerFactory.getLogger(WindowTurnLoop.class);
     private static final int CONTRACT_VERSION = 1;
@@ -66,9 +67,10 @@ public final class WindowTurnLoop {
     // is accepted exactly once. Both survive an explicit restart so an accepted start is never re-minted or re-sent.
     private volatile TurnTaskStartRequest pendingStartRequest;
     private volatile boolean startAckAccepted;
-    /** True only when Cloud explicitly rejected this start before allocating a task RunSlot. */
+    /** True only when Cloud explicitly rejected this start with a deterministic 4xx before a start ACK. */
     private volatile boolean startExplicitlyRejected;
     private volatile TurnTaskStartAck acceptedStartAck;
+    private final CompletableFuture<TurnTaskStartAck> startAcknowledgement = new CompletableFuture<>();
     private final CompletableFuture<TurnTaskTerminalResult> taskTerminalResult = new CompletableFuture<>();
 
     // One manual MapSurvey command may ride an otherwise task-free loop. The same immutable command survives
@@ -92,6 +94,12 @@ public final class WindowTurnLoop {
     // this process has no observation plane and the loop behaves exactly as before.
     private final WindowObservationRunnerFactory observationRunnerFactory;
     private volatile WindowObservationRunner observationRunner;
+    /** Exact queue child currently announced by Cloud; never a comma-joined queue identity. */
+    private volatile String activeObservationTaskCode;
+    /** Highest exact queue child entered by this run; fallback checkpoint if a terminal snapshot is incomplete. */
+    private volatile int activeQueueIndex = -1;
+    /** Exact child index whose FAILED/SKIPPED terminal may be retried without replaying successful predecessors. */
+    private volatile int recoverableQueueIndex = -1;
     private final LinkedHashSet<String> acceptedTaskQueueEventIds = new LinkedHashSet<>();
 
     WindowTurnLoop(String deviceId,
@@ -341,6 +349,21 @@ public final class WindowTurnLoop {
     public CompletableFuture<TurnMapSurveyResult> attachMapSurveyCommand(TurnMapSurveyCommand command) {
         Objects.requireNonNull(command, "command");
         synchronized (lifecycleMonitor) {
+            // A terminal result completes the caller before the next transport turn flushes its ACK. A catalog
+            // caller may therefore submit the next command in that small interval. Keep the single command slot,
+            // but let the live loop finish the retained ACK instead of rejecting the next exact command as active.
+            while (pendingMapSurveyCommand == null && pendingMapSurveyAckId != null
+                    && running.get() && !stopRequested.get() && !stopCheckpoint.get()) {
+                try {
+                    lifecycleMonitor.wait();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(
+                            "MapSurvey interrupted while awaiting prior result acknowledgement for windowId="
+                                    + windowId,
+                            interrupted);
+                }
+            }
             if (!running.get() || stopRequested.get() || stopCheckpoint.get()) {
                 throw new IllegalStateException("MapSurvey requires a running turn loop for windowId=" + windowId);
             }
@@ -369,6 +392,14 @@ public final class WindowTurnLoop {
         return Optional.ofNullable(acceptedStartAck);
     }
 
+    /** Completes once for this loop's exact immutable task-start acknowledgement. */
+    public CompletableFuture<TurnTaskStartAck> startAcknowledgement() {
+        if (pendingStartRequest == null) {
+            throw new IllegalStateException("turn loop has no attached start request for windowId=" + windowId);
+        }
+        return startAcknowledgement;
+    }
+
     /** Completes only for the terminal result carrying this loop's exact accepted start-request identity. */
     public CompletableFuture<TurnTaskTerminalResult> taskTerminalResult() {
         return taskTerminalResult;
@@ -382,9 +413,8 @@ public final class WindowTurnLoop {
     }
 
     /**
-     * @return true only when the pending start received Cloud's explicit {@code TASK_START_REJECTED} response before
-     * the matching start acknowledgement. Network/timeout failures deliberately remain false because Cloud may still
-     * own the same start request.
+     * @return true only when the pending start received a deterministic Cloud 4xx before the matching acknowledgement.
+     * Network/timeout/5xx failures deliberately remain false because Cloud may still own the same start request.
      */
     public boolean wasTaskStartExplicitlyRejected() {
         return startExplicitlyRejected;
@@ -403,22 +433,32 @@ public final class WindowTurnLoop {
     private void runLoop() {
         log.info("Turn loop started: deviceId={} windowId={}", deviceId, windowId);
         try {
-            runTurns();
-        } catch (RuntimeException localFailure) {
-            if (!stopRequested.get() && !stopCheckpoint.get() && !Thread.currentThread().isInterrupted()) {
-                lastFailure = localFailure;
-                /*
-                 * The stack goes with it. A wild-battle run died five-for-five on
-                 * 'Cannot invoke "java.lang.Boolean.booleanValue()"' and the message alone named no class,
-                 * no line, nothing — the whole diagnosis stalled on this one missing argument (E18).
-                 */
-                log.error(
-                        "Turn loop stopped after local failure: deviceId={} windowId={} type={} message={}",
-                        deviceId,
-                        windowId,
-                        localFailure.getClass().getSimpleName(),
-                        localFailure.getMessage(),
-                        localFailure);
+            int recoveryAttempt = 0;
+            while (!stopRequested.get() && !stopCheckpoint.get()) {
+                try {
+                    runTurns();
+                    break;
+                } catch (RuntimeException localFailure) {
+                    if (stopRequested.get() || stopCheckpoint.get()) {
+                        break;
+                    }
+                    Thread.interrupted();
+                    recoveryAttempt++;
+                    long retryDelayMs = failureRetryDelayMs(windowId, recoveryAttempt);
+                    log.error(
+                            "Turn loop escaped one-turn recovery; retrying: deviceId={} windowId={} "
+                                    + "attempt={} retryDelayMs={} type={} message={}",
+                            deviceId,
+                            windowId,
+                            recoveryAttempt,
+                            retryDelayMs,
+                            localFailure.getClass().getName(),
+                            localFailure.getMessage(),
+                            localFailure);
+                    if (!awaitFailureRetryDelay(retryDelayMs)) {
+                        break;
+                    }
+                }
             }
         } finally {
             // TURN-40G: fence and terminate this window's observation runner with a bounded join before the loop
@@ -478,13 +518,14 @@ public final class WindowTurnLoop {
                     windowId, startRequest.startRequestId());
             return;
         }
-        StringJoiner taskCodes = new StringJoiner(",");
-        for (TurnTaskCode code : observationTaskCodes) {
-            taskCodes.add(code.name().toLowerCase(Locale.ROOT));
+        String exactTaskCode = activeObservationTaskCode;
+        if (exactTaskCode == null || exactTaskCode.isBlank()) {
+            exactTaskCode = observationTaskCodes.getFirst().name().toLowerCase(Locale.ROOT);
+            activeObservationTaskCode = exactTaskCode;
         }
         try {
             WindowObservationRunner runner = observationRunnerFactory.create(
-                    deviceId, windowId, nativeHandle, taskCodes.toString(), startRequest.startRequestId());
+                    deviceId, windowId, nativeHandle, exactTaskCode, startRequest.startRequestId());
             if (runner == null) {
                 return;
             }
@@ -492,8 +533,10 @@ public final class WindowTurnLoop {
             runner.start();
         } catch (RuntimeException runnerFailure) {
             observationRunner = null;
-            log.error("Observation runner failed to start (turn loop continues): windowId={} message={}",
-                    windowId, runnerFailure.getMessage());
+            log.error("Observation runner failed to start (turn loop continues and will retry): "
+                            + "deviceId={} windowId={} type={} message={}",
+                    deviceId, windowId, runnerFailure.getClass().getName(), runnerFailure.getMessage(),
+                    runnerFailure);
         }
     }
 
@@ -532,15 +575,17 @@ public final class WindowTurnLoop {
     /**
      * Runs normal turns until a hard {@link #stop()} or a checkpoint {@link #requestStop()} is requested. A
      * checkpoint stop (which interrupts an in-flight long wait) is honored by publishing exactly one final turn whose
-     * metadata carries {@code stopRequested=true} before the loop exits; a hard stop or a real transport failure ends
-     * the loop with no final turn.
+     * metadata carries {@code stopRequested=true} before the loop exits. Transport and local runtime failures retain
+     * the same request state and retry forever; only an explicit stop or an accepted Cloud task terminal ends the loop.
      */
     private void runTurns() {
-        while (!stopRequested.get() && !stopCheckpoint.get() && !Thread.currentThread().isInterrupted()) {
+        int consecutiveFailures = 0;
+        while (!stopRequested.get() && !stopCheckpoint.get()) {
             try {
                 if (pauseCheckpoint.get()) {
                     if (!pausePublished) {
                         exchangeOnce();
+                        consecutiveFailures = 0;
                         pausePublished = true;
                         continue;
                     }
@@ -577,9 +622,11 @@ public final class WindowTurnLoop {
                     // existing object owns observerSeq, interests and unacknowledged typed events across suspend.
                     maybeStartObservationRunner(resumedMetadata);
                     exchangeOnce(resumedMetadata);
+                    consecutiveFailures = 0;
                     continue;
                 }
                 exchangeOnce();
+                consecutiveFailures = 0;
             } catch (TurnTransportException transportFailure) {
                 if (stopRequested.get()) {
                     return;
@@ -593,17 +640,57 @@ public final class WindowTurnLoop {
                     continue;
                 }
                 if (stopCheckpoint.get() || Thread.currentThread().isInterrupted()) {
-                    break;
+                    if (stopCheckpoint.get()) {
+                        break;
+                    }
+                    // No stop/pause owner claimed this interrupt. Treat it as another retryable failure.
+                    Thread.interrupted();
                 }
-                recordExplicitStartRejection(transportFailure);
-                lastFailure = transportFailure;
+                if (rejectPendingStartAfterClientError(transportFailure)) {
+                    return;
+                }
+                consecutiveFailures++;
+                long retryDelayMs = failureRetryDelayMs(windowId, consecutiveFailures);
                 log.error(
-                        "Turn loop stopped after transport failure: deviceId={} windowId={} kind={} message={}",
+                        "Turn transport failed; exact state retained and retrying: deviceId={} windowId={} "
+                                + "attempt={} retryDelayMs={} kind={} httpStatus={} cloudErrorCode={} "
+                                + "retainedActionId={} retainedPngBytes={} message={}",
                         deviceId,
                         windowId,
+                        consecutiveFailures,
+                        retryDelayMs,
                         transportFailure.kind(),
-                        transportFailure.getMessage());
-                return;
+                        transportFailure.httpStatus(),
+                        transportFailure.cloudErrorCode(),
+                        previousOutcome == null ? null : previousOutcome.actionId(),
+                        previousPng == null ? 0 : previousPng.length,
+                        transportFailure.getMessage(),
+                        transportFailure);
+                if (!awaitFailureRetryDelay(retryDelayMs)) {
+                    break;
+                }
+            } catch (RuntimeException localFailure) {
+                if (stopRequested.get() || stopCheckpoint.get()) {
+                    break;
+                }
+                Thread.interrupted();
+                consecutiveFailures++;
+                long retryDelayMs = failureRetryDelayMs(windowId, consecutiveFailures);
+                log.error(
+                        "Turn local execution failed; loop remains alive and retrying: deviceId={} windowId={} "
+                                + "attempt={} retryDelayMs={} type={} retainedActionId={} retainedPngBytes={} message={}",
+                        deviceId,
+                        windowId,
+                        consecutiveFailures,
+                        retryDelayMs,
+                        localFailure.getClass().getName(),
+                        previousOutcome == null ? null : previousOutcome.actionId(),
+                        previousPng == null ? 0 : previousPng.length,
+                        localFailure.getMessage(),
+                        localFailure);
+                if (!awaitFailureRetryDelay(retryDelayMs)) {
+                    break;
+                }
             }
         }
         if (stopCheckpoint.get() && !stopRequested.get()) {
@@ -623,16 +710,23 @@ public final class WindowTurnLoop {
         }
     }
 
-    private void recordExplicitStartRejection(TurnTransportException transportFailure) {
+    private boolean rejectPendingStartAfterClientError(TurnTransportException transportFailure) {
+        Integer status = transportFailure.httpStatus();
         if (pendingStartRequest == null || startAckAccepted
                 || transportFailure.kind() != TurnTransportException.Kind.HTTP_STATUS
-                || !TASK_START_REJECTED_CODE.equals(transportFailure.cloudErrorCode())) {
-            return;
+                || status == null || status < 400 || status >= 500) {
+            return false;
         }
         synchronized (lifecycleMonitor) {
             startExplicitlyRejected = true;
+            lastFailure = transportFailure;
             lifecycleMonitor.notifyAll();
         }
+        startAcknowledgement.completeExceptionally(transportFailure);
+        log.error("Cloud rejected pending task start; loop will stop without retry: deviceId={} windowId={} "
+                        + "httpStatus={} cloudErrorCode={} message={}",
+                deviceId, windowId, status, transportFailure.cloudErrorCode(), transportFailure.getMessage());
+        return true;
     }
 
     /**
@@ -667,12 +761,16 @@ public final class WindowTurnLoop {
                 try {
                     pauseMonitor.wait();
                 } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    return false;
+                    if (stopRequested.get() || stopCheckpoint.get()) {
+                        return false;
+                    }
+                    // An interrupt without the loop's explicit stop token is not permission to tear down the
+                    // window. Clear it and remain paused until resume or a real user stop arrives.
+                    Thread.interrupted();
                 }
             }
         }
-        return !stopRequested.get() && !stopCheckpoint.get() && !Thread.currentThread().isInterrupted();
+        return !stopRequested.get() && !stopCheckpoint.get();
     }
 
     private void exchangeOnce() throws TurnTransportException {
@@ -760,15 +858,19 @@ public final class WindowTurnLoop {
         // validator guarantees a matching TurnTaskStartAck, so record the one-time acceptance and stop attaching it.
         TurnProtocolValidator.requireValid(response, request);
         if (startRequestForThisTurn != null) {
+            TurnTaskStartAck startAck = response.taskStartAck();
             synchronized (lifecycleMonitor) {
-                acceptedStartAck = response.taskStartAck();
+                acceptedStartAck = startAck;
                 startAckAccepted = true;
                 acknowledgedWindowMetadata = metadata;
                 lifecycleMonitor.notifyAll();
             }
+            startAcknowledgement.complete(startAck);
         }
-        acceptMatchingTaskTerminal(response.taskTerminalResult());
         acceptTaskQueueEvents(response.taskQueueEvents());
+        // Diagnostics must be persisted before completing the terminal future.  Completion callbacks may retire
+        // this loop and start a recovery run, so accepting the terminal first can permanently lose the reason.
+        acceptMatchingTaskTerminal(response.taskTerminalResult());
         // TURN-40G: only an acknowledged window observes. Covers both the first acknowledgement and an explicit
         // restart of an already-acknowledged loop; a loop without a task start request never starts a runner.
         maybeStartObservationRunner(metadata);
@@ -776,6 +878,7 @@ public final class WindowTurnLoop {
             if (mapSurveyAckForThisTurn != null && mapSurveyAckForThisTurn.equals(pendingMapSurveyAckId)) {
                 pendingMapSurveyAckId = null;
                 pendingMapSurveyResult = null;
+                lifecycleMonitor.notifyAll();
             }
             TurnMapSurveyResult mapResult = response.mapSurveyResult();
             if (mapSurveyCommandForThisTurn != null && mapResult != null
@@ -863,14 +966,11 @@ public final class WindowTurnLoop {
         if (!taskTerminalResult.complete(terminal)) {
             return;
         }
-        if (terminal.status() == TurnTaskTerminalResult.Status.FAILED
-                || terminal.status() == TurnTaskTerminalResult.Status.SKIPPED) {
-            lastFailure = new IllegalStateException("Cloud task ended as " + terminal.status()
-                    + " for startRequestId=" + terminal.startRequestId());
-        }
+        // FAILED/SKIPPED are recoverable task outcomes.  The control service replaces this terminal Cloud run
+        // with a fresh hot-resume run; they must not poison the local loop as an unrecoverable process failure.
         stopRequested.set(true);
-        log.info("Cloud task terminal accepted: deviceId={} windowId={} startRequestId={} status={}",
-                deviceId, windowId, terminal.startRequestId(), terminal.status());
+        log.info("Cloud task terminal accepted: deviceId={} windowId={} startRequestId={} status={} reason={}",
+                deviceId, windowId, terminal.startRequestId(), terminal.status(), terminal.reason());
     }
 
     /** Persist each Cloud child-task result once, without making it a lifecycle/control event. */
@@ -882,6 +982,7 @@ public final class WindowTurnLoop {
             if (event == null || !acceptTaskQueueEventId(event.eventId())) {
                 continue;
             }
+            acceptTaskQueueChildState(event);
             try {
                 taskQueueEventRecorder.record(windowId, event);
                 log.info("Cloud queue diagnostic: deviceId={} windowId={} startRequestId={} taskRunId={} "
@@ -894,6 +995,77 @@ public final class WindowTurnLoop {
                         event.eventId(), event.startRequestId(), event.taskRunId(), recorderFailure);
             }
         }
+    }
+
+    /** Applies queue progress to local observation identity and recoverable-terminal checkpoint state. */
+    private void acceptTaskQueueChildState(TurnTaskQueueEvent event) {
+        TurnTaskStartRequest startRequest = pendingStartRequest;
+        if (startRequest == null || !startRequest.startRequestId().equals(event.startRequestId())) {
+            return;
+        }
+        if (event.type() == TurnTaskQueueEvent.Type.TASK_STARTED) {
+            String exactTaskCode = event.taskCode().trim().toLowerCase(Locale.ROOT);
+            activeQueueIndex = Math.max(activeQueueIndex, event.queueIndex());
+            activeObservationTaskCode = exactTaskCode;
+            WindowObservationRunner runner = observationRunner;
+            if (runner != null) {
+                runner.rebindTaskCode(exactTaskCode);
+            }
+            return;
+        }
+        if (event.type() == TurnTaskQueueEvent.Type.TASK_TERMINAL
+                && ("FAILED".equalsIgnoreCase(event.result())
+                || "SKIPPED".equalsIgnoreCase(event.result()))) {
+            recoverableQueueIndex = event.queueIndex();
+        }
+    }
+
+    /** @return failed/skipped child index, falling back to the latest started child; never rewinds a known queue. */
+    public int recoverableQueueIndex() {
+        return recoverableQueueIndex >= 0 ? recoverableQueueIndex : activeQueueIndex;
+    }
+
+    /** Waits between failed turns without treating an unowned interrupt as permission to terminate the loop. */
+    private boolean awaitFailureRetryDelay(long retryDelayMs) {
+        long deadlineNanos = System.nanoTime() + Duration.ofMillis(retryDelayMs).toNanos();
+        while (!stopRequested.get() && !stopCheckpoint.get()) {
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0L) {
+                return true;
+            }
+            try {
+                Thread.sleep(Math.max(1L, Duration.ofNanos(remainingNanos).toMillis()));
+            } catch (InterruptedException interrupted) {
+                if (stopRequested.get() || stopCheckpoint.get()) {
+                    return false;
+                }
+                // Pause and unrelated interrupts wake recovery but never terminate it.
+                Thread.interrupted();
+                if (pauseCheckpoint.get()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Calculates deterministic per-window exponential backoff. Jitter prevents several windows that failed on the
+     * same Cloud outage from retrying in lockstep; the delay remains bounded because the user owns termination.
+     *
+     * @param windowId stable local window identity used only to spread retries across windows; must be non-null
+     * @param attempt consecutive failure count starting at one; non-positive values are treated as the first failure
+     * @return retry delay in milliseconds, always between 100 and 5000 inclusive
+     */
+    public static long failureRetryDelayMs(String windowId, int attempt) {
+        int safeAttempt = Math.max(1, attempt);
+        long baseDelayMs = FAILURE_RETRY_BASE_DELAYS_MS[Math.min(
+                safeAttempt - 1, FAILURE_RETRY_BASE_DELAYS_MS.length - 1)];
+        long jitterRangeMs = Math.max(1L, baseDelayMs / 5L);
+        int jitterBucketCount = Math.toIntExact(jitterRangeMs * 2L + 1L);
+        long jitterMs = Math.floorMod(Objects.hash(windowId, safeAttempt), jitterBucketCount) - jitterRangeMs;
+        return Math.max(FAILURE_RETRY_MIN_DELAY_MS,
+                Math.min(FAILURE_RETRY_MAX_DELAY_MS, baseDelayMs + jitterMs));
     }
 
     private boolean acceptTaskQueueEventId(String eventId) {

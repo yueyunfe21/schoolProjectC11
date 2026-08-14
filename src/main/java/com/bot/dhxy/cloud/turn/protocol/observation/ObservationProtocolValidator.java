@@ -256,10 +256,6 @@ public final class ObservationProtocolValidator {
                         || fact.locationChangedAtMs() >= fact.pathingStartedAtMs()
                         && fact.locationChangedAtMs() <= fact.pathingUpdatedAtMs(),
                 "pathingFact.locationChangedAtMs must be zero or within the pathing interval");
-        require(fact.movementObservedAtMs() == 0L
-                        || fact.movementObservedAtMs() >= fact.pathingStartedAtMs()
-                        && fact.movementObservedAtMs() <= fact.pathingUpdatedAtMs(),
-                "pathingFact.movementObservedAtMs must be zero or within the pathing interval");
         if (fact.dialogBlocking()) {
             require(fact.dialogBlockingDetectedAtMs() >= fact.pathingStartedAtMs()
                             && fact.dialogBlockingDetectedAtMs() <= fact.pathingUpdatedAtMs(),
@@ -297,8 +293,8 @@ public final class ObservationProtocolValidator {
                         "cleared pathing fact must not carry replacedIntentId");
                 require(fact.currentMapName() == null && fact.currentX() == null,
                         "cleared pathing fact must not carry a current location");
-                require(fact.locationChangedAtMs() == 0L && fact.movementObservedAtMs() == 0L,
-                        "cleared pathing fact must clear observation timestamps");
+                require(fact.locationChangedAtMs() == 0L && !fact.coordinateMovementObserved(),
+                        "cleared pathing fact must clear coordinate observation state");
                 require(!fact.dialogBlocking() && fact.dialogBlockingReason() == null
                                 && fact.dialogBlockingDetectedAtMs() == 0L,
                         "cleared pathing fact must clear dialog-blocking state");
@@ -355,8 +351,9 @@ public final class ObservationProtocolValidator {
             require("XIULUO_V2".equalsIgnoreCase(event.taskCode())
                             || "XINSHOU_TRAINING".equalsIgnoreCase(event.taskCode())
                             || "CATCH_GHOST".equalsIgnoreCase(event.taskCode())
+                            || "GHOST_KING".equalsIgnoreCase(event.taskCode())
                             || "WUBEI".equalsIgnoreCase(event.taskCode()),
-                    "expected-combat/replay transition supports only XIULUO_V2/XINSHOU_TRAINING/CATCH_GHOST/WUBEI");
+                    "expected-combat/replay transition supports only XIULUO_V2/XINSHOU_TRAINING/CATCH_GHOST/GHOST_KING/WUBEI");
         }
     }
 

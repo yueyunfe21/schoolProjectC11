@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "card": "G064",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "pushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloudBranch": "dev",
+    "cloudCommit": "847410396b3fda1cc00174910401713ff30cede4"
+  },
+  "rules": ["BR-GHOSTKING-004"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/业务逻辑.md",
+    "docs/business-rules.json",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G064.json",
+    "src/main/java/com/bot/dhxy/config/BotProperties.java",
+    "src/main/java/com/bot/dhxy/ui/GameUiSettingsStore.java",
+    "src/main/java/com/bot/dhxy/ui/MainWindowController.java",
+    "src/main/java/com/bot/dhxy/window/control/WindowTaskControlService.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnTaskRuntimeSettings.java",
+    "src/test/java/com/bot/dhxy/window/control/G059RuntimeSettingsConnectivityTest.java",
+    "src/test/java/com/bot/dhxy/window/control/G064DoubleExperienceClaimSwitchConnectivityContract.java",
+    "src/test/java/com/bot/dhxy/cloud/turn/protocol/TurnTaskLifecycleProtocolGoldenJsonTest.java",
+    "src/test/resources/cloud-turn/v1/request-start.json",
+    "D:/mavenProject/dhxy-cloud-brain/src/main/java/com/bot/dhxy/service/PlayerStateService.java",
+    "D:/mavenProject/dhxy-cloud-brain/src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java",
+    "D:/mavenProject/dhxy-cloud-brain/src/main/java/com/bot/dhxy/task/guiwang/GhostKingTask.java"
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "既有 G058 自动识别和领取双倍没有 UI 总开关，用户无法禁止状态识别与一品侍卫维护链。",
+    "userDecision": "增加默认开启的领取双倍开关；关闭时完全跳过普通任务的识别、pending 和领取链，手动 G056 保留。",
+    "decisionRecordedAt": "2026-08-11",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G064"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-GHOSTKING-004",
+      "producer": "JavaFX 领取双倍复选框写入 BotProperties，并在启动时生成 exact-run TurnTaskRuntimeSettings。",
+      "transport": "TurnTaskStartRequest 把 doubleExperienceClaimEnabled 随 exact device/window/task run 发送到 Cloud。",
+      "consumer": "GhostKingTask、PlayerStateService 和 TaskMaintenanceService 共同消费该值，关闭时跳过识别、pending 与普通领取链。",
+      "ordering": "UI apply -> persisted property -> start snapshot -> Cloud exact-run context -> shared-frame observation gate -> after-accept maintenance gate -> Chang'an navigation",
+      "contracts": [
+        {
+          "repo": "client",
+          "path": "src/test/java/com/bot/dhxy/window/control/G059RuntimeSettingsConnectivityTest.java",
+          "command": "mvn -q -Dtest=G059RuntimeSettingsConnectivityTest test",
+          "proves": ["UI-backed false value enters the exact remote-start snapshot"]
+        },
+        {
+          "repo": "client",
+          "path": "src/test/java/com/bot/dhxy/window/control/G064DoubleExperienceClaimSwitchConnectivityContract.java",
+          "command": "isolated javac -cp target/classes + java G064DoubleExperienceClaimSwitchConnectivityContract",
+          "proves": ["UI/persistence/snapshot/protocol are connected", "recognition gate precedes recognizer", "normal disabled gate precedes navigation", "manual G056 remains available"]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "business rule gate", "result": "PASS", "command": "node scripts/check-business-rule-gate.js --card G064"},
+    {"name": "isolated cross-repository connectivity contract", "result": "PASS", "command": "isolated javac -cp target/classes + java G064DoubleExperienceClaimSwitchConnectivityContract"},
+    {"name": "client production compile", "result": "PASS", "command": "mvn -q -DskipTests compile"},
+    {"name": "cloud production compile", "result": "PASS", "command": "mvn -q -DskipTests=false compile"},
+    {"name": "shared protocol byte comparison", "result": "PASS", "evidence": "TurnTaskRuntimeSettings SHA-256 CD5BFE6B1BFC7C1C870B59609761098E596CF0642D2F23F778EFFBF285E8A62F in both repositories"},
+    {"name": "standard Maven focused tests", "result": "BLOCKED", "evidence": "Existing unrelated Client LocalPathingStartProofMechanics and Cloud stale test constructor/protocol compilation errors prevent target execution."},
+    {"name": "fresh runtime", "result": "PENDING"}
+  ]
+}

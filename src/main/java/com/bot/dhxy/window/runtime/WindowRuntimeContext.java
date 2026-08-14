@@ -28,6 +28,7 @@ import com.bot.dhxy.window.model.WindowPathingState;
 import com.bot.dhxy.window.model.WindowRetainedReturnHomeReplay;
 import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
+import com.bot.dhxy.window.model.WindowTaskRunProgress;
 import com.bot.dhxy.window.execution.WindowTaskFailurePolicy;
 import com.bot.dhxy.model.dialog.DialogOperation;
 import com.bot.dhxy.model.dialog.DialogType;
@@ -79,6 +80,8 @@ public class WindowRuntimeContext {
     private volatile WindowTaskFailurePolicy lastQueueFailurePolicy;
     private final AtomicReference<WindowPathingSnapshot> pathingSnapshot =
             new AtomicReference<>(WindowPathingSnapshot.idle());
+    /** Last logical coordinate resolved by Runner, retained across intent clears as the next leg's baseline. */
+    private final AtomicReference<WindowPathingSnapshot> lastKnownPathingLocation = new AtomicReference<>();
     private final AtomicReference<WindowDialogSnapshot> visibleDialogSnapshot = new AtomicReference<>();
     /** Latest shared-frame structural dialog observation, used only to stop a local tracker-link retry. */
     private final AtomicLong dialogFrameObservedAtMs = new AtomicLong();
@@ -95,6 +98,8 @@ public class WindowRuntimeContext {
     // A physical 看打 click is not a battle confirmation. This keeps the bounded local confirmation/retry state
     // attached to the exact schedule, while Cloud remains the only owner of a later green-link fallback.
     private final AtomicReference<XiuluoLocalKandaClickProgress> xiuluoLocalKandaClickProgress = new AtomicReference<>();
+    /** Exact attempt whose terminal pathing ended before any local 看打 template became available. */
+    private final AtomicReference<String> xiuluoMissingKandaAfterPathingTerminalClaim = new AtomicReference<>();
     /** Exact local-kanda attempt whose IN_COMBAT edge won before a concurrent recovery reset. */
     private final AtomicReference<XiuluoConfirmedCombatAttempt> xiuluoConfirmedCombatAttempt =
             new AtomicReference<>();
@@ -130,6 +135,9 @@ public class WindowRuntimeContext {
      */
     private final AtomicReference<String> tiantingFengyaoPending = new AtomicReference<>();
     private final AtomicReference<String> leftTopStatusSwitchClosePending = new AtomicReference<>();
+    /** Last successful local-only maintenance option click by action key, retained for diagnostics/acceptance. */
+    private final ConcurrentHashMap<String, Long> localMaintenanceBroadcastHandledAtByAction =
+            new ConcurrentHashMap<>();
     private final AtomicReference<WindowRetainedReturnHomeReplay> retainedReturnHomeReplay =
             new AtomicReference<>();
     private final AtomicLong returnHomeReplayLifecycleGeneration = new AtomicLong();
@@ -147,7 +155,10 @@ public class WindowRuntimeContext {
     private final AtomicReference<String> taskQueueStartupFlyingStateSource = new AtomicReference<>();
     private final AtomicReference<DialogPreparationStatus> dialogPreparationStatus =
             new AtomicReference<>(DialogPreparationStatus.none());
-    private final AtomicReference<String> runningTaskProgressText = new AtomicReference<>("-");
+    /** Current accepted run's numeric progress; null when the task has no finite counter. */
+    private final AtomicReference<WindowTaskRunProgress> runningTaskProgress = new AtomicReference<>();
+    /** Only the cumulative counter retained across a user PAUSE -> PAUSE_RESUME boundary. */
+    private final AtomicReference<WindowTaskRunProgress> pausedTaskRunProgress = new AtomicReference<>();
     private final AtomicLong playerIdentityEpoch = new AtomicLong();
     private final AtomicLong ordinaryPreBattleStartedAtMs = new AtomicLong();
     private final AtomicLong ordinaryPreBattleTimeoutPublishedAtMs = new AtomicLong();
@@ -193,6 +204,21 @@ public class WindowRuntimeContext {
     public boolean isLeader() { return role.isLeader(); }
 
     public boolean isMember() { return role.isMember(); }
+
+    public void recordLocalMaintenanceBroadcastHandled(String actionKey, long handledAtMs) {
+        String normalizedActionKey = normalize(actionKey);
+        if (normalizedActionKey != null && handledAtMs > 0L) {
+            localMaintenanceBroadcastHandledAtByAction.put(normalizedActionKey, handledAtMs);
+        }
+    }
+
+    public long getLocalMaintenanceBroadcastHandledAt(String actionKey) {
+        String normalizedActionKey = normalize(actionKey);
+        if (normalizedActionKey == null) {
+            return 0L;
+        }
+        return localMaintenanceBroadcastHandledAtByAction.getOrDefault(normalizedActionKey, 0L);
+    }
 
     public WindowRuntimeStatus getStatus() { return status; }
 
@@ -591,7 +617,8 @@ public class WindowRuntimeContext {
                     || current.combatGeneration() != null
                     || (!"XIULUO_V2".equalsIgnoreCase(current.taskCode())
                     && !"XINSHOU_TRAINING".equalsIgnoreCase(current.taskCode())
-                    && !"CATCH_GHOST".equalsIgnoreCase(current.taskCode()))
+                    && !"CATCH_GHOST".equalsIgnoreCase(current.taskCode())
+                    && !"GHOST_KING".equalsIgnoreCase(current.taskCode()))
                     || !current.businessTaskRunId().equals(schedule.getTaskRunId())
                     || Objects.equals(current.attemptId(), schedule.getAttemptId())) {
                 return;
@@ -1032,7 +1059,15 @@ public class WindowRuntimeContext {
 
     public DialogPreparationStatus getDialogPreparationStatus() { return dialogPreparationStatus.get(); }
 
-    public String getRunningTaskProgressText() { return runningTaskProgressText.get(); }
+    public String getRunningTaskProgressText() {
+        WindowTaskRunProgress progress = runningTaskProgress.get();
+        if (progress == null && status == WindowRuntimeStatus.PAUSED) {
+            progress = pausedTaskRunProgress.get();
+        }
+        return progress == null ? "-" : progress.toDisplayText();
+    }
+
+    public WindowTaskRunProgress getPausedTaskRunProgress() { return pausedTaskRunProgress.get(); }
 
     /**
      * Update the user-facing in-task run counter for finite repeatable tasks.
@@ -1043,18 +1078,46 @@ public class WindowRuntimeContext {
      */
     public void updateTaskRunProgress(int completedRuns, int totalRuns) {
         if (totalRuns <= 0) {
-            runningTaskProgressText.set("-");
+            runningTaskProgress.set(null);
             return;
         }
         int safeCompleted = Math.max(0, Math.min(completedRuns, totalRuns));
-        runningTaskProgressText.set(safeCompleted + "/" + totalRuns);
+        TaskType taskType = lastTaskType == null || lastTaskType == TaskType.UNKNOWN
+                ? selectedTaskType
+                : lastTaskType;
+        runningTaskProgress.set(WindowTaskRunProgress.builder()
+                .taskType(taskType == null ? TaskType.UNKNOWN : taskType)
+                .completedRuns(safeCompleted)
+                .totalRuns(totalRuns)
+                .build());
+    }
+
+    /** Retain only the current numeric counter before pause clears all executable task state. */
+    public void retainTaskRunProgressForPause() {
+        WindowTaskRunProgress retained = runningTaskProgress.get();
+        pausedTaskRunProgress.set(retained);
+        log.info("[task-progress] pause snapshot: windowId={} task={} completed={} total={}",
+                windowId,
+                retained == null ? null : retained.getTaskType(),
+                retained == null ? null : retained.getCompletedRuns(),
+                retained == null ? null : retained.getTotalRuns());
+    }
+
+    /** Drop a pause-only counter at a cold/terminal boundary so it can never cross task ownership. */
+    public void clearPausedTaskRunProgress(String reason) {
+        WindowTaskRunProgress cleared = pausedTaskRunProgress.getAndSet(null);
+        if (cleared != null) {
+            log.info("[task-progress] pause snapshot cleared: windowId={} task={} completed={} total={} reason={}",
+                    windowId, cleared.getTaskType(), cleared.getCompletedRuns(), cleared.getTotalRuns(),
+                    normalize(reason));
+        }
     }
 
     /**
      * Clear the user-facing in-task run counter when no finite task progress is available.
      */
     public void clearTaskRunProgress() {
-        runningTaskProgressText.set("-");
+        runningTaskProgress.set(null);
     }
 
     public long getObserverWakeSeq() { return observerWakeSeq.get(); }
@@ -1913,6 +1976,9 @@ public class WindowRuntimeContext {
         // click (if any) can never satisfy the new attempt.
         xiuluoEnterBattleClickClaim.set(null);
         xiuluoLocalKandaClickProgress.set(null);
+        if (previous == null || !previous.sameFullIdentity(schedule)) {
+            xiuluoMissingKandaAfterPathingTerminalClaim.set(null);
+        }
         log.info("[latency] event=window.green-chain.schedule.update windowId={} reason={} schedule=[{}] previous=[{}]",
                 windowId, normalize(reason), schedule.identityText(),
                 previous == null ? null : previous.identityText());
@@ -2072,6 +2138,54 @@ public class WindowRuntimeContext {
     }
 
     /**
+     * Claims the bounded failure edge for a tracker shortcut that has already reached a terminal
+     * pathing state but never exposed a local 看打 template.
+     *
+     * <p>The terminal snapshot is retained across Cloud's pathing-clear command. Matching the exact
+     * attempt id prevents an old route from failing a replacement attempt, while the current ACTIVE
+     * guard prevents this recovery from firing during normal movement.</p>
+     *
+     * @param expected exact green-chain schedule being sampled.
+     * @return true exactly once when the same pathing attempt is terminal and no newer pathing owns
+     *         the window; false while moving, for stale attempts, or after the edge was claimed.
+     */
+    public boolean tryClaimXiuluoMissingKandaAfterPathingTerminal(XiuluoGreenChainSchedule expected) {
+        if (expected == null || expected.getAttemptId() == null || expected.getAttemptId().isBlank()) {
+            return false;
+        }
+        synchronized (xiuluoKandaTransitionLock) {
+            XiuluoGreenChainSchedule liveSchedule = xiuluoGreenChainSchedule.get();
+            if (liveSchedule == null || !liveSchedule.sameFullIdentity(expected)) {
+                return false;
+            }
+
+            WindowPathingSnapshot current = pathingSnapshot.get();
+            WindowPathingIntent currentIntent = current == null ? null : current.getIntent();
+            if (currentIntent != null) {
+                if (!Objects.equals(expected.getAttemptId(), currentIntent.getIntentId())) {
+                    return false;
+                }
+                if (current.getState() == WindowPathingState.ACTIVE) {
+                    return false;
+                }
+            }
+
+            WindowPathingSnapshot terminal = currentIntent != null
+                    ? current : lastKnownPathingLocation.get();
+            WindowPathingIntent terminalIntent = terminal == null ? null : terminal.getIntent();
+            if (terminalIntent == null
+                    || !Objects.equals(expected.getAttemptId(), terminalIntent.getIntentId())
+                    || (terminal.getState() != WindowPathingState.ARRIVED
+                    && terminal.getState() != WindowPathingState.STOPPED_AWAY
+                    && terminal.getState() != WindowPathingState.UNKNOWN)) {
+                return false;
+            }
+            return xiuluoMissingKandaAfterPathingTerminalClaim.compareAndSet(
+                    null, expected.getAttemptId());
+        }
+    }
+
+    /**
      * Ends retry ownership once the Runner has confirmed that this exact local 看打 click entered combat.
      * A later world frame after combat exit must not re-arm the completed attempt.
      */
@@ -2114,7 +2228,8 @@ public class WindowRuntimeContext {
         return claim != null
                 && ("XIULUO_V2".equalsIgnoreCase(claim.taskCode())
                 || "XINSHOU_TRAINING".equalsIgnoreCase(claim.taskCode())
-                || "CATCH_GHOST".equalsIgnoreCase(claim.taskCode()));
+                || "CATCH_GHOST".equalsIgnoreCase(claim.taskCode())
+                || "GHOST_KING".equalsIgnoreCase(claim.taskCode()));
     }
 
     /**
@@ -2157,6 +2272,7 @@ public class WindowRuntimeContext {
             // TURN-40G: the local-kanda one-shot click claim dies with its attempt.
             xiuluoEnterBattleClickClaim.set(null);
             xiuluoLocalKandaClickProgress.set(null);
+            xiuluoMissingKandaAfterPathingTerminalClaim.set(null);
         }
         clearPreparedActionJobs(reason);
         if (cleared != null) {
@@ -2795,22 +2911,61 @@ public class WindowRuntimeContext {
             clearPathingSignal("null intent");
             return;
         }
-        PlayerCharacter me = gameState.getMe();
-        boolean hasKnownLocation = me != null
-                && me.getCurrentMapName() != null
-                && !me.getCurrentMapName().isBlank();
         WindowPathingSnapshot snapshot = WindowPathingSnapshot.builder()
                 .state(WindowPathingState.ACTIVE)
                 .intent(intent)
-                .currentMapName(hasKnownLocation ? me.getCurrentMapName() : null)
-                .currentX(hasKnownLocation ? me.getX() : null)
-                .currentY(hasKnownLocation ? me.getY() : null)
                 .locationChangedAtMs(intent.getCreatedAtMs())
                 .message("pathing intent registered")
                 .build();
         pathingSnapshot.set(snapshot);
-        log.info("window pathing intent registered with coordinate baseline: windowId={} intentId={} source={} baseline=({}, {})",
-                windowId, intent.getIntentId(), intent.getSource(), snapshot.getCurrentX(), snapshot.getCurrentY());
+        log.info("window pathing intent registered without stale location baseline: windowId={} intentId={} source={}",
+                windowId, intent.getIntentId(), intent.getSource());
+    }
+
+    /**
+     * Commits a location recognized from one complete map-name/coordinate ROI for this exact window.
+     * The value updates compatibility caches, but never establishes movement for a newly registered intent.
+     *
+     * @param mapName recognized canonical game map name; nonblank.
+     * @param mapX recognized logical map X coordinate, in game tiles.
+     * @param mapY recognized logical map Y coordinate, in game tiles.
+     * @param observedAtMs capture/result time in epoch milliseconds.
+     * @param source diagnostic producer name; nullable.
+     */
+    public void updateRecognizedPlayerLocation(String mapName,
+                                               int mapX,
+                                               int mapY,
+                                               long observedAtMs,
+                                               String source) {
+        PlayerCharacter me = gameState.getMe();
+        me.setCurrentMapName(mapName);
+        me.setX(mapX);
+        me.setY(mapY);
+        while (true) {
+            WindowPathingSnapshot current = pathingSnapshot.get();
+            if (current == null) {
+                WindowPathingSnapshot recognized = WindowPathingSnapshot.builder()
+                        .state(WindowPathingState.NONE)
+                        .currentMapName(mapName)
+                        .currentX(mapX)
+                        .currentY(mapY)
+                        .message(normalize(source))
+                        .updatedAtMs(observedAtMs)
+                        .build();
+                lastKnownPathingLocation.set(recognized);
+                return;
+            }
+            WindowPathingSnapshot recognized = current.toBuilder()
+                    .currentMapName(mapName)
+                    .currentX(mapX)
+                    .currentY(mapY)
+                    .updatedAtMs(observedAtMs)
+                    .build();
+            if (pathingSnapshot.compareAndSet(current, recognized)) {
+                lastKnownPathingLocation.set(recognized);
+                return;
+            }
+        }
     }
 
     /**
@@ -2878,6 +3033,9 @@ public class WindowRuntimeContext {
     public void updatePathingSnapshot(WindowPathingSnapshot snapshot) {
         if (snapshot != null) {
             pathingSnapshot.set(snapshot);
+            if (snapshot.getCurrentX() != null && snapshot.getCurrentY() != null) {
+                lastKnownPathingLocation.set(snapshot);
+            }
         }
     }
 
@@ -3070,14 +3228,21 @@ public class WindowRuntimeContext {
         this.lastResultMessage = null;
     }
 
-    public void markStarted(TaskType taskType) {
+    public void markStarted(TaskType taskType, WindowTaskRunProgress initialProgress) {
         this.lastTaskType = resolveTaskForRuntimeEvent(taskType);
         this.status = WindowRuntimeStatus.RUNNING;
         this.lastStartedAt = LocalDateTime.now();
         this.lastMessage = "任务开始：" + this.lastTaskType.getDisplayName();
         this.lastResult = null;
         this.lastResultMessage = null;
-        clearTaskRunProgress();
+        if (initialProgress != null
+                && initialProgress.getTaskType() == this.lastTaskType
+                && initialProgress.getTotalRuns() > 0) {
+            runningTaskProgress.set(initialProgress);
+        } else {
+            clearTaskRunProgress();
+        }
+        clearPausedTaskRunProgress("remote task start accepted");
         captureTaskOwnerIdentity();
     }
 
@@ -3121,6 +3286,7 @@ public class WindowRuntimeContext {
         this.lastResultMessage = normalize(message);
         if (this.status.isTerminal()) {
             clearTaskRunProgress();
+            clearPausedTaskRunProgress("task finished");
             clearIdentitySuspension("task finished");
             taskOwnerPlayerId = null;
             taskOwnerPlayerName = null;
@@ -3141,6 +3307,7 @@ public class WindowRuntimeContext {
         this.lastQueueFailurePolicy = failurePolicy;
         if (this.status.isTerminal()) {
             clearTaskRunProgress();
+            clearPausedTaskRunProgress("task queue finished");
         }
     }
 
@@ -3170,8 +3337,9 @@ public class WindowRuntimeContext {
      *
      * <p>Window registration, HWND binding, role, selected task, and parsed player identity deliberately
      * survive this boundary. Everything else that can schedule, wake, click, resume navigation, or interpret
-     * a former task is discarded. This method is called both before a newly accepted remote turn and after a
-     * remote turn becomes terminal; do not weaken it into a UI-only reset.</p>
+     * a former task is discarded. The separate pause-only numeric progress snapshot is deliberately not executable
+     * state and is cleared by explicit cold/stop/terminal lifecycle owners. This method is called both before a
+     * newly accepted remote turn and after a remote turn becomes terminal; do not weaken it into a UI-only reset.</p>
      *
      * @param reason lifecycle boundary recorded in diagnostics; nullable.
      */
@@ -3218,6 +3386,7 @@ public class WindowRuntimeContext {
         this.lastQueueResult = null;
         this.lastQueueMessage = null;
         this.lastQueueFailurePolicy = null;
+        clearPausedTaskRunProgress("runtime reset");
         clearTaskExecutionState("runtime reset");
     }
 

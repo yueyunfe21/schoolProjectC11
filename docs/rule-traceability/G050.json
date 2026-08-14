@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "card": "G050",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "4da93bea737c20e73f177002383fbcbc94a790c9",
+    "pushedReference": "origin/dev",
+    "cloudBranch": "dev",
+    "cloudCommit": "847410396b3fda1cc00174910401713ff30cede4",
+    "cloudPushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-GHOSTKING-001", "BR-GHOSTKING-002", "BR-LOCATION-001"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/业务逻辑.md",
+    "docs/business-rules.json",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G050.json",
+    "images/template/dialog/guiwang/accept.png",
+    "images/template/dialog/guiwang/jinzhan.png",
+    "images/template/guiwang/title.png",
+    "src/main/java/com/bot/dhxy/cloud/turn/LocalServiceStepDispatcher.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/local/GhostKingDialogLocalOperation.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/local/MapLabelTemplateLocalOperationExecutor.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/local/WholeTaskRuntimeLocalOperationExecutor.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnLocalOperation.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnLocalServiceCall.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnMapLabelTemplateArguments.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnProtocolValidator.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnTaskCode.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/ObservationProtocolValidator.java",
+    "src/main/java/com/bot/dhxy/config/BotProperties.java",
+    "src/main/java/com/bot/dhxy/service/DialogService.java",
+    "src/main/java/com/bot/dhxy/service/QuestManagerService.java",
+    "src/main/java/com/bot/dhxy/task/model/TaskType.java",
+    "src/main/java/com/bot/dhxy/ui/GameUiSettingsStore.java",
+    "src/main/java/com/bot/dhxy/ui/MainWindowController.java",
+    "src/main/java/com/bot/dhxy/window/control/WindowTaskControlService.java",
+    "src/main/java/com/bot/dhxy/window/observation/DeferredReturnHomeReplayCoordinator.java",
+    "src/main/java/com/bot/dhxy/window/observation/WindowObservationSampler.java",
+    "src/main/java/com/bot/dhxy/window/runtime/WindowRuntimeContext.java",
+    "src/test/java/com/bot/dhxy/cloud/turn/local/WholeTaskRuntimeLocalOperationExecutorSpringWiringTest.java",
+    "src/test/java/com/bot/dhxy/service/DialogServiceKandaConstantsContractTest.java",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnLocalOperation.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnLocalServiceCall.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnMapLabelTemplateArguments.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnProtocolValidator.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnTaskCode.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/ObservationProtocolValidator.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/config/BotProperties.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/guiwang"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/TaskTrackerPanelService.java"},
+    {"repo": "cloud", "path": "src/main/resources/images/template/guiwang/title.png"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/model/TaskType.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/startup/TaskTeamAssignmentPolicy.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/CloudTeamRolePreflightService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/TaskTrackerPanelService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/host/CloudTurnRuntimeConfiguration.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudFastExpectedCombatExitCoordinator.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudTurnTaskFactory.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudTurnTaskRuntime.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/client/CloudWholeTaskRuntimeLocalServiceClient.java"},
+    {"repo": "cloud", "path": ".gitignore"},
+    {"repo": "cloud", "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/G050GhostKingRegistrationConnectivityTest.java"}
+    ,{"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/NavigationService.java"}
+    ,{"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/PlayerStateService.java"}
+    ,{"repo": "cloud", "path": "src/main/java/com/bot/dhxy/model/npc/NpcClickRequest.java"}
+    ,{"repo": "cloud", "path": "src/main/java/com/bot/dhxy/model/npc/NpcClickStrategyProfile.java"}
+    ,{"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/NpcClickService.java"}
+    ,{"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/SmartClickRecognizer.java"}
+    ,{"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/CloudMapSurveyService.java"}
+    ,{"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/PlayerStateLocationRecognizer.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "系统没有鬼王任务身份；直接复用抓鬼 prototype 会让两个任务共享同一业务修改边界。",
+    "userDecision": "新建鬼王独立任务；删除暗雷分支；使用独立 Tracker title、接任务 accept 与近战 jinzhan 模板；Runner 真实脱战后立即使用鬼王回程道具；接任务改走阎王书房旧绿链路线并按固定点、记忆、tooltip、黄字点击地藏王；恢复可信 OCR 后地图名模板 Cloud/Client 双边自动学习。",
+    "decisionRecordedAt": "2026-08-10",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G050"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-GHOSTKING-001",
+      "producer": "Client UI 选择 TaskType.GHOST_KING 并映射为 TurnTaskCode.GHOST_KING。",
+      "transport": "现有 Turn start 协议传输 GHOST_KING；双仓 TurnTaskCode 保持 byte-identical。",
+      "consumer": "CloudTurnTaskFactory 用独立 ObjectProvider<GhostKingTask> 创建 prototype，并校验 ghost_king/鬼王 identity。",
+      "ordering": "UI selection -> Client task-code mapping -> Turn start transport -> Cloud descriptor -> fresh GhostKingTask prototype",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/G050GhostKingRegistrationConnectivityTest.java",
+          "command": "focused G016/G050 registration connectivity contract",
+          "proves": [
+            "GHOST_KING protocol code exists in both repositories",
+            "Cloud descriptor identity is ghost_king/鬼王",
+            "Cloud factory owns a distinct GhostKingTask provider",
+            "Cloud runtime explicitly imports GhostKingTask",
+            "GhostKingTask、phase/context 与 Tracker classifier 均不包含暗雷分支",
+            "Runner expected combat exit 直接进入 RETURN_HOME，不存在 POST_COMBAT_REFRESH_TRACKER",
+            "回城模板为 guiwang/return_item.png 且 GhostKingTask 不依赖 ReturnItemPrescanService",
+            "Client/Cloud Tracker 均使用独立 images/template/guiwang/title.png",
+            "鬼王接任务经独立 GHOST_KING_ACCEPT_DIALOG_TEMPLATE 到达 Client，并使用 images/template/dialog/guiwang/accept.png，不再借用抓鬼 accept 模板",
+            "鬼王绿链后的共享 Runner probe 按 GHOST_KING 选择 images/template/dialog/guiwang/jinzhan.png，不再借用抓鬼近战模板"
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "BR-GHOSTKING-002",
+      "producer": "GhostKingTask 以 map-only 请求调用 NavigationService 的阎王书房路线，并构造地藏王专属 NPC Click request。",
+      "transport": "世界地图搜索结果仍由既有 Turn capture/OCR/input 执行；地藏王候选通过现有 NPC Click FIFO 传输。",
+      "consumer": "NavigationService 仅在无 targetX/targetY 时走 legacy last-green-link；SmartClickRecognizer 按 fixed -> memory -> tooltip -> yellow 产出队列。",
+      "ordering": "map-only legacy route -> Runner pathing terminal -> fixed/memory/tooltip/yellow FIFO -> Dialog/title verification",
+      "contracts": [{
+        "repo": "cloud",
+        "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/G050GhostKingRegistrationConnectivityTest.java",
+        "command": "focused G016/G050 connectivity contract",
+        "proves": ["鬼王 map-only 请求可达 legacy last-green-link", "地藏王候选顺序固定且禁止紫名/公式/Ctrl"]
+      }]
+    },
+    {
+      "rule": "BR-LOCATION-001",
+      "producer": "PlayerStateService 在 PlayerStateLocationRecognizer 返回可信 OCR_FALLBACK 后提取清洗地图名标签。",
+      "transport": "CloudMapSurveyService 写私有 map_label_samples.json，并以 typed MAP_LABEL_TEMPLATE_SAVE local-service 携带 mapName + PNG Base64 到 Client。",
+      "consumer": "后续 syncMyPosition 先查 Cloud 动态模板；Client MapLabelTemplateLocalOperationExecutor 只写 images/template/map_label 且不覆盖。",
+      "ordering": "trusted OCR + plausibility -> shared safety gate -> client typed save/exists -> cloud private save -> later dynamic-template recognition",
+      "contracts": [{
+        "repo": "cloud",
+        "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/G050GhostKingRegistrationConnectivityTest.java",
+        "command": "focused G016/G050 connectivity contract",
+        "proves": ["OCR source is explicit", "Cloud and Client save consumers are reachable", "existing templates are not overwritten"]
+      }]
+    }
+  ],
+  "verification": [
+    {"name": "G050 business-rule gate", "result": "PASS", "evidence": "node scripts/check-business-rule-gate.js --card G050"},
+    {"name": "Client production compile", "result": "PASS", "evidence": "D:/mavenProject/DHXY-cr271: mvn -q -DskipTests=false compile"},
+    {"name": "Cloud production compile", "result": "PASS", "evidence": "D:/mavenProject/dhxy-cloud-brain: mvn -q -DskipTests=false compile"},
+    {"name": "G050 registration, templates, no-dark-thunder and direct-return contract", "result": "PASS", "evidence": "junit-platform-console-standalone 1.10.2 isolated: 1/1 PASS; asserts independent title/accept operation, RETURN_HOME/direct return item, no post-combat Tracker phase and no prescan dependency"},
+    {"name": "Client local-operation Spring wiring contract", "result": "PASS", "evidence": "junit-platform-console-standalone 1.10.2 isolated: 1/1 PASS; production constructor includes GhostKingDialogLocalOperation"},
+    {"name": "Ghost King local enter-battle template contract", "result": "PASS", "evidence": "junit-platform-console-standalone 1.10.2 isolated DialogServiceKandaConstantsContractTest: 4/4 PASS; distinct catch-ghost/ghost-king paths, decodable guiwang/jinzhan.png and ROI containment"},
+    {"name": "Shared local-operation protocol", "result": "PASS", "evidence": "TurnLocalOperation and TurnProtocolValidator SHA-256 byte-identical across Client/Cloud"}
+    ,{"name": "G050 阎王书房与地图模板双存连通合同", "result": "PASS", "evidence": "junit-platform-console-standalone 1.10.2 isolated G050GhostKingRegistrationConnectivityTest: 1/1 PASS"}
+    ,{"name": "Client/Cloud clean production compile", "result": "PASS", "evidence": "两仓 mvn clean compile exit 0"}
+    ,{"name": "共享地图模板 local-service 协议", "result": "PASS", "evidence": "TurnMapLabelTemplateArguments/TurnLocalOperation/TurnLocalServiceCall/TurnProtocolValidator 双仓 SHA-256 byte-identical"}
+  ]
+}

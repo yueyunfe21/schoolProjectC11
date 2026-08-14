@@ -119,6 +119,14 @@ public class InputAction {
     }
 
     /**
+     * @param text lowercase ASCII letters/digits sent as physical keyboard usages.
+     * @return clipboard-free ASCII typing action.
+     */
+    public static InputAction typeTextAscii(String text) {
+        return new InputAction(InputActionType.TYPE_TEXT_ASCII, 0, 0, 0, 0, 0, 0, 0, text);
+    }
+
+    /**
      * @param text text copied/pasted through the input provider.
      * @return paste action.
      */

@@ -5,6 +5,7 @@ import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.window.interaction.WindowFocusService;
 import com.bot.dhxy.input.action.InputActionScope;
 import com.bot.dhxy.model.bag.ReturnItemCachePoint;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
@@ -64,6 +65,8 @@ public class BagService {
     private static final int GAME_CLIENT_HEIGHT = 768;
     private static final int FIRST_SEARCHABLE_PAGE_INDEX = 0;
     private static final int LAST_SEARCHABLE_PAGE_INDEX = 4;
+    private static final int MAIN_BAG_CACHED_ANCHOR_ROI_HALF_WIDTH = 45;
+    private static final int MAIN_BAG_CACHED_ANCHOR_ROI_HALF_HEIGHT = 35;
 
     private final InputSequences inputSequences;
     private final InputProvider inputProvider;
@@ -72,6 +75,7 @@ public class BagService {
     private final WindowScopedTempPath windowScopedTempPath;
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final BoundWindowKeyboardService boundWindowKeyboardService;
+    private final WindowFocusService windowFocusService;
     private final Map<String, Integer> visiblePageCache = new ConcurrentHashMap<>();
     private final Map<String, Integer> itemPageCache = new ConcurrentHashMap<>();
     private final Map<String, Point> lastMainBagAnchorCache = new ConcurrentHashMap<>();
@@ -952,17 +956,63 @@ public class BagService {
          * Alt+E is a toggle. If any bag-panel indicator is visible, do not press Alt+E again
          * blindly; otherwise a missed primary anchor can turn into closing an already-open bag.
          */
+        /*
+         * The bag is movable. Only a real anchor learned for this exact window may define a fast ROI;
+         * the window origin is never a bag-position substitute. On the first use, or whenever the
+         * cached ROI misses, restore the validated full-window search and refresh the cache through
+         * the existing caller path before any second Alt+E toggle is considered.
+         */
+        Point cachedAnchor = lastMainBagAnchorCache.get(bagCacheKey(layout));
+        if (cachedAnchor != null) {
+            int left = cachedAnchor.x - MAIN_BAG_CACHED_ANCHOR_ROI_HALF_WIDTH;
+            int top = cachedAnchor.y - MAIN_BAG_CACHED_ANCHOR_ROI_HALF_HEIGHT;
+            int right = cachedAnchor.x + MAIN_BAG_CACHED_ANCHOR_ROI_HALF_WIDTH;
+            int bottom = cachedAnchor.y + MAIN_BAG_CACHED_ANCHOR_ROI_HALF_HEIGHT;
+            long captureStartedAt = LatencyMetrics.start();
+            BufferedImage roi = tracker.captureExactWindowRegionFastToMemory(
+                    "bag-open-cached-anchor:" + stage, left, top, right, bottom);
+            if (roi != null) {
+                try {
+                    BufferedImage template = ImageIO.read(Path.of(layout.anchorTemplate).toFile());
+                    double[] match = template == null
+                            ? null
+                            : ImageFinder.find(roi, template, MAIN_BAG_ANCHOR_MATCH_RATE);
+                    LatencyMetrics.info(log, "bag.openCheck", captureStartedAt,
+                            "stage=" + stage + " provider=HWND_BITBLT_REGION source=cached-anchor matched="
+                                    + (match != null));
+                    if (match != null && match.length >= 2) {
+                        Point anchor = new Point(
+                                left + (int) Math.round(match[0]),
+                                top + (int) Math.round(match[1]));
+                        return BagOpenCheck.ready(anchor, layout.anchorTemplate + ":cached-roi");
+                    }
+                } catch (IOException e) {
+                    log.warn("[bag] failed to load cached main bag anchor template: stage={} template={} reason={}",
+                            stage, layout.anchorTemplate, e.getMessage());
+                } finally {
+                    roi.flush();
+                }
+            } else {
+                log.warn("[bag] cached open-check capture failed, fall back to full window: "
+                                + "stage={} cachedAnchor=({}, {}) rect=({}, {})-({}, {})",
+                        stage, cachedAnchor.x, cachedAnchor.y, left, top, right, bottom);
+            }
+            log.info("[bag] cached main bag anchor missed, search full window: stage={} cachedAnchor=({}, {})",
+                    stage, cachedAnchor.x, cachedAnchor.y);
+        }
+
         if (!tracker.updateGlobalVision()) {
-            log.warn("[bag] open check capture failed: stage={}", stage);
+            log.warn("[bag] full-window open check capture failed: stage={} cachedAnchor={}",
+                    stage, formatPoint(cachedAnchor));
             return BagOpenCheck.notVisible();
         }
         String screenPath = tracker.getLatestVisionPath();
-
         Point anchor = findTemplateInScreen(layout.anchorTemplate, screenPath, MAIN_BAG_ANCHOR_MATCH_RATE, context);
         if (anchor != null) {
-            return BagOpenCheck.ready(anchor, layout.anchorTemplate);
+            log.info("[bag] full-window main bag anchor matched: stage={} point=({}, {}) cachedBefore={}",
+                    stage, anchor.x, anchor.y, formatPoint(cachedAnchor));
+            return BagOpenCheck.ready(anchor, layout.anchorTemplate + ":full-window");
         }
-
         return BagOpenCheck.notVisible();
     }
 
@@ -995,7 +1045,7 @@ public class BagService {
         String path = windowScopedTempPath.resolve("bag_scan.png");
         log.info("[bag] capture scan page {}: path={} rect=({}, {})-({}, {})",
                 tabIndex + 1, path, startX, startY, endX, endY);
-        if (!tracker.captureToFile("bag-scan", path, startX, startY, endX, endY)) {
+        if (!tracker.captureExactWindowRegionFastToFile("bag-scan", path, startX, startY, endX, endY)) {
             log.warn("[bag] page {} capture failed", tabIndex + 1);
             return List.of();
         }
@@ -1047,7 +1097,8 @@ public class BagService {
         String path = windowScopedTempPath.resolve("bag_scan_current.png");
         log.info("[bag] capture current visible page first: path={} rect=({}, {})-({}, {}) template={}",
                 path, startX, startY, endX, endY, targetItemTemplate);
-        if (!tracker.captureToFile("bag-scan-current", path, startX, startY, endX, endY)) {
+        if (!tracker.captureExactWindowRegionFastToFile(
+                "bag-scan-current", path, startX, startY, endX, endY)) {
             log.warn("[bag] current visible page capture failed: template={}", targetItemTemplate);
             return null;
         }
@@ -1284,6 +1335,21 @@ public class BagService {
 
     private boolean pressBackgroundAltE(String source) {
         if (inputProvider.requiresForegroundKeyboard()) {
+            var current = windowTaskContextHolder.rawCurrent();
+            if (current.isEmpty() || current.get().getNativeBinding() == null) {
+                log.warn("[bag] driver Alt+E rejected without an exact window binding: source={}", source);
+                return false;
+            }
+            var context = current.get();
+            boolean focused = windowFocusService.isForeground(context.getNativeBinding());
+            log.info("[bag] driver Alt+E foreground check: source={} windowId={} focused={}",
+                    source, context.getWindowId(), focused);
+            if (!focused) {
+                log.warn("[bag] driver Alt+E rejected because queue-entry focus no longer owns exact window: "
+                                + "source={} windowId={} handle={}",
+                        source, context.getWindowId(), context.getNativeBinding().getNativeHandle());
+                return false;
+            }
             try {
                 inputProvider.pressAltE();
                 return true;

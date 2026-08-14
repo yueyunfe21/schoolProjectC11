@@ -25,6 +25,7 @@ import com.bot.dhxy.window.model.WindowPathingIntent;
 import com.bot.dhxy.window.model.WindowPathingIntentType;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
+import com.bot.dhxy.window.observation.OpenCvLocalMaintenanceBroadcastHandler;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,6 +35,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.time.Duration;
 
 /**
  * Closed adapter for the whole-task runtime local operations (TURN-35 Amendment #6/#7).
@@ -57,8 +59,11 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
     private final XiuluoAcceptDialogLocalOperation xiuluoAcceptDialogLocalOperation;
     private final JianghuLilianDialogLocalOperation jianghuLilianDialogLocalOperation;
     private final CatchGhostDialogLocalOperation catchGhostDialogLocalOperation;
+    private final GhostKingDialogLocalOperation ghostKingDialogLocalOperation;
+    private final TeamReturnPanelLocalOperation teamReturnPanelLocalOperation;
     private final com.bot.dhxy.window.observation.DeferredReturnHomeReplayCoordinator returnHomeReplayCoordinator;
     private final NpcArrivalFrameFifoLocalExecutor npcArrivalFrameFifoLocalExecutor;
+    private final OpenCvLocalMaintenanceBroadcastHandler maintenanceBroadcastHandler;
     private final ObjectMapper objectMapper;
 
     @Autowired
@@ -66,9 +71,12 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
                                                   LocalMovementFactMechanics movementFacts,
                                                   XiuluoAcceptDialogLocalOperation xiuluoAcceptDialogLocalOperation,
                                                   JianghuLilianDialogLocalOperation jianghuLilianDialogLocalOperation,
-                                                  CatchGhostDialogLocalOperation catchGhostDialogLocalOperation,
+                                                   CatchGhostDialogLocalOperation catchGhostDialogLocalOperation,
+                                                   GhostKingDialogLocalOperation ghostKingDialogLocalOperation,
+                                                   TeamReturnPanelLocalOperation teamReturnPanelLocalOperation,
                                                   com.bot.dhxy.window.observation.DeferredReturnHomeReplayCoordinator returnHomeReplayCoordinator,
                                                   NpcArrivalFrameFifoLocalExecutor npcArrivalFrameFifoLocalExecutor,
+                                                  OpenCvLocalMaintenanceBroadcastHandler maintenanceBroadcastHandler,
                                                   ObjectMapper objectMapper) {
         this.windowTaskContextHolder = Objects.requireNonNull(windowTaskContextHolder, "windowTaskContextHolder");
         this.movementFacts = Objects.requireNonNull(movementFacts, "movementFacts");
@@ -78,10 +86,16 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
                 jianghuLilianDialogLocalOperation, "jianghuLilianDialogLocalOperation");
         this.catchGhostDialogLocalOperation = Objects.requireNonNull(
                 catchGhostDialogLocalOperation, "catchGhostDialogLocalOperation");
+        this.ghostKingDialogLocalOperation = Objects.requireNonNull(
+                ghostKingDialogLocalOperation, "ghostKingDialogLocalOperation");
+        this.teamReturnPanelLocalOperation = Objects.requireNonNull(
+                teamReturnPanelLocalOperation, "teamReturnPanelLocalOperation");
         this.returnHomeReplayCoordinator = Objects.requireNonNull(
                 returnHomeReplayCoordinator, "returnHomeReplayCoordinator");
         this.npcArrivalFrameFifoLocalExecutor = Objects.requireNonNull(
                 npcArrivalFrameFifoLocalExecutor, "npcArrivalFrameFifoLocalExecutor");
+        this.maintenanceBroadcastHandler = Objects.requireNonNull(
+                maintenanceBroadcastHandler, "maintenanceBroadcastHandler");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
     }
 
@@ -93,8 +107,11 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
         this.xiuluoAcceptDialogLocalOperation = null;
         this.jianghuLilianDialogLocalOperation = null;
         this.catchGhostDialogLocalOperation = null;
+        this.ghostKingDialogLocalOperation = null;
+        this.teamReturnPanelLocalOperation = null;
         this.returnHomeReplayCoordinator = null;
         this.npcArrivalFrameFifoLocalExecutor = null;
+        this.maintenanceBroadcastHandler = null;
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
     }
 
@@ -141,6 +158,49 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
             }
             return completedEnum("WHOLE_TASK_CATCH_GHOST_CANCEL_DIALOG_TEMPLATE",
                     catchGhostDialogLocalOperation.executeCancel().name());
+        }
+        if (call.operation()
+                == com.bot.dhxy.cloud.turn.protocol.TurnLocalOperation.GHOST_KING_ACCEPT_DIALOG_TEMPLATE) {
+            if (ghostKingDialogLocalOperation == null) {
+                return LocalServiceExecution.failed("GHOST_KING_DIALOG_NOT_WIRED", null);
+            }
+            return completedEnum("WHOLE_TASK_GHOST_KING_ACCEPT_DIALOG_TEMPLATE",
+                    ghostKingDialogLocalOperation.executeAccept().name());
+        }
+        if (call.operation()
+                == com.bot.dhxy.cloud.turn.protocol.TurnLocalOperation.GHOST_KING_CANCEL_DIALOG_TEMPLATE) {
+            if (ghostKingDialogLocalOperation == null) {
+                return LocalServiceExecution.failed("GHOST_KING_DIALOG_NOT_WIRED", null);
+            }
+            return completedEnum("WHOLE_TASK_GHOST_KING_CANCEL_DIALOG_TEMPLATE",
+                    ghostKingDialogLocalOperation.executeCancel().name());
+        }
+        if (call.operation()
+                == com.bot.dhxy.cloud.turn.protocol.TurnLocalOperation.TEAM_RETURN_PANEL_OPEN) {
+            if (teamReturnPanelLocalOperation == null) {
+                return LocalServiceExecution.failed("TEAM_RETURN_PANEL_NOT_WIRED", null);
+            }
+            return completedEnum("WHOLE_TASK_TEAM_RETURN_PANEL_OPEN",
+                    teamReturnPanelLocalOperation.openPanel(
+                            call.wholeTaskRuntime().teamReturnTaskRunId()).name());
+        }
+        if (call.operation()
+                == com.bot.dhxy.cloud.turn.protocol.TurnLocalOperation.TEAM_RETURN_PANEL_PROBE) {
+            if (teamReturnPanelLocalOperation == null) {
+                return LocalServiceExecution.failed("TEAM_RETURN_PANEL_NOT_WIRED", null);
+            }
+            return completedEnum("WHOLE_TASK_TEAM_RETURN_PANEL_PROBE",
+                    teamReturnPanelLocalOperation.probeAndCloseIfComplete(
+                            call.wholeTaskRuntime().teamReturnTaskRunId()).name());
+        }
+        if (call.operation()
+                == com.bot.dhxy.cloud.turn.protocol.TurnLocalOperation.TEAM_RETURN_PANEL_CLOSE) {
+            if (teamReturnPanelLocalOperation == null) {
+                return LocalServiceExecution.failed("TEAM_RETURN_PANEL_NOT_WIRED", null);
+            }
+            return completedEnum("WHOLE_TASK_TEAM_RETURN_PANEL_CLOSE",
+                    teamReturnPanelLocalOperation.closePanel(
+                            call.wholeTaskRuntime().teamReturnTaskRunId()).name());
         }
         WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
         if (runtime == null) {
@@ -410,6 +470,10 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
                     "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME",
                     npcArrivalFrameFifoLocalExecutor != null
                             && npcArrivalFrameFifoLocalExecutor.execute(a));
+            case WHOLE_TASK_DOUBLE_EXPERIENCE_BROADCAST_CLICK -> completedBoolean(
+                    "WHOLE_TASK_DOUBLE_EXPERIENCE_BROADCAST_CLICK",
+                    maintenanceBroadcastHandler != null
+                            && maintenanceBroadcastHandler.handleDoubleExperienceIfPresent(Duration.ofSeconds(3)));
             default -> LocalServiceExecution.failed("UNSUPPORTED_WHOLE_TASK_OPERATION", null);
         };
     }
@@ -453,7 +517,8 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
         return new TurnPathingSnapshot(
                 snapshot.getState().name(), wireIntent, snapshot.getCurrentMapName(),
                 snapshot.getCurrentX(), snapshot.getCurrentY(), snapshot.getLocationChangedAtMs(),
-                snapshot.getMovementObservedAtMs(), snapshot.getUpdatedAtMs(),
+                snapshot.isCoordinateMovementObserved(),
+                snapshot.getUpdatedAtMs(),
                 snapshot.isDialogBlocking(), snapshot.getDialogBlockingReason(),
                 snapshot.getDialogBlockingDetectedAtMs());
     }
@@ -501,8 +566,7 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
     }
 
     private PendingRouteOutcome toRouteOutcome(TurnPendingRouteOutcome wire) {
-        // routeMode is validated to the sole wire value YELLOW_DESTINATION_MINI_MAP by
-        // TurnProtocolValidator before this runs, so valueOf never throws on the bound local enum.
+        // routeMode is validated to the closed yellow/legacy wire vocabulary before this runs.
         return PendingRouteOutcome.builder()
                 .fromMap(wire.fromMap())
                 .targetMap(wire.targetMap())
@@ -515,6 +579,13 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
                 .routeDecisionId(wire.routeDecisionId())
                 .intentId(wire.intentId())
                 .createdAtMs(wire.createdAtMs())
+                .searchToken(wire.searchToken())
+                .searchGeometryProfile(wire.searchGeometryProfile())
+                .searchCandidateRelativeX(wire.searchCandidateRelativeX())
+                .searchCandidateRelativeY(wire.searchCandidateRelativeY())
+                .searchCandidateRow(wire.searchCandidateRow())
+                .searchCandidateEvidence(wire.searchCandidateEvidence())
+                .searchCandidateUsedMemory(wire.searchCandidateUsedMemory())
                 .build();
     }
 
@@ -533,7 +604,14 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
                 outcome.isUsedMemory(),
                 outcome.getRouteDecisionId(),
                 outcome.getIntentId(),
-                outcome.getCreatedAtMs());
+                outcome.getCreatedAtMs(),
+                outcome.getSearchToken(),
+                outcome.getSearchGeometryProfile(),
+                outcome.getSearchCandidateRelativeX(),
+                outcome.getSearchCandidateRelativeY(),
+                outcome.getSearchCandidateRow(),
+                outcome.getSearchCandidateEvidence(),
+                outcome.isSearchCandidateUsedMemory());
     }
 
     private static TaskType taskType(String code) {
