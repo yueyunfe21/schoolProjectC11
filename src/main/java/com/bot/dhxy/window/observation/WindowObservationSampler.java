@@ -219,6 +219,8 @@ public final class WindowObservationSampler {
     /** Last local 五环 presence state; facts are edge/terminal driven, never a recurring image stream. */
     private Boolean observedWuhuanTitlePresent;
     private Boolean observedWuhuanDialogPresent;
+    /** Last local completion-story verdict published while the title was absent. */
+    private String observedWuhuanCompletionVerdict;
     private String lastWuhuanTitleSnapshotKey;
     private String lastWuhuanDialogInterestId;
     private String lastWuhuanTerminalKey;
@@ -968,6 +970,23 @@ public final class WindowObservationSampler {
                             null));
                 }
             }
+            // Completion verdict travels with the title fact stream: matched locally in the dialog
+            // ROI whenever the title sampled absent, so Cloud never round-trips a frame to learn it.
+            if (sample.titlePresent()) {
+                observedWuhuanCompletionVerdict = null;
+            } else if (sample.completionVerdict() != null) {
+                boolean completionChanged =
+                        !Objects.equals(observedWuhuanCompletionVerdict, sample.completionVerdict());
+                observedWuhuanCompletionVerdict = sample.completionVerdict();
+                if (completionChanged || changed || newTitleSnapshot || terminalEdge || combatEdge) {
+                    facts.add(new ObservationFact(
+                            ObservationFactType.WUHUAN_COMPLETION_PRESENCE,
+                            sample.completionVerdict(),
+                            now));
+                    log.info("Wuhuan completion presence queued: windowId={} taskRunId={} observerSeq={} verdict={}",
+                            context.getWindowId(), taskRunId, observerSeq, sample.completionVerdict());
+                }
+            }
             markSampled(WuhuanPresenceLocalMechanics.TITLE_INTEREST, now);
         }
         if (sample.dialogSampled()) {
@@ -1306,6 +1325,7 @@ public final class WindowObservationSampler {
         flyingSaturationMechanics.reset();
         observedWuhuanTitlePresent = null;
         observedWuhuanDialogPresent = null;
+        observedWuhuanCompletionVerdict = null;
         lastWuhuanTitleSnapshotKey = null;
         lastWuhuanDialogInterestId = null;
         lastWuhuanTerminalKey = null;

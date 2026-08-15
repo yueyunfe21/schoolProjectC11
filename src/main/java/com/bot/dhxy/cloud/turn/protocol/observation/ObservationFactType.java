@@ -32,6 +32,12 @@ public enum ObservationFactType {
     WUHUAN_TITLE_PRESENCE,
     /** Local structural dialog-presence fact; Cloud must demand one exact frame before acting. */
     WUHUAN_DIALOG_PRESENCE,
+    /**
+     * Client-local 五环 completion story verdict sampled in the dialog ROI when the tracker title is
+     * absent; value is the literal {@code finished}, {@code finishedOnce} or {@code absent}. Raw
+     * source crops are matched locally so completion never waits on a Cloud frame round trip.
+     */
+    WUHUAN_COMPLETION_PRESENCE,
     /** BR-DIALOG-001 current-task title presence from the same exact observation cycle. */
     UNKNOWN_PHASE_TITLE_PRESENCE,
     /** BR-DIALOG-001 dialog state paired with the title fact from the same observation cycle. */

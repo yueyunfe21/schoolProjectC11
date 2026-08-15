@@ -22,8 +22,23 @@ final class WuhuanPresenceLocalMechanics {
     static final String DIALOG_INTEREST = "wuhuan-dialog-presence";
     static final String TITLE_FRAME_ROI = "wuhuan-title-frame";
     static final long SAMPLE_PERIOD_MS = 1_000L;
+    /** Completion verdict literals carried by the WUHUAN_COMPLETION_PRESENCE fact. */
+    static final String COMPLETION_FINISHED = "finished";
+    static final String COMPLETION_FINISHED_ONCE = "finishedOnce";
+    static final String COMPLETION_ABSENT = "absent";
     private static final double TITLE_THRESHOLD = 0.82D;
+    /** Raw-vs-raw like the 天庭 dialog matcher; the sources are crops of the real story text. */
+    private static final double COMPLETION_THRESHOLD = 0.85D;
     private static final String TITLE_TEMPLATE = "images/template/wuhuan/panel_title_yellow.png";
+    /**
+     * Raw source crops of the two completion stories. Order matters: {@code 恭喜你完} is the shared
+     * prefix of BOTH stories, so the unique {@code 了一次五} fragment must be tried first — a
+     * finished hit is only trustworthy after finishedOnce missed.
+     */
+    private static final String COMPLETION_ONCE_TEMPLATE =
+            "images/template/wuhuan/source_wuhuan_task_finished_once_story.png";
+    private static final String COMPLETION_FINISHED_TEMPLATE =
+            "images/template/wuhuan/source_wuhuan_task_finished_story.png";
     private static final int TRACKER_LEFT = 0;
     private static final int TRACKER_TOP = 100;
     private static final int TRACKER_WIDTH = 280;
@@ -37,6 +52,8 @@ final class WuhuanPresenceLocalMechanics {
     private final DialogFramePresenceMechanics dialogPresence = new DialogFramePresenceMechanics();
     private LocalCombatSignalMechanics.CycleFrameCropper cropper;
     private BufferedImage titleTemplate;
+    private BufferedImage completionOnceTemplate;
+    private BufferedImage completionFinishedTemplate;
 
     WuhuanPresenceLocalMechanics(CoordinateHelper coordinateHelper) {
         this.coordinateHelper = coordinateHelper;
@@ -53,6 +70,7 @@ final class WuhuanPresenceLocalMechanics {
         byte[] trackerPng = null;
         byte[] trackerMissPng = null;
         double titleScore = Double.NaN;
+        String completionVerdict = null;
         if (sampleTitle) {
             BufferedImage tracker = crop(TRACKER_LEFT, TRACKER_TOP, TRACKER_WIDTH, TRACKER_HEIGHT);
             if (tracker != null) {
@@ -70,6 +88,11 @@ final class WuhuanPresenceLocalMechanics {
                     tracker.flush();
                 }
             }
+            // Title absent is the only moment a completion story can be the answer; matching raw
+            // source crops in the dialog ROI settles it locally without any Cloud frame round trip.
+            if (titleSampled && !titlePresent) {
+                completionVerdict = sampleCompletionVerdict();
+            }
         }
         boolean dialogSampled = false;
         boolean dialogPresent = false;
@@ -85,13 +108,51 @@ final class WuhuanPresenceLocalMechanics {
             }
         }
         return new Sample(titleSampled, titlePresent, dialogSampled, dialogPresent,
-                trackerPng, trackerMissPng, titleScore);
+                trackerPng, trackerMissPng, titleScore, completionVerdict);
+    }
+
+    /**
+     * Matches the two raw completion story crops in the dialog ROI. finishedOnce first — its
+     * {@code 了一次五} fragment is unique, while the finished crop is a prefix both stories share.
+     */
+    private String sampleCompletionVerdict() {
+        BufferedImage dialog = crop(DIALOG_LEFT, DIALOG_TOP, DIALOG_WIDTH, DIALOG_HEIGHT);
+        if (dialog == null) {
+            return null;
+        }
+        try {
+            BufferedImage once = completionOnceTemplate();
+            if (once != null) {
+                double score = ImageFinder.bestMatchScore(dialog, once);
+                if (Double.isFinite(score) && score >= COMPLETION_THRESHOLD) {
+                    return COMPLETION_FINISHED_ONCE;
+                }
+            }
+            BufferedImage finished = completionFinishedTemplate();
+            if (finished != null) {
+                double score = ImageFinder.bestMatchScore(dialog, finished);
+                if (Double.isFinite(score) && score >= COMPLETION_THRESHOLD) {
+                    return COMPLETION_FINISHED;
+                }
+            }
+            return once == null && finished == null ? null : COMPLETION_ABSENT;
+        } finally {
+            dialog.flush();
+        }
     }
 
     void reset() {
         if (titleTemplate != null) {
             titleTemplate.flush();
             titleTemplate = null;
+        }
+        if (completionOnceTemplate != null) {
+            completionOnceTemplate.flush();
+            completionOnceTemplate = null;
+        }
+        if (completionFinishedTemplate != null) {
+            completionFinishedTemplate.flush();
+            completionFinishedTemplate = null;
         }
     }
 
@@ -112,6 +173,30 @@ final class WuhuanPresenceLocalMechanics {
         return titleTemplate;
     }
 
+    private BufferedImage completionOnceTemplate() {
+        if (completionOnceTemplate != null) {
+            return completionOnceTemplate;
+        }
+        try {
+            completionOnceTemplate = ImageIO.read(Path.of(COMPLETION_ONCE_TEMPLATE).toFile());
+        } catch (IOException ignored) {
+            completionOnceTemplate = null;
+        }
+        return completionOnceTemplate;
+    }
+
+    private BufferedImage completionFinishedTemplate() {
+        if (completionFinishedTemplate != null) {
+            return completionFinishedTemplate;
+        }
+        try {
+            completionFinishedTemplate = ImageIO.read(Path.of(COMPLETION_FINISHED_TEMPLATE).toFile());
+        } catch (IOException ignored) {
+            completionFinishedTemplate = null;
+        }
+        return completionFinishedTemplate;
+    }
+
     private static byte[] encodePng(BufferedImage image) {
         try (ByteArrayOutputStream bytes = new ByteArrayOutputStream(16_384)) {
             ImageIO.write(image, "png", bytes);
@@ -127,6 +212,7 @@ final class WuhuanPresenceLocalMechanics {
                   boolean dialogPresent,
                   byte[] trackerPng,
                   byte[] trackerMissPng,
-                  double titleScore) {
+                  double titleScore,
+                  String completionVerdict) {
     }
 }
