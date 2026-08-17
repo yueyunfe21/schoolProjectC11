@@ -169,12 +169,12 @@ class LocalRunnerIdentityContractTest {
     }
 
     @Test
-    void claimArrivingAfterVisibleEdgeBindsCurrentGenerationWithoutTimeGuessing() {
+    void exactCloudTaskDialogClaimArrivingAfterVisibleEdgeBindsCurrentGenerationWithoutTimeGuessing() {
         WindowRuntimeContext context = context();
         context.updateLocalCombatGeneration(9L, true);
         assertTrue(context.registerExpectedCombatEnterClaim(new WindowExpectedCombatEnterClaim(
                 "claim-cloud", "obs-1", "biz-1", "WUBEI", "attempt-cloud",
-                "window-1", "100", "cloud-fallback", null)));
+                "window-1", "100", "cloud-task-dialog", null)));
         assertEquals(9L, context.currentExpectedCombatEnterClaim("obs-1", "WUBEI", 9L)
                 .combatGeneration());
     }
@@ -190,7 +190,7 @@ class LocalRunnerIdentityContractTest {
     }
 
     @Test
-    void expectedClaimSourcesAreLimitedToSuccessfulLocalOrCloudEnterClicks() {
+    void expectedClaimSourcesAreLimitedToSuccessfulLocalOrExactTaskDialogEnterClicks() {
         WindowRuntimeContext context = context();
         assertTrue(context.registerExpectedCombatEnterClaim(new WindowExpectedCombatEnterClaim(
                 "local", "obs-1", "biz-1", "XIULUO_V2", "attempt-local",
@@ -198,8 +198,11 @@ class LocalRunnerIdentityContractTest {
         context.clearExpectedCombatEnterClaim("test source boundary");
         assertTrue(context.registerExpectedCombatEnterClaim(new WindowExpectedCombatEnterClaim(
                 "cloud", "obs-1", "biz-1", "WUBEI", "attempt-cloud",
-                "window-1", "100", "cloud-fallback", null)));
+                "window-1", "100", "cloud-task-dialog", null)));
         context.clearExpectedCombatEnterClaim("test source boundary");
+        assertFalse(context.registerExpectedCombatEnterClaim(new WindowExpectedCombatEnterClaim(
+                "fallback", "obs-1", "biz-1", "WUBEI", "attempt-fallback",
+                "window-1", "100", "cloud-fallback", null)));
         assertFalse(context.registerExpectedCombatEnterClaim(new WindowExpectedCombatEnterClaim(
                 "guessed", "obs-1", "biz-1", "XIULUO_V2", "attempt-guessed",
                 "window-1", "100", "pathing-time-guess", null)));

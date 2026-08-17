@@ -33,9 +33,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Preserves leader and solo raw captures for later incident replay without blocking the capture caller on PNG IO.
  *
  * <p>The caller freezes the pixels and capture metadata, then a small low-priority writer pool performs PNG encoding
- * and disk IO. The store never changes the capture result when evidence persistence fails. A failed evidence write is
- * logged because it leaves a diagnostic gap that must be
- * visible. Member captures are intentionally excluded because those windows only run local combat maintenance and
+ * and disk IO. Pending diagnostic copies have an explicit bound; when full, the newest copy is skipped without
+ * changing or delaying the capture result. A failed evidence write is logged because it leaves a diagnostic gap that
+ * must be visible. Member captures are intentionally excluded because those windows only run local combat maintenance and
  * their high-frequency evidence must not compete with the leader's task workflow.</p>
  */
 @Slf4j
@@ -44,8 +44,10 @@ public class WindowCaptureEvidenceStore {
 
     private static final Path DEFAULT_ROOT = Path.of("images", "captures");
     private static final int WRITER_THREADS = 2;
+    /** Includes queued and actively writing diagnostic copies; capture results never wait for capacity. */
+    private static final long MAX_PENDING_WRITES = 64L;
     private static final long SHUTDOWN_DRAIN_SECONDS = 30L;
-    private static final long BACKLOG_WARNING_STEP = 100L;
+    private static final long DROPPED_WARNING_STEP = 100L;
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS");
 
@@ -53,7 +55,7 @@ public class WindowCaptureEvidenceStore {
     private final Path root;
     private final AtomicLong sequence = new AtomicLong();
     private final AtomicLong pendingWrites = new AtomicLong();
-    private final AtomicLong lastWarnedBacklog = new AtomicLong();
+    private final AtomicLong droppedWrites = new AtomicLong();
     private final AtomicBoolean retentionSweepScheduled = new AtomicBoolean();
     private final ExecutorService evidenceWriteExecutor;
     private final ExecutorService retentionSweepExecutor = Executors.newSingleThreadExecutor(runnable -> {
@@ -77,7 +79,8 @@ public class WindowCaptureEvidenceStore {
     }
 
     /**
-     * Freeze one unmodified leader/solo raw capture and enqueue its PNG/meta persistence before returning to the caller.
+     * Freeze one unmodified leader/solo raw capture and enqueue its PNG/meta persistence when writer capacity is
+     * available. A full backlog drops only this new diagnostic copy and returns immediately.
      *
      * @param image captured pixels; null is ignored because no successful capture exists.
      * @param binding exact HWND binding used for the capture when available.
@@ -113,18 +116,24 @@ public class WindowCaptureEvidenceStore {
         Path output = root.resolve(DAY.format(now)).resolve(windowId).resolve(
                 STAMP.format(now) + "_" + captureSequence + "_" + safeProvider
                         + "_" + x1 + "_" + y1 + "_" + width + "x" + height + ".png");
-        BufferedImage frozenImage = copyImage(image);
-        EvidenceMetadata metadata = currentMetadata(now, windowId, binding, safeProvider, x1, y1, x2, y2,
-                frozenImage.getWidth(), frozenImage.getHeight());
-        long queued = pendingWrites.incrementAndGet();
-        warnOnBacklog(queued);
+        if (!reserveWriterCapacity()) {
+            warnDroppedEvidence(binding, safeProvider);
+            return;
+        }
+        BufferedImage frozenImage = null;
         try {
-            evidenceWriteExecutor.execute(() -> writeEvidence(output, frozenImage, metadata));
-        } catch (RuntimeException schedulingFailure) {
+            frozenImage = copyImage(image);
+            EvidenceMetadata metadata = currentMetadata(now, windowId, binding, safeProvider, x1, y1, x2, y2,
+                    frozenImage.getWidth(), frozenImage.getHeight());
+            BufferedImage queuedImage = frozenImage;
+            evidenceWriteExecutor.execute(() -> writeEvidence(output, queuedImage, metadata));
+        } catch (RuntimeException enqueueFailure) {
             pendingWrites.decrementAndGet();
-            frozenImage.flush();
-            log.warn("[capture-evidence] save scheduling failed: path={} provider={} windowId={} reason={}",
-                    output, safeProvider, windowId, schedulingFailure.getMessage(), schedulingFailure);
+            if (frozenImage != null) {
+                frozenImage.flush();
+            }
+            log.warn("[capture-evidence] save enqueue failed: path={} provider={} windowId={} reason={}",
+                    output, safeProvider, windowId, enqueueFailure.getMessage(), enqueueFailure);
         }
     }
 
@@ -314,14 +323,26 @@ public class WindowCaptureEvidenceStore {
                 imageHeight);
     }
 
-    private void warnOnBacklog(long pending) {
-        if (pending < BACKLOG_WARNING_STEP) {
-            return;
+    private boolean reserveWriterCapacity() {
+        while (true) {
+            long pending = pendingWrites.get();
+            if (pending >= MAX_PENDING_WRITES) {
+                return false;
+            }
+            if (pendingWrites.compareAndSet(pending, pending + 1L)) {
+                return true;
+            }
         }
-        long bucket = pending / BACKLOG_WARNING_STEP;
-        long previous = lastWarnedBacklog.get();
-        if (bucket > previous && lastWarnedBacklog.compareAndSet(previous, bucket)) {
-            log.warn("[capture-evidence] writer backlog growing: pending={}", pending);
+    }
+
+    private void warnDroppedEvidence(WindowNativeBinding binding, String provider) {
+        long dropped = droppedWrites.incrementAndGet();
+        if (dropped == 1L || dropped % DROPPED_WARNING_STEP == 0L) {
+            log.warn("[capture-evidence] writer backlog full; dropping new diagnostic copy: pending={} limit={} "
+                            + "dropped={} provider={} hwnd={}",
+                    pendingWrites.get(), MAX_PENDING_WRITES, dropped,
+                    provider == null ? "unknown" : provider,
+                    binding == null ? "" : binding.getNativeHandle());
         }
     }
 

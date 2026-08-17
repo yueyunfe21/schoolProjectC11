@@ -11,6 +11,15 @@
       "status": "active"
     },
     {
+      "id": "BR-WILDBATTLE-001",
+      "title": "野外战斗按下一战斗轮次预约全队补给",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-WILDBATTLE-001] 野外战斗按下一战斗轮次预约全队补给",
+      "domains": ["wild-battle", "auto-battle", "combat", "first-aid", "team-support", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
       "id": "BR-BAG-001",
       "title": "包裹独占输入、动态锚点与小区域物品扫描",
       "source": "docs/业务逻辑.md",
@@ -191,6 +200,15 @@
         "status": "active"
       },
       {
+        "id": "BR-TIANTING-008",
+        "title": "天庭四大妖王挤压Tracker后一次性滚底恢复",
+        "source": "docs/天庭任务流程大MD.md",
+        "heading": "[BR-TIANTING-008] “四大妖王”挤压后的 Tracker 一次性滚底恢复",
+        "domains": ["tianting", "tracker", "template", "input", "state-lifecycle", "client-cloud"],
+        "crossBoundary": true,
+        "status": "active"
+      },
+      {
         "id": "BR-WUHAN-001",
       "title": "五环接任务 Title 确认与暂不可用 Story 重试",
       "source": "docs/业务逻辑.md",
@@ -223,6 +241,15 @@
       "source": "docs/业务逻辑.md",
       "heading": "[BR-WUHAN-004] Runner 脱战后的五环完整恢复",
       "domains": ["wuhuan", "combat", "runner", "recovery", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-WUHAN-005",
+      "title": "五环一次性FrameDemand与Prepared Action精确消费",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-WUHAN-005] 五环一次性 FrameDemand 与 Prepared Action 精确消费",
+      "domains": ["wuhuan", "observation", "dialog", "prepared-action", "client-cloud"],
       "crossBoundary": true,
       "status": "active"
     },

@@ -11,14 +11,13 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Owns the exact-run gate for Runner automatic-combat maintenance.
+ * Owns the exact-run gate for window Runner automatic-combat maintenance.
  *
- * <p>Cloud remains the sole business authority. A new observation run starts disarmed; only a
- * successful Cloud-authorized {@code RESTORE_AUTO_COMBAT} command may arm a Xinshou run. Wild
- * Battle is intentionally armed at observation-run creation: it is an infinite combat-only task
- * and has no Cloud-side combat decision. Once armed, the Client Runner may maintain the
- * already-authorized automatic-combat invariant once per local combat generation. Failed local
- * evidence is retried with a short bound and never becomes a Cloud business fact.</p>
+ * <p>The historical class name remains for source compatibility, but the ownership is now
+ * deliberately task-agnostic: every acknowledged observation run starts armed. Once the local
+ * Runner confirms combat, it maintains the Auto+8 invariant once per combat generation through
+ * the exact-window input queue. Cloud tasks consume combat facts and own post-combat business
+ * recovery only; they do not decide whether automatic combat is maintained.</p>
  */
 @Component
 public final class XinshouRunnerAutoCombatState {
@@ -40,10 +39,10 @@ public final class XinshouRunnerAutoCombatState {
     }
 
     /**
-     * Starts one exact observation-run session in the disarmed state.
+     * Starts one exact observation-run session with Runner combat maintenance armed.
      *
      * @param context exact registered window runtime
-     * @param taskCode acknowledged task code; Xinshou and Wild Battle create a session
+     * @param taskCode acknowledged task code used only for diagnostics
      * @param taskRunId exact observation task-run identity
      */
     public void begin(WindowRuntimeContext context, String taskCode, String taskRunId) {
@@ -54,24 +53,22 @@ public final class XinshouRunnerAutoCombatState {
             return;
         }
         String normalizedTaskCode = taskCode.trim();
-        boolean xinshou = "XINSHOU".equalsIgnoreCase(normalizedTaskCode);
-        boolean wildBattle = "WILD_BATTLE".equalsIgnoreCase(normalizedTaskCode);
-        if (!xinshou && !wildBattle) {
+        if (normalizedTaskCode.isBlank()) {
             sessions.remove(context.getWindowId());
             return;
         }
-        sessions.put(context.getWindowId(), new Session(context, taskRunId, normalizedTaskCode, wildBattle));
-        if (wildBattle) {
-            log.info("[local-runner] Wild Battle auto-combat maintenance armed: windowId={} taskRunId={}",
-                    context.getWindowId(), taskRunId);
-        }
+        sessions.put(context.getWindowId(), new Session(context, taskRunId, normalizedTaskCode, true));
+        log.info("[local-runner] Runner auto-combat maintenance armed at run start: "
+                        + "windowId={} task={} taskRunId={}",
+                context.getWindowId(), normalizedTaskCode, taskRunId);
     }
 
     /**
-     * Arms the current exact Xinshou observation run after its restore command succeeds.
+     * Confirms that the current exact run remains armed after a compatible restore command.
+     * New runs are already armed; this method is retained for the Xinshou restore callback.
      *
      * @param context current exact window runtime
-     * @return true only when a live Xinshou session was armed
+     * @return true only when a live exact-run session exists
      */
     public boolean arm(WindowRuntimeContext context) {
         Session session = currentSession(context, null);

@@ -234,7 +234,7 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
                                 a.expectedCombatAttemptId(),
                                 runtime.getWindowId(),
                                 binding.getNativeHandle(),
-                                "local-alt-a",
+                                a.source(),
                                 null));
                 yield completedBoolean("WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM", registered);
             }

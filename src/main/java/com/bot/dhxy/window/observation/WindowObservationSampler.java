@@ -814,7 +814,10 @@ public final class WindowObservationSampler {
                     FlyingSaturationLocalMechanics.Sample sample = flyingSaturationMechanics.sample();
                     facts.add(new ObservationFact(
                             ObservationFactType.TIANTING_DARK_THUNDER_FLIGHT_STATE,
-                            sample.state().name(), now));
+                            Double.isFinite(sample.meanSaturation())
+                                    ? Double.toString(sample.meanSaturation())
+                                    : "unavailable",
+                            now));
                     markSampled(interest.interestKey(), now);
                     log.info("Tianting dark-thunder flight saturation queued: windowId={} taskRunId={} "
                                     + "observerSeq={} state={} meanSaturation={} pixels={} detail={}",

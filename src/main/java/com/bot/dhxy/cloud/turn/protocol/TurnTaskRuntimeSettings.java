@@ -16,6 +16,7 @@ public record TurnTaskRuntimeSettings(
         boolean leaderCommonBoxEnabled,
         boolean memberCommonBoxEnabled,
         boolean taskStartupPreparationEnabled,
+        boolean xiuluoSkipBossEnabled,
         boolean doubleExperienceClaimEnabled,
         boolean playerHpSupplyEnabled,
         int playerHpSupplyThreshold,
@@ -31,7 +32,7 @@ public record TurnTaskRuntimeSettings(
         return new TurnTaskRuntimeSettings(
                 true, 20 * 60_000L,
                 30 * 60_000L, 55 * 60_000L, false,
-                true, false, false, true,
+                true, false, false, false, true,
                 true, 70, true, 70, true, 70, true, 70);
     }
 }

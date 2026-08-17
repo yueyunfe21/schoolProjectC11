@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "card": "G085",
+  "changeType": "business",
+  "status": "REVIEW_PASSED",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "bb41052498ec769624ac8617498e4ac91fd8f9c9",
+    "pushedReference": "origin/dev",
+    "cloudBranch": "dev",
+    "cloudCommit": "400857d4d92b2c1a8aa5ff91276b619b18edbdf8",
+    "cloudPushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../DHXY-cloud-brain"
+  },
+  "rules": ["BR-WILDBATTLE-001"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/business-rules.json",
+    "docs/业务逻辑.md",
+    "docs/云端迁移常见错误清单.md",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G085.json",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wildbattle/WildBattleTask.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/AutoBattleTask.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/AutoCombatService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java"},
+    {"repo": "cloud", "path": "src/test/java/com/bot/dhxy/service/G085WildBattleFirstAidScheduleContractTest.java"},
+    {"repo": "cloud", "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/G085WildBattleObserverContractTest.java"},
+    {"repo": "cloud", "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudTurnTaskFactoryAllowlistTest.java"},
+    {"repo": "cloud", "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudTurnTaskRuntimeContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "既有AUTO_BATTLE成员在脱战后可立即登记并等待同轮FIRST_AID窗口，WildBattle队长则完全不检查补给；这既漏掉队长，也不符合高速野战只在有预约的下一轮停顿的要求。",
+    "userDecision": "野外战斗全队在第N轮脱战后检查并预约第N+1轮；第N+1轮脱战仅在有到期预约时开FIRST_AID，队长也参与。同一窗口当轮已补给后跳过当轮再登记；同时恢复队长战斗边沿对AUTO_BATTLE队员的广播与各窗Auto+8维护。",
+    "decisionRecordedAt": "2026-08-15",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G085"
+  },
+  "verification": [
+    {
+      "name": "Cloud production compile",
+      "result": "PASS",
+      "evidence": "D:\\mavenProject\\DHXY-cloud-brain 执行 mvn -q -DskipTests=false compile，exit 0；未启动 runtime 或输入。"
+    },
+    {
+      "name": "G085 isolated contracts",
+      "result": "PASS",
+      "evidence": "使用 Maven test classpath、javac -proc:none 和 junit-platform-console-standalone 1.10.2 隔离执行两个 G085 合同类，5/5 PASS：observer/broadcast wiring、N+1 due、exact window/session isolation、supplied-generation skip、formal/local gate close。"
+    },
+    {
+      "name": "two-repository diff check",
+      "result": "PASS",
+      "evidence": "Client/治理与 Cloud 两仓 git diff --check 均 exit 0；既有无关 dirty/untracked 保持原样。"
+    }
+  ],
+  "connectivity": [
+    {
+      "rule": "BR-WILDBATTLE-001",
+      "producer": "Client exact Runner只采样野外战斗队长与各成员物理战斗边沿；Cloud观察者注册WILD_BATTLE并由既有G002 coordinator将队长边沿广播给同session AUTO_BATTLE成员。各窗在exact脱战后运行既有no-focus HP/MP探针。",
+      "transport": "队长战斗generation经WindowReadyEvent.COMBAT_STATE_CHANGED广播；TaskMaintenanceService按localTeamSession+windowId保存nextGeneration补给预约、到期消费与lastSuppliedGeneration，FIRST_AID capability只在有到期预约的脱战点开放。",
+      "consumer": "WildBattleTask在第N+1脱战消费队长预约并开关维护窗口；AutoBattleTask/AutoCombatService在成员自身脱战门完成后登记下一轮，且只在广播generation到期和FIRST_AID开放时通过共享task turn执行缓存补给。",
+      "ordering": "combat N exit -> each exact window no-focus probe -> reserve N+1 -> combat N+1 entry/Auto+8 only -> combat N+1 exit -> leader opens FIRST_AID only when due -> due windows serialize real supply -> mark supplied N+1 -> skip N+1 re-registration -> close capability -> leader resumes patrol",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/service/G085WildBattleFirstAidScheduleContractTest.java",
+          "command": "junit-platform-console-standalone 1.10.2 isolated class execution",
+          "proves": [
+            "WILD_BATTLE观察总闸可达且AUTO_BATTLE成员保持receiver-only",
+            "第N轮需求只在N+1到期",
+            "当轮实际补给后跳过同轮再登记",
+            "formal FIRST_AID window 与 local capability 同时关闭"
+          ]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/G085WildBattleObserverContractTest.java",
+          "command": "junit-platform-console-standalone 1.10.2 isolated class execution",
+          "proves": [
+            "WILD_BATTLE leader observer 可达",
+            "AUTO_BATTLE G063 receiver observer 保持可达",
+            "生产 wiring 覆盖 member generation、next-generation reservation 与 leader FIRST_AID window"
+          ]
+        }
+      ]
+    }
+  ]
+}

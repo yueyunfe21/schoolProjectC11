@@ -1,13 +1,145 @@
 window.CR_DASHBOARD_DATA = [
   {
+    "id": "G096",
+    "number": 96,
+    "owner": "Codex",
+    "status": "源码交付、双仓隔离编译与合同 7/7 通过，待重启 fresh",
+    "kind": "open",
+    "domain": "窗口/Runner",
+    "files": "Client Runner 战斗观察/Auto+8 本地维护；Cloud 业务 Task 战斗输入",
+    "summary": "所有任务与 phase 进战均由 exact-window Runner 自动维护 Auto+8；Task 只消费战斗事实和处理战后业务。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G095",
+    "number": 95,
+    "owner": "Codex",
+    "status": "P1 根因确认，待停止 Client 后完整重建并重启",
+    "kind": "open",
+    "domain": "修罗",
+    "files": "Client 活动 `target/classes`、修罗 Turn Loop、`UiLocalOperationExecutor$1`",
+    "summary": "修罗角色与 ACK 正常；运行实例撞上并发重建的半成品 classpath，队长 Turn 线程被 `NoClassDefFoundError` 杀死。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G094",
+    "number": 94,
+    "owner": "Codex + workers",
+    "status": "源码完成、双仓编译与两轮交叉 review 通过，待 fresh",
+    "kind": "review",
+    "domain": "通用",
+    "files": "五环 prepared-frame 幂等交付、Cloud ACK/cache、focus 后停顿",
+    "summary": "同代 PNG 成功交付后不再重传；Cloud 留存 exact frame 等槽，HTTP 可取消且响应有 16MiB 硬上限。两轮 review 最终 `0/0/0/0`。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G093",
+    "number": 93,
+    "owner": "Codex + worker",
+    "status": "源码完成、Cloud 编译与两轮交叉 review 通过，待 fresh",
+    "kind": "review",
+    "domain": "Dialog",
+    "files": "五环给鞋 Dialog、prepared 单槽类型校验、重复绿链寻路",
+    "summary": "prepared action 现按 operation/actionId/HWND/revision 精确隔离；给鞋 Dialog 不再被 tracker 绿链冒充。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G092",
+    "number": 92,
+    "owner": "Codex + worker",
+    "status": "源码完成、Client 编译与两轮交叉 review 通过，待 fresh",
+    "kind": "review",
+    "domain": "通用",
+    "files": "五环脱战后左上状态探测、后台截图与证据写入背压",
+    "summary": "左上状态只抓 exact `16x29` ROI；证据 writer 有界为 64，满载时丢诊断副本而不阻塞业务。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G091",
+    "number": 91,
+    "owner": "Codex + worker",
+    "status": "源码完成、Cloud 编译与两轮交叉 review 通过，待 fresh",
+    "kind": "review",
+    "domain": "通用",
+    "files": "五环 V3 绿链终态结算、给鞋 Dialog 优先级",
+    "summary": "给鞋终态先进入 `HANDLE_DIALOG`，正常退出时才精确完成 transfer、route 与 intent clear；失败继续 park。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G090",
+    "number": 90,
+    "owner": "Codex",
+    "status": "源码、双仓编译与隔离合同 4/4 通过，待重启 fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "五环 Title snapshot、UI clean action 换代、后台整窗截图",
+    "summary": "Title `60s`、UI clean `120s` 无结果均废弃旧代并重发；后台截图不占物理输入锁，超时不得结束任务。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G089",
+    "number": 89,
+    "owner": "Codex",
+    "status": "5 秒最小返修与 Cloud 编译通过，待 fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "修罗 Boss STORY、重接任务冷却",
+    "summary": "Boss STORY 关闭后固定可中断等待 `5s` 再走原重接；不新增取消模板、Story 验证或 Tracker 改动。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G084",
+    "number": 84,
+    "owner": "Codex",
+    "status": "源码、Cloud 编译与隔离类 4/4 通过，待重启 fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "五环 V3 `HANDOVER_DETECT`、title observation event park",
+    "summary": "陈旧 `absent` 只触发一次 fresh snapshot；等待 matching 新事实或真实 deadline，已删除 `500ms x 20` 空转失败。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G085",
+    "number": 85,
+    "owner": "Codex",
+    "status": "源码、Cloud 编译与隔离合同 5/5 通过，待重启 fresh",
+    "kind": "open",
+    "domain": "窗口/Runner",
+    "files": "野外战斗广播、次轮补给预约、`FIRST_AID` 窗口",
+    "summary": "第 N 轮登记、第 N+1 轮按需补给；队长与队员同规，当轮已补窗口跳过再次预约。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G083",
+    "number": 83,
+    "owner": "Codex",
+    "status": "源码、编译与隔离合同通过，待重启 fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "主控冷启动、稳定玩家身份、窗口选择重绑",
+    "summary": "刷新后按 `server+playerId` 将旧选择迁移到新 HWND；合同 4/4 通过，待实机确认不再启动 `0/0`。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G082",
+    "number": 82,
+    "owner": "Codex",
+    "status": "源码已修、回放 4/4，通过后待 fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "天庭 Tracker、普通标题优先、四大妖王一次性滚底",
+    "summary": "普通标题 present 时已优先走绿链；仅普通标题 absent 时四大妖王触发滚底，待取消后重接场景 fresh 验收。",
+    "verification": "需复核"
+  },
+  {
     "id": "G081",
     "number": 81,
     "owner": "Codex",
-    "status": "双仓编译通过，待 fresh",
+    "status": "源码返修完成、离线验收通过、待 fresh",
     "kind": "open",
     "domain": "通用",
     "files": "天庭暗雷、按需饱和度事实、共享观察 interest",
-    "summary": "仅确认暗雷后请求一次共享帧飞行分类；确定后撤销 interest，移除该分支 `Alt+U` 面板检测。",
+    "summary": "暗雷改为同 ROI 的 `before -> Alt+C -> after` 差分；升高即落地，降低则补按一次恢复落地。鬼王逻辑未改。",
     "verification": "需复核"
   },
   {
@@ -278,11 +410,11 @@ window.CR_DASHBOARD_DATA = [
     "id": "G052",
     "number": 52,
     "owner": "Codex",
-    "status": "通用门源码已实现；活动 runtime 下暂缓编译，待重启 fresh",
+    "status": "根修源码与 Cloud 生产编译通过，待战中暂停 fresh",
     "kind": "open",
-    "domain": "窗口/Runner",
-    "files": "全任务暂停热恢复、Runner 战斗事实、Cloud 启动门、G017/Tracker/Dialog 仲裁",
-    "summary": "`PAUSE_RESUME` 必须先等 Runner 明确战斗事实；战中只维护自动战斗，fresh `ABSENT` 后再等一帧才放行任务状态机。",
+    "domain": "修罗",
+    "files": "全任务暂停热恢复、Runner 战斗事实、Cloud 启动门、战斗事件序号围栏",
+    "summary": "通用门释放前提交 exact 脱战 sequence fence；任务只消费围栏后的新战斗，修罗业务流程未打补丁。",
     "verification": "需复核"
   },
   {

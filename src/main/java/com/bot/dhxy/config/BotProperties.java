@@ -40,6 +40,8 @@ public class BotProperties {
     private long xiuluoHealPetMaintenanceIntervalMs = 30 * 60 * 1000L;
     private long xiuluoRepairEquipmentMaintenanceIntervalMs = 55 * 60 * 1000L;
     private boolean xiuluoMaintenanceRunImmediatelyOnStart = false;
+    /** Skip a newly accepted Xiuluo boss assignment when its STORY contains enough red warning pixels. */
+    private boolean xiuluoSkipBossEnabled = false;
 
     /**
      * CR120 通用盒子开关。
@@ -56,7 +58,7 @@ public class BotProperties {
      * expand/zoom state, and Alt+6 visibility setup. Keep this off during fast local debugging, and
      * enable it when validating real multi-window runs.</p>
      */
-    private boolean taskStartupPreparationEnabled = false;
+    private boolean taskStartupPreparationEnabled = true;
 
     /** Whether normal task runs may detect low double-experience time and claim another session. */
     private boolean doubleExperienceClaimEnabled = true;

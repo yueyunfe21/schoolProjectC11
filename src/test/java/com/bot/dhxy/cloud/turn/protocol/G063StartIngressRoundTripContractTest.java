@@ -21,7 +21,7 @@ class G063StartIngressRoundTripContractTest {
     private static void assertStrictRoundTrip(String windowId, String role) throws Exception {
         TurnTaskRuntimeSettings settings = new TurnTaskRuntimeSettings(
                 false, 1_200_000L, 7_200_000L, 0L,
-                false, true, false, false, true,
+                false, true, false, false, false, true,
                 true, 70, true, 70, true, 70, false, 70);
         TurnWindowMetadata window = new TurnWindowMetadata(
                 "dhxy-client", windowId, "Classic Client", "12345", 6789L,

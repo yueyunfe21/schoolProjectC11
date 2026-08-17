@@ -6,7 +6,6 @@ import com.bot.dhxy.driver.BoundWindowCaptureService;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
-import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,7 +15,6 @@ import org.springframework.stereotype.Component;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Objects;
 
@@ -37,18 +35,15 @@ public final class LeftTopStatusLocalOperationExecutor {
     private final WindowTaskContextHolder contextHolder;
     private final WindowNativeBindingRefreshService bindingRefreshService;
     private final BoundWindowCaptureService captureService;
-    private final WindowScopedTempPath windowScopedTempPath;
     private final ObjectMapper objectMapper;
 
     public LeftTopStatusLocalOperationExecutor(WindowTaskContextHolder contextHolder,
                                                WindowNativeBindingRefreshService bindingRefreshService,
                                                BoundWindowCaptureService captureService,
-                                               WindowScopedTempPath windowScopedTempPath,
                                                ObjectMapper objectMapper) {
         this.contextHolder = Objects.requireNonNull(contextHolder, "contextHolder");
         this.bindingRefreshService = Objects.requireNonNull(bindingRefreshService, "bindingRefreshService");
         this.captureService = Objects.requireNonNull(captureService, "captureService");
-        this.windowScopedTempPath = Objects.requireNonNull(windowScopedTempPath, "windowScopedTempPath");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
     }
 
@@ -69,7 +64,7 @@ public final class LeftTopStatusLocalOperationExecutor {
         if (binding == null || !binding.hasNativeHandle() || !binding.hasGeometry()) {
             return complete(Observation.captureFailed());
         }
-        BufferedImage roi = captureService.captureRegion(
+        BufferedImage roi = captureService.captureRegionFast(
                         binding, binding.getX(), binding.getY(),
                         binding.getX() + ROI_X, binding.getY() + ROI_Y,
                         binding.getX() + ROI_X + ROI_WIDTH, binding.getY() + ROI_Y + ROI_HEIGHT)
@@ -79,7 +74,6 @@ public final class LeftTopStatusLocalOperationExecutor {
             return complete(Observation.captureFailed());
         }
         try {
-            String rawPath = saveEvidence(roi);
             BufferedImage open = ImageIO.read(OPEN_TEMPLATE.toFile());
             BufferedImage closed = ImageIO.read(CLOSED_TEMPLATE.toFile());
             if (!fits(roi, open) || !fits(roi, closed)) {
@@ -91,8 +85,8 @@ public final class LeftTopStatusLocalOperationExecutor {
                 return complete(Observation.unknown(-1.0D, -1.0D));
             }
             Observation observation = resolve(binding, openMatch, closedMatch);
-            log.info("[left-top-status] local runner probe windowId={} status={} openScore={} closedScore={} raw={}",
-                    windowId, observation.status(), observation.openScore(), observation.closedScore(), rawPath);
+            log.info("[left-top-status] local runner probe windowId={} status={} openScore={} closedScore={}",
+                    windowId, observation.status(), observation.openScore(), observation.closedScore());
             return complete(observation);
         } catch (IOException | RuntimeException failure) {
             log.warn("[left-top-status] local runner probe failed windowId={} reason={}",
@@ -109,24 +103,6 @@ public final class LeftTopStatusLocalOperationExecutor {
                     "LEFT_TOP_STATUS_OBSERVED", objectMapper.writeValueAsString(observation), null);
         } catch (JsonProcessingException failure) {
             return LocalServiceExecution.failed("LEFT_TOP_STATUS_SERIALIZATION_FAILED", null);
-        }
-    }
-
-    private String saveEvidence(BufferedImage roi) {
-        Path path = Path.of(windowScopedTempPath.resolve("left_top_status_switch_runner.png"));
-        try {
-            Path parent = path.getParent();
-            if (parent != null) {
-                Files.createDirectories(parent);
-            }
-            if (!ImageIO.write(roi, "png", path.toFile())) {
-                throw new IOException("no PNG writer available");
-            }
-            return path.toAbsolutePath().normalize().toString();
-        } catch (IOException failure) {
-            log.warn("[left-top-status] local runner evidence save failed path={} reason={}",
-                    path, failure.getMessage());
-            return "-";
         }
     }
 

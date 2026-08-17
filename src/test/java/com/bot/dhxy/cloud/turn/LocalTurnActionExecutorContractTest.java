@@ -638,6 +638,28 @@ class LocalTurnActionExecutorContractTest {
     }
 
     @Test
+    void cloudTaskDialogTicketRequiresTheSameMarkedAtomicClickContract() {
+        TurnContractFixtures.ActionHarness harness = TurnContractFixtures.actionHarness(true, false);
+        WindowExpectedCombatEnterClaim claim = new WindowExpectedCombatEnterClaim(
+                "dialog-claim", "observation-run", "business-run", "XIULUO_V2", "dialog-attempt-1",
+                TurnContractFixtures.WINDOW_ID, harness.binding().getNativeHandle(), "cloud-task-dialog", null);
+        assertTrue(harness.context().armPendingDirectCombatEnterClaim(claim));
+
+        TurnAction targetClickTurn = new TurnAction(
+                1, "dialog-target-click", TurnContractFixtures.DEVICE_ID, TurnContractFixtures.WINDOW_ID,
+                List.of(new TurnStep(0, TurnStepType.INPUT, TurnInputAction.CLICK_LEFT,
+                        new TurnInputSpec(102, 202, null, null, null, null, null, null, null, true),
+                        null, null, null, null)), false);
+        assertEquals(TurnOutcome.Status.COMPLETED, harness.executor().execute(targetClickTurn).outcome().status());
+
+        assertNull(harness.context().currentPendingDirectCombatEnterClaim());
+        WindowExpectedCombatEnterClaim registered =
+                harness.context().bindExpectedCombatEnterClaim("observation-run", 1L);
+        assertNotNull(registered);
+        assertEquals("cloud-task-dialog", registered.source());
+    }
+
+    @Test
     void ordinaryClickCannotConsumeDirectCombatTicket() {
         TurnContractFixtures.ActionHarness harness = TurnContractFixtures.actionHarness(true, false);
         WindowExpectedCombatEnterClaim claim = new WindowExpectedCombatEnterClaim(

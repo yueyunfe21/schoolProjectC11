@@ -457,7 +457,8 @@ public class WindowRuntimeContext {
                 || !binding.hasNativeHandle()
                 || !binding.getNativeHandle().equals(claim.hwnd())
                 || (!"local-template".equals(claim.source())
-                && !"local-alt-a".equals(claim.source()))) {
+                && !"local-alt-a".equals(claim.source())
+                && !"cloud-task-dialog".equals(claim.source()))) {
             return false;
         }
         WindowExpectedCombatEnterClaim stored = localCombatVisible && localCombatGeneration.get() > 0L
@@ -466,12 +467,14 @@ public class WindowRuntimeContext {
         return true;
     }
 
-    /** Stores an exact direct-combat ticket until its marked Alt+A target click has actually completed. */
+    /** Stores an exact direct-combat ticket until its marked task-owned target click has actually completed. */
     public boolean armPendingDirectCombatEnterClaim(WindowExpectedCombatEnterClaim claim) {
         Objects.requireNonNull(claim, "claim");
         WindowNativeBinding binding = nativeBinding;
         if (!windowId.equals(claim.windowId()) || binding == null || !binding.hasNativeHandle()
-                || !binding.getNativeHandle().equals(claim.hwnd()) || !"local-alt-a".equals(claim.source())) {
+                || !binding.getNativeHandle().equals(claim.hwnd())
+                || (!"local-alt-a".equals(claim.source())
+                && !"cloud-task-dialog".equals(claim.source()))) {
             return false;
         }
         pendingDirectCombatEnterClaim.set(new PendingDirectCombatEnterTicket(claim, System.currentTimeMillis()));

@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "card": "G082",
+  "changeType": "business",
+  "status": "SOURCE_REPAIRED_FRESH_REQUIRED",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "44a77dd27f699b4f019bb24282fa1644356a55b0",
+    "pushedReference": "origin/dev",
+    "cloudBranch": "dev",
+    "cloudCommit": "4a68f5834398b708b8cbfc300297bae423716b3e",
+    "cloudPushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-TIANTING-008"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/business-rules.json",
+    "docs/rule-traceability/G082.json",
+    "docs/天庭任务流程大MD.md",
+    "docs/cr-dashboard-data.js",
+    "images/template/tianting/sidayaowang.png",
+    "images/test-cases/tianting/g082-four-kings-scroll/20260814_190813_four-kings-raw.png",
+    "images/test-cases/tianting/g082-four-kings-scroll/20260814_190813_four-kings-marked.png",
+    "images/test-cases/tianting/g082-four-kings-scroll/20260814_210806-post-accept-both-title-matches-raw.png",
+    "images/test-cases/tianting/g082-four-kings-scroll/20260814_210806-post-accept-both-title-matches-marked.png",
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/TaskTrackerPanelService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/TaskTrackerPanelService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/model/tasktracker/TaskTrackerPanelReadResult.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/remote/CloudWholeTaskReadyEventState.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/dialog/CloudDialogPreparedActionState.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java"},
+    {"repo": "cloud", "path": "src/main/resources/images/template/tianting/sidayaowang.png"},
+    {"repo": "cloud", "path": "images/test-cases/tianting/g082-four-kings-scroll/20260814_190813_four-kings-raw.png"},
+    {"repo": "cloud", "path": "images/test-cases/tianting/g082-four-kings-scroll/20260814_190813_four-kings-marked.png"},
+    {"repo": "cloud", "path": "images/test-cases/tianting/g082-four-kings-scroll/20260814_210806-post-accept-both-title-matches-raw.png"},
+    {"repo": "cloud", "path": "images/test-cases/tianting/g082-four-kings-scroll/20260814_210806-post-accept-both-title-matches-marked.png"},
+    {"repo": "cloud", "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/G082TiantingFourKingsScrollReplayTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "天庭达到特殊刷新点后，四大妖王条目占据Tracker顶部并把原天庭条目挤出可视区；现实现只会得到title miss或误用旧任务状态。",
+    "userDecision": "不按次数猜测。fresh Tracker明确命中四大妖王时，每个可见episode只将鼠标移动到该title匹配框中心并向下滚底一次，不执行任何点击；滚前证据全部失效，只用滚后新帧重新识别天庭title和绿链。",
+    "decisionRecordedAt": "2026-08-14",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G082"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-TIANTING-008",
+      "producer": "Cloud TaskTrackerPanelService在既有tianting-tracker ROI的同一fresh帧中先严格匹配普通天庭title；仅普通title absent时才匹配四大妖王。",
+      "transport": "复用exact-window prepared-action槽承载无点击Tracker滚轮动作，以独有matchedText区分普通绿链；动作携带四大妖王title中心、taskRun/HWND绑定与一次性episode闩锁，不扩共享协议。",
+      "consumer": "TiantingTask只消费本window/taskRun的滚轮动作，并通过既有turn输入串行化执行移动鼠标、向下滚轮和settle；热启动同步读取命中同一标记时复用同一执行函数。",
+      "ordering": "fresh Tracker frame -> ordinary 天庭 title/link wins when present -> otherwise 四大妖王 may publish one scroll-required action -> exact-window focus and move to title -> scroll down without click -> invalidate pre-scroll evidence -> post-scroll fresh frame -> after reaccept the game's automatic top reset exposes ordinary title -> ordinary action resets the episode",
+      "contracts": [
+        {
+          "path": "docs/天庭任务流程大MD.md",
+          "command": "rg -n \"BR-TIANTING-008|四大妖王|pre-scroll|post-scroll\" docs/天庭任务流程大MD.md docs/PACKAGE_ARCHITECTURE.md",
+          "proves": [
+            "设计阶段已固化普通天庭title优先、仅普通title absent时四大妖王触发单次滚底、滚前证据失效与滚后fresh帧恢复的严格顺序。",
+            "生产reader回放、无点击输入合同、普通循环/热启动接线和一次性episode合同已经落地。"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {
+      "name": "template and marked replay",
+      "result": "PASS",
+      "evidence": "从现场1024x768原图裁出59x17四大妖王模板；两仓SHA-256=EE155C7637286F1A1F9216B81F74B2C523A9FFC1D0F5E436FA13A2123BE32D05，生产reader命中中心(345,231)，marked框只覆盖四大妖王。"
+    },
+    {
+      "name": "implementation",
+      "result": "PASS",
+      "evidence": "普通循环与首次热启动均接入同一no-click滚轮执行器；隔离JUnit Console 3/3、两仓production compile及git diff --check通过。标准Maven定向测试受既有无关测试夹具构造器漂移阻断。"
+    },
+    {
+      "name": "fresh runtime",
+      "result": "PARTIAL_PASS",
+      "evidence": "热启动已有任务场景通过；但20:40取消后重新接取场景中，神秘妖王[天庭任务]后缀被普通title模板误命中，错误task box无绿链，10秒后成功接取被再次取消并进入循环。"
+    },
+    {
+      "name": "fresh runtime cancel-reaccept",
+      "result": "P1_FAIL",
+      "evidence": "hwnd-AD816B4连续发布TASK_TRACKER_NEGATIVE_READY；match-miss/tracker-title/19与20号生产图显示神秘妖王[天庭任务]。普通title灰度分数0.9599-0.9717，awaitAcceptedTitle没有TASK_TRACKER_PATHING后设置acceptCancellationPending，形成accept/cancel循环。"
+    },
+    {
+      "name": "strict color title replay",
+      "result": "PASS_PARTIAL_REPAIR",
+      "evidence": "生产matcher已整体删除grayscaleFallback。20:40面板彩色0.6220，production reader返回titleFound=false；四大妖王彩色回放1.0000并保持scrollRequired。Cloud production compile通过。同帧title优先级仍待修复。"
+    },
+    {
+      "name": "21:07 fresh scroll and cancel-reaccept timeline",
+      "result": "P1_FAIL_ROOT_CAUSE_CONFIRMED",
+      "evidence": "hwnd-AD816B4于21:07:33.883收到G082滚动动作，21:07:34.217/34.402/34.586三次SCROLL_DOWN(6)，滚后fresh明确无普通天庭title；21:08:05.208 accept.png以0.9968真实点击。21:08:06.547 fresh图证明游戏已自动回顶，普通天庭title与下方四大妖王同时可见；生产彩色回放得0.960396与0.992895。analyzePanel先匹配四大妖王并提前返回，重复scroll又被episode去重压掉，普通title/绿链未发布；21:08:16.038超时武装取消，21:08:20.097 quxiao.png以1.0000点击。缺失的是普通title优先，而非顶部复位、检测或接取点击。"
+    },
+    {
+      "name": "ordinary-title priority source repair",
+      "result": "PASS_FRESH_REQUIRED",
+      "evidence": "analyzePanel现先严格匹配普通tianting_title，仅其absent时匹配sidayaowang。21:08同帧raw返回titleFound=true/taskKey=tianting.tracker/trackerScrollRequired=false；四大妖王-only raw仍返回trackerScrollRequired=true。Cloud production compile PASS，隔离G082测试4/4 PASS。"
+    }
+  ]
+}

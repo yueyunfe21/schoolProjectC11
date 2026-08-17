@@ -69,17 +69,20 @@ public class GameClientTracker {
         return globalInputLock.callWithLock(this::checkBaseAddress);
     }
 
+    /**
+     * Refreshes the exact bound window's full background frame without taking physical-input ownership.
+     *
+     * @return true when the HWND-backed frame was captured and written to the window-scoped vision path
+     */
     public boolean updateGlobalVision() {
-        return globalInputLock.callWithLock(() -> {
-            if (!checkBaseAddress()) return false;
-            TrackerState s = state();
-            logTrackerState("updateGlobalVision");
-            int x1 = s.windowBaseX;
-            int y1 = s.windowBaseY;
-            int x2 = x1 + WINDOW_WIDTH;
-            int y2 = y1 + WINDOW_HEIGHT;
-            return captureToFileWithoutLock("全局视野", getLatestVisionPath(), x1, y1, x2, y2);
-        });
+        if (!checkBaseAddress()) return false;
+        TrackerState s = state();
+        logTrackerState("updateGlobalVision");
+        int x1 = s.windowBaseX;
+        int y1 = s.windowBaseY;
+        int x2 = x1 + WINDOW_WIDTH;
+        int y2 = y1 + WINDOW_HEIGHT;
+        return captureToFileWithoutLock("全局视野", getLatestVisionPath(), x1, y1, x2, y2);
     }
 
     public boolean locateWindow() {

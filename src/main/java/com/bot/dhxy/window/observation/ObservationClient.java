@@ -19,4 +19,19 @@ public interface ObservationClient {
      *         contract failure; a transport failure is never interpreted as a business fact
      */
     ObservationResponse send(ObservationRequest request) throws ObservationTransportException;
+
+    /**
+     * Sends with a dedicated cancellation token. Production HTTPS overrides this boundary; the
+     * default preserves the functional interface used by bounded in-process transports.
+     */
+    default ObservationResponse send(
+            ObservationRequest request,
+            ObservationSendCancellation cancellation) throws ObservationTransportException {
+        if (cancellation != null && cancellation.isCancelled()) {
+            throw new ObservationTransportException(
+                    ObservationTransportException.Kind.INTERRUPTED,
+                    "observation HTTP request cancelled before send");
+        }
+        return send(request);
+    }
 }

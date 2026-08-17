@@ -43,6 +43,7 @@
       "leaderCommonBoxEnabled": true,
       "memberCommonBoxEnabled": false,
       "taskStartupPreparationEnabled": false,
+      "xiuluoSkipBossEnabled": false,
       "doubleExperienceClaimEnabled": true,
       "playerHpSupplyEnabled": true,
       "playerHpSupplyThreshold": 70,

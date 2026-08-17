@@ -11,16 +11,22 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Locale;
+import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Flow;
 
 /**
  * TURN-40G: HTTPS transport for the independent observation plane. Reuses only the turn transport's configuration
@@ -74,6 +80,19 @@ public final class HttpsObservationClient implements ObservationClient {
 
     @Override
     public ObservationResponse send(ObservationRequest request) throws ObservationTransportException {
+        return send(request, new ObservationSendCancellation());
+    }
+
+    @Override
+    public ObservationResponse send(
+            ObservationRequest request,
+            ObservationSendCancellation cancellation) throws ObservationTransportException {
+        Objects.requireNonNull(cancellation, "cancellation");
+        if (cancellation.isCancelled()) {
+            throw new ObservationTransportException(
+                    ObservationTransportException.Kind.INTERRUPTED,
+                    "observation HTTP request cancelled before send");
+        }
         try {
             ObservationProtocolValidator.requireValid(request);
         } catch (IllegalArgumentException | NullPointerException e) {
@@ -105,8 +124,8 @@ public final class HttpsObservationClient implements ObservationClient {
                 .POST(HttpRequest.BodyPublishers.ofByteArray(requestJson))
                 .build();
 
-        HttpResponse<InputStream> httpResponse = sendOnce(httpRequest);
-        byte[] responseBytes = readBounded(httpResponse, MAX_JSON_BYTES, "observation response");
+        HttpResponse<byte[]> httpResponse = sendOnce(httpRequest, cancellation);
+        byte[] responseBytes = requireBoundedBody(httpResponse, MAX_JSON_BYTES, "observation response");
         if (httpResponse.statusCode() != 200) {
             throw httpStatusFailure(httpResponse.statusCode(), responseBytes);
         }
@@ -131,7 +150,9 @@ public final class HttpsObservationClient implements ObservationClient {
         }
     }
 
-    private HttpResponse<InputStream> sendOnce(HttpRequest request) throws ObservationTransportException {
+    private HttpResponse<byte[]> sendOnce(
+            HttpRequest request,
+            ObservationSendCancellation cancellation) throws ObservationTransportException {
         HttpClient client = httpClient;
         if (client == null) {
             synchronized (this) {
@@ -146,24 +167,81 @@ public final class HttpsObservationClient implements ObservationClient {
                 }
             }
         }
+        if (cancellation.isCancelled()) {
+            throw new ObservationTransportException(
+                    ObservationTransportException.Kind.INTERRUPTED,
+                    "observation HTTP request cancelled before transport start");
+        }
+        CompletableFuture<HttpResponse<byte[]>> future =
+                client.sendAsync(request, boundedByteArrayHandler(MAX_JSON_BYTES, "observation response"));
+        Runnable cancelAction = () -> future.cancel(true);
+        cancellation.register(cancelAction);
         try {
-            return client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            return future.get();
+        } catch (CancellationException e) {
+            throw new ObservationTransportException(
+                    ObservationTransportException.Kind.INTERRUPTED,
+                    "observation HTTP request cancelled",
+                    e);
         } catch (InterruptedException e) {
+            future.cancel(true);
             Thread.currentThread().interrupt();
             throw new ObservationTransportException(
                     ObservationTransportException.Kind.INTERRUPTED,
                     "observation HTTP request interrupted",
                     e);
-        } catch (IOException e) {
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            ObservationTransportException boundedFailure = findTransportFailure(cause);
+            if (boundedFailure != null) {
+                throw boundedFailure;
+            }
             throw new ObservationTransportException(
                     ObservationTransportException.Kind.NETWORK,
                     "observation HTTP request failed",
-                    e);
+                    cause == null ? e : cause);
+        } finally {
+            cancellation.clear(cancelAction);
         }
     }
 
-    private static byte[] readBounded(
-            HttpResponse<InputStream> response,
+    /** Creates a subscriber that never retains more than the protocol's maximum response bytes. */
+    private static HttpResponse.BodyHandler<byte[]> boundedByteArrayHandler(int maxBytes, String label) {
+        return responseInfo -> {
+            ObservationTransportException declaredLengthFailure = null;
+            String contentLength = responseInfo.headers().firstValue("Content-Length").orElse(null);
+            if (contentLength != null) {
+                try {
+                    long declared = Long.parseLong(contentLength);
+                    if (declared < 0L || declared > maxBytes) {
+                        declaredLengthFailure = new ObservationTransportException(
+                                ObservationTransportException.Kind.RESPONSE_TOO_LARGE,
+                                label + " Content-Length exceeds " + maxBytes + " bytes");
+                    }
+                } catch (NumberFormatException invalidLength) {
+                    declaredLengthFailure = new ObservationTransportException(
+                            ObservationTransportException.Kind.RESPONSE_CONTRACT,
+                            label + " has invalid Content-Length",
+                            invalidLength);
+                }
+            }
+            return new BoundedByteArraySubscriber(maxBytes, label, declaredLengthFailure);
+        };
+    }
+
+    private static ObservationTransportException findTransportFailure(Throwable failure) {
+        Throwable current = failure;
+        for (int depth = 0; current != null && depth < 8; depth++) {
+            if (current instanceof ObservationTransportException transportFailure) {
+                return transportFailure;
+            }
+            current = current.getCause();
+        }
+        return null;
+    }
+
+    private static byte[] requireBoundedBody(
+            HttpResponse<byte[]> response,
             int maxBytes,
             String label) throws ObservationTransportException {
         String contentLength = response.headers().firstValue("Content-Length").orElse(null);
@@ -171,13 +249,11 @@ public final class HttpsObservationClient implements ObservationClient {
             try {
                 long declared = Long.parseLong(contentLength);
                 if (declared < 0 || declared > maxBytes) {
-                    closeQuietly(response.body());
                     throw new ObservationTransportException(
                             ObservationTransportException.Kind.RESPONSE_TOO_LARGE,
                             label + " Content-Length exceeds " + maxBytes + " bytes");
                 }
             } catch (NumberFormatException e) {
-                closeQuietly(response.body());
                 throw new ObservationTransportException(
                         ObservationTransportException.Kind.RESPONSE_CONTRACT,
                         label + " has invalid Content-Length",
@@ -185,32 +261,18 @@ public final class HttpsObservationClient implements ObservationClient {
             }
         }
 
-        try (InputStream input = response.body();
-             ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(maxBytes, 8192))) {
-            byte[] buffer = new byte[8192];
-            int total = 0;
-            int read;
-            while ((read = input.read(buffer)) >= 0) {
-                if (read == 0) {
-                    continue;
-                }
-                total += read;
-                if (total > maxBytes) {
-                    throw new ObservationTransportException(
-                            ObservationTransportException.Kind.RESPONSE_TOO_LARGE,
-                            label + " exceeds " + maxBytes + " bytes");
-                }
-                output.write(buffer, 0, read);
-            }
-            return output.toByteArray();
-        } catch (ObservationTransportException e) {
-            throw e;
-        } catch (IOException e) {
+        byte[] body = response.body();
+        if (body == null) {
             throw new ObservationTransportException(
-                    ObservationTransportException.Kind.NETWORK,
-                    "failed while reading " + label,
-                    e);
+                    ObservationTransportException.Kind.RESPONSE_CONTRACT,
+                    label + " body is missing");
         }
+        if (body.length > maxBytes) {
+            throw new ObservationTransportException(
+                    ObservationTransportException.Kind.RESPONSE_TOO_LARGE,
+                    label + " exceeds " + maxBytes + " bytes");
+        }
+        return body;
     }
 
     private static void requireContentType(HttpHeaders headers, String expected, String label)
@@ -282,11 +344,117 @@ public final class HttpsObservationClient implements ObservationClient {
         return duration;
     }
 
-    private static void closeQuietly(InputStream input) {
-        try {
-            input.close();
-        } catch (IOException ignored) {
-            // best-effort close on an already-failed response
+    /** Incremental body subscriber; exceeding the bound cancels upstream before another chunk is retained. */
+    private static final class BoundedByteArraySubscriber implements HttpResponse.BodySubscriber<byte[]> {
+
+        private static final int COPY_BUFFER_SIZE = 8192;
+
+        private final int maxBytes;
+        private final String label;
+        private final ByteArrayOutputStream output;
+        private final CompletableFuture<byte[]> body = new CompletableFuture<>();
+        private final byte[] copyBuffer = new byte[COPY_BUFFER_SIZE];
+        private Flow.Subscription subscription;
+        private int totalBytes;
+        private boolean terminal;
+
+        private BoundedByteArraySubscriber(
+                int maxBytes,
+                String label,
+                ObservationTransportException initialFailure) {
+            this.maxBytes = maxBytes;
+            this.label = label;
+            this.output = new ByteArrayOutputStream(Math.min(maxBytes, COPY_BUFFER_SIZE));
+            if (initialFailure != null) {
+                terminal = true;
+                body.completeExceptionally(initialFailure);
+            }
+        }
+
+        @Override
+        public CompletionStage<byte[]> getBody() {
+            return body;
+        }
+
+        @Override
+        public void onSubscribe(Flow.Subscription candidate) {
+            if (candidate == null) {
+                fail(new ObservationTransportException(
+                        ObservationTransportException.Kind.NETWORK,
+                        label + " body subscription is missing"));
+                return;
+            }
+            if (subscription != null || terminal) {
+                candidate.cancel();
+                return;
+            }
+            subscription = candidate;
+            candidate.request(1L);
+        }
+
+        @Override
+        public void onNext(List<ByteBuffer> buffers) {
+            if (terminal || buffers == null) {
+                return;
+            }
+            try {
+                for (ByteBuffer buffer : buffers) {
+                    if (buffer == null) {
+                        continue;
+                    }
+                    int incoming = buffer.remaining();
+                    if (incoming > maxBytes - totalBytes) {
+                        fail(new ObservationTransportException(
+                                ObservationTransportException.Kind.RESPONSE_TOO_LARGE,
+                                label + " exceeds " + maxBytes + " bytes"));
+                        return;
+                    }
+                    totalBytes += incoming;
+                    while (buffer.hasRemaining()) {
+                        int count = Math.min(buffer.remaining(), copyBuffer.length);
+                        buffer.get(copyBuffer, 0, count);
+                        output.write(copyBuffer, 0, count);
+                    }
+                }
+                if (!terminal && subscription != null) {
+                    subscription.request(1L);
+                }
+            } catch (RuntimeException bodyFailure) {
+                fail(new ObservationTransportException(
+                        ObservationTransportException.Kind.NETWORK,
+                        "failed while reading " + label,
+                        bodyFailure));
+            }
+        }
+
+        @Override
+        public void onError(Throwable failure) {
+            if (terminal) {
+                return;
+            }
+            terminal = true;
+            body.completeExceptionally(failure);
+        }
+
+        @Override
+        public void onComplete() {
+            if (terminal) {
+                return;
+            }
+            terminal = true;
+            body.complete(output.toByteArray());
+        }
+
+        private void fail(ObservationTransportException failure) {
+            if (terminal) {
+                return;
+            }
+            terminal = true;
+            if (subscription != null) {
+                subscription.cancel();
+            }
+            body.completeExceptionally(failure);
         }
     }
+
 }

@@ -196,6 +196,7 @@ public class MainWindowController {
     private TextField fivefoldRunCountField;
     private CheckBox summonSkillCleanEnabledCheckBox;
     private CheckBox taskStartupPreparationEnabledCheckBox;
+    private CheckBox xiuluoSkipBossEnabledCheckBox;
     private CheckBox doubleExperienceClaimEnabledCheckBox;
     private CheckBox xiuluoMaintenanceRunImmediatelyCheckBox;
     private CheckBox xiuluoHealPetMaintenanceEnabledCheckBox;
@@ -431,6 +432,8 @@ public class MainWindowController {
         summonSkillCleanEnabledCheckBox.setSelected(botProperties.isSummonSkillCleanEnabled());
         taskStartupPreparationEnabledCheckBox = new CheckBox("任务启动前置检查");
         taskStartupPreparationEnabledCheckBox.setSelected(botProperties.isTaskStartupPreparationEnabled());
+        xiuluoSkipBossEnabledCheckBox = new CheckBox("跳过修罗 Boss");
+        xiuluoSkipBossEnabledCheckBox.setSelected(botProperties.isXiuluoSkipBossEnabled());
         doubleExperienceClaimEnabledCheckBox = new CheckBox("领取双倍");
         doubleExperienceClaimEnabledCheckBox.setSelected(botProperties.isDoubleExperienceClaimEnabled());
         xiuluoMaintenanceRunImmediatelyCheckBox = new CheckBox("修罗启动维护");
@@ -601,6 +604,7 @@ public class MainWindowController {
         botProperties.setFivefoldMaxRuns(fivefoldRuns);
         botProperties.setSummonSkillCleanEnabled(summonSkillCleanEnabledCheckBox.isSelected());
         botProperties.setTaskStartupPreparationEnabled(taskStartupPreparationEnabledCheckBox.isSelected());
+        botProperties.setXiuluoSkipBossEnabled(xiuluoSkipBossEnabledCheckBox.isSelected());
         botProperties.setDoubleExperienceClaimEnabled(doubleExperienceClaimEnabledCheckBox.isSelected());
         botProperties.setXiuluoMaintenanceRunImmediatelyOnStart(xiuluoMaintenanceRunImmediatelyCheckBox.isSelected());
         botProperties.setSummonSkillCleanIntervalMs(normalizeSummonSkillIntervalMinutes(
@@ -632,6 +636,7 @@ public class MainWindowController {
                 + " 五环=" + botProperties.getWuhuanMaxRuns()
                 + " 五倍=" + botProperties.getFivefoldMaxRuns()
                 + " 前置检查=" + (botProperties.isTaskStartupPreparationEnabled() ? "开" : "关")
+                + " 跳过修罗Boss=" + (botProperties.isXiuluoSkipBossEnabled() ? "开" : "关")
                 + " 领取双倍=" + (botProperties.isDoubleExperienceClaimEnabled() ? "开" : "关")
                 + " 修罗启动维护=" + (botProperties.isXiuluoMaintenanceRunImmediatelyOnStart() ? "开" : "关")
                 + " 三技能=" + (botProperties.isSummonSkillCleanEnabled() ? "开" : "关")
@@ -1208,6 +1213,7 @@ public class MainWindowController {
                 settingsEditLockLabel,
                 buildSettingsActionPanel(),
                 buildTaskRunConfigPanel(),
+                buildXiuluoConfigPanel(),
                 buildSummonSkillConfigPanel(),
                 buildMaintenanceConfigPanel(),
                 buildSupplyConfigPanel());
@@ -1230,6 +1236,10 @@ public class MainWindowController {
     private Parent buildSettingsActionPanel() {
         FlowPane actionRow = buildControlRow(applySettingsButton);
         return buildSection("应用设置", actionRow);
+    }
+
+    private Parent buildXiuluoConfigPanel() {
+        return buildSection("修罗设置", buildControlRow(xiuluoSkipBossEnabledCheckBox));
     }
 
     private void showApplySettingsFeedback() {
@@ -2612,15 +2622,13 @@ public class MainWindowController {
                             .filter(WindowTaskSnapshot::isAcceptingTaskQueue)
                             .map(WindowTaskSnapshot::getWindowId)
                             .toList());
-            List<String> targetWindowIds = latestSnapshots.stream()
-                    .filter(snapshot -> selectedWindowIds.isEmpty()
-                            || selectedWindowIds.contains(snapshot.getWindowId()))
-                    .map(WindowTaskSnapshot::getWindowId)
-                    .filter(id -> id != null && !id.isBlank())
-                    .distinct()
-                    .toList();
-            log.info("Start selected task flow: targetWindowIds={}", targetWindowIds);
-            if (selectedWindowIds.isEmpty()) {
+            List<String> targetWindowIds = resolveColdStartWindowIds(
+                    selectedWindowIds, selectedSnapshots, latestSnapshots);
+            log.info("Start selected task flow: stable selection rebound oldIds={} oldPlayers={} targetWindowIds={}",
+                    selectedWindowIds,
+                    selectedSnapshots.stream().map(MainWindowController::stablePlayerKey).flatMap(Optional::stream).toList(),
+                    targetWindowIds);
+            if (!targetWindowIds.isEmpty()) {
                 pendingAutoSelectedWindowIds = targetWindowIds;
             }
             if (targetWindowIds.isEmpty()) {
@@ -2785,6 +2793,65 @@ public class MainWindowController {
 
     private List<String> getSelectedWindowIds() {
         return windowSelectionMemory.selectedIds();
+    }
+
+    /**
+     * Rebinds an explicit UI selection across a cold-start window rescan.
+     *
+     * @param selectedWindowIds transient window ids selected before the rescan; an empty list means start all windows.
+     * @param selectedSnapshots pre-rescan snapshots for the explicit selection, including stable player identity.
+     * @param latestSnapshots post-rescan snapshots whose HWND-backed window ids may have changed.
+     * @return post-rescan window ids to start; empty when an explicit selection has no stable identity match.
+     */
+    static List<String> resolveColdStartWindowIds(List<String> selectedWindowIds,
+                                                  List<WindowTaskSnapshot> selectedSnapshots,
+                                                  List<WindowTaskSnapshot> latestSnapshots) {
+        if (latestSnapshots == null || latestSnapshots.isEmpty()) {
+            return List.of();
+        }
+        if (selectedWindowIds == null || selectedWindowIds.isEmpty()) {
+            return latestSnapshots.stream()
+                    .map(WindowTaskSnapshot::getWindowId)
+                    .filter(id -> id != null && !id.isBlank())
+                    .distinct()
+                    .toList();
+        }
+
+        Map<String, Boolean> selectedPlayers = new LinkedHashMap<>();
+        if (selectedSnapshots != null) {
+            selectedSnapshots.stream()
+                    .map(MainWindowController::stablePlayerKey)
+                    .flatMap(Optional::stream)
+                    .forEach(key -> selectedPlayers.put(key, Boolean.TRUE));
+        }
+        if (selectedPlayers.isEmpty()) {
+            return List.of();
+        }
+        return latestSnapshots.stream()
+                .filter(snapshot -> stablePlayerKey(snapshot)
+                        .map(selectedPlayers::containsKey)
+                        .orElse(false))
+                .map(WindowTaskSnapshot::getWindowId)
+                .filter(id -> id != null && !id.isBlank())
+                .distinct()
+                .toList();
+    }
+
+    private static Optional<String> stablePlayerKey(WindowTaskSnapshot snapshot) {
+        if (snapshot == null) {
+            return Optional.empty();
+        }
+        String server = snapshot.getServerName();
+        String playerId = snapshot.getPlayerId();
+        if (server == null || server.isBlank() || playerId == null || playerId.isBlank()) {
+            Optional<WindowTitleIdentity> parsed = WindowTitleIdentityParser.parse(snapshot.getNativeTitle());
+            if (parsed.isEmpty()) {
+                return Optional.empty();
+            }
+            server = parsed.get().server();
+            playerId = parsed.get().playerId();
+        }
+        return Optional.of(server.trim() + "/" + playerId.trim());
     }
 
     private List<WindowTaskSnapshot> getSelectedWindowSnapshots() {
@@ -3360,6 +3427,7 @@ public class MainWindowController {
         setNodeDisabled(wuhuanRunCountComboBox, disabled);
         setNodeDisabled(fivefoldRunCountField, disabled);
         setNodeDisabled(taskStartupPreparationEnabledCheckBox, disabled);
+        setNodeDisabled(xiuluoSkipBossEnabledCheckBox, disabled);
         setNodeDisabled(doubleExperienceClaimEnabledCheckBox, disabled);
         setNodeDisabled(xiuluoMaintenanceRunImmediatelyCheckBox, disabled);
         setNodeDisabled(summonSkillCleanEnabledCheckBox, disabled);

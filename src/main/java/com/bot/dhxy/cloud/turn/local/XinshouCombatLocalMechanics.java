@@ -233,15 +233,15 @@ public final class XinshouCombatLocalMechanics {
     /**
      * Maintains automatic combat for one Runner-observed combat generation.
      *
-     * <p>This local-only mechanic is allowed only after the Cloud-authorized restore action has
-     * armed the exact observation run. It first checks {@code auto_remaining.png}; a visible panel
-     * completes without input, while an absent panel receives one exact-HWND {@code Alt+8} and one
-     * bounded verification. It never classifies task state or publishes a business event.</p>
+     * <p>The task-agnostic Runner calls this local-only mechanic after it confirms combat. It first
+     * checks {@code auto_remaining.png}; a visible panel completes without input, while an absent
+     * panel receives one exact-HWND {@code Alt+8} and one bounded verification. It never classifies
+     * task state or publishes a business event.</p>
      *
      * @return completed when the panel was already visible or became visible after one Alt+8
      */
     public Result maintainRunnerAutoCombatOnce() {
-        return exactWindowPort.executeBackground("xinshou:combat:runner-maintenance", session -> {
+        return exactWindowPort.executeBackground("runner:combat:auto-maintenance", session -> {
             PanelVisibility visibility = session.probeAutoRemaining();
             if (visibility == PanelVisibility.UNAVAILABLE) {
                 return Result.failed(

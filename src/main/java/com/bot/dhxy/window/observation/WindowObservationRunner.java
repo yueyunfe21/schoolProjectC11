@@ -53,6 +53,14 @@ public final class WindowObservationRunner {
     private static final String RUNNER_SOURCE = "window-observation-runner";
 
     private final Object lifecycleMonitor = new Object();
+    /**
+     * Linearization boundary for child binding and installation of an exact cancellable HTTP call.
+     * Network I/O stays outside the monitor; rebind cancels the installed old-child call and the
+     * response commit applies the same revision fence after transport returns.
+     */
+    private final Object taskBindingMonitor = new Object();
+    /** Serializes sampler collect/ack/reset; lock order is samplerMonitor then taskBindingMonitor. */
+    private final Object samplerMonitor = new Object();
     private final Object pacer = new Object();
     private final ObservationClient client;
     private final String tenantId;
@@ -62,10 +70,7 @@ public final class WindowObservationRunner {
     /** Exact child task currently owning this queue-scoped observation run. */
     private volatile String taskCode;
     private final String taskRunId;
-    /**
-     * Prevents an in-flight response for the previous queue child from overwriting the new child's state.
-     * Even values are stable bindings; odd values mean a rebind is in progress.
-     */
+    /** Prevents an in-flight response for the previous queue child from committing into the new child. */
     private final AtomicLong taskBindingRevision = new AtomicLong();
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
@@ -80,6 +85,8 @@ public final class WindowObservationRunner {
     private volatile long consecutiveTransportFailures;
     private volatile long lastSuccessfulSendAtMs;
     private volatile ObservationPathingFact lastDeliveredPathingFact;
+    /** Exact currently installed network call; guarded by taskBindingMonitor. */
+    private ObservationSendCancellation inFlightSendCancellation;
 
     /** Unacknowledged key events by eventId, insertion-ordered; guarded by its own monitor. */
     private final LinkedHashMap<String, ObservationKeyEvent> pendingKeyEvents = new LinkedHashMap<>();
@@ -95,6 +102,8 @@ public final class WindowObservationRunner {
     private final PreparedFrameCapture preparedFrameCapture;
     private volatile ObservationPreparedFrameDemand preparedFrameDemand;
     private volatile ObservationPreparedFrame retainedPreparedFrame;
+    /** Exact demand generation whose immutable payload already reached Cloud through a successful HTTP exchange. */
+    private volatile PreparedFrameIdentity deliveredPreparedFrameIdentity;
     /** True until Cloud has accepted this new run's first observation-plane request. */
     private volatile boolean startupScreenObservationPending = true;
     /**
@@ -190,9 +199,11 @@ public final class WindowObservationRunner {
             if (!running.compareAndSet(false, true)) {
                 throw new IllegalStateException("observation runner is already running for windowId=" + windowId);
             }
-            retainStateOnStop.set(false);
-            stopRequested.set(false);
-            startupCombatObservationPending = true;
+            synchronized (taskBindingMonitor) {
+                retainStateOnStop.set(false);
+                stopRequested.set(false);
+                startupCombatObservationPending = true;
+            }
             Thread thread = new Thread(this::runLoop, "dhxy-observe-" + windowId);
             thread.setDaemon(true);
             workerThread = thread;
@@ -235,11 +246,17 @@ public final class WindowObservationRunner {
     }
 
     private void requestThreadStop() {
+        // Set the flag and interrupt first, then cancel the dedicated transport without waiting for body I/O.
+        stopRequested.set(true);
         synchronized (lifecycleMonitor) {
-            stopRequested.set(true);
             Thread thread = workerThread;
             if (thread != null) {
                 thread.interrupt();
+            }
+        }
+        synchronized (taskBindingMonitor) {
+            if (inFlightSendCancellation != null) {
+                inFlightSendCancellation.cancel();
             }
         }
         synchronized (pacer) {
@@ -298,23 +315,38 @@ public final class WindowObservationRunner {
      */
     public void rebindTaskCode(String exactTaskCode) {
         String normalized = requireIdentity(exactTaskCode, "exactTaskCode").toLowerCase(Locale.ROOT);
-        String previous = taskCode;
-        if (previous.equals(normalized)) {
-            return;
+        String previous;
+        long revision;
+        synchronized (samplerMonitor) {
+            synchronized (taskBindingMonitor) {
+                previous = taskCode;
+                if (previous.equals(normalized)) {
+                    return;
+                }
+                if (inFlightSendCancellation != null) {
+                    // Dedicated cancellation does not interrupt the resident runner thread.
+                    inFlightSendCancellation.cancel();
+                    inFlightSendCancellation = null;
+                }
+                revision = taskBindingRevision.incrementAndGet();
+                taskCode = normalized;
+                interestRevision = 0L;
+                interests = List.of();
+                preparedFrameDemand = null;
+                retainedPreparedFrame = null;
+                deliveredPreparedFrameIdentity = null;
+                lastDeliveredPathingFact = null;
+                startupScreenObservationPending = true;
+                startupCombatObservationPending = true;
+                lastSuccessfulSendAtMs = 0L;
+                if (sampler != null) {
+                    sampler.reset();
+                }
+                synchronized (pendingKeyEvents) {
+                    pendingKeyEvents.clear();
+                }
+            }
         }
-        taskBindingRevision.incrementAndGet();
-        taskCode = normalized;
-        interests = List.of();
-        preparedFrameDemand = null;
-        retainedPreparedFrame = null;
-        lastDeliveredPathingFact = null;
-        startupScreenObservationPending = true;
-        startupCombatObservationPending = true;
-        lastSuccessfulSendAtMs = 0L;
-        synchronized (pendingKeyEvents) {
-            pendingKeyEvents.clear();
-        }
-        long revision = taskBindingRevision.incrementAndGet();
         log.info("Observation child task rebound: windowId={} taskRunId={} previousTaskCode={} "
                         + "taskCode={} bindingRevision={}",
                 windowId, taskRunId, previous, normalized, revision);
@@ -390,7 +422,9 @@ public final class WindowObservationRunner {
         } finally {
             if (retainStateOnStop.get()) {
                 if (sampler != null) {
-                    sampler.invalidateTerminalFrameForSuspend();
+                    synchronized (samplerMonitor) {
+                        sampler.invalidateTerminalFrameForSuspend();
+                    }
                 }
             } else {
                 resetRetainedState();
@@ -410,36 +444,48 @@ public final class WindowObservationRunner {
     }
 
     private void resetRetainedState() {
-        if (sampler != null) {
-            sampler.reset();
+        synchronized (samplerMonitor) {
+            synchronized (taskBindingMonitor) {
+                if (sampler != null) {
+                    sampler.reset();
+                }
+                synchronized (pendingKeyEvents) {
+                    pendingKeyEvents.clear();
+                }
+                interests = List.of();
+                interestRevision = 0L;
+                preparedFrameDemand = null;
+                retainedPreparedFrame = null;
+                deliveredPreparedFrameIdentity = null;
+                lastSuccessfulSendAtMs = 0L;
+                lastDeliveredPathingFact = null;
+            }
         }
-        synchronized (pendingKeyEvents) {
-            pendingKeyEvents.clear();
-        }
-        interests = List.of();
-        interestRevision = 0L;
-        preparedFrameDemand = null;
-        retainedPreparedFrame = null;
-        lastSuccessfulSendAtMs = 0L;
-        lastDeliveredPathingFact = null;
     }
 
     private void sendOnce() {
         if (stopRequested.get()) {
             return;
         }
-        long requestTaskBindingRevision = taskBindingRevision.get();
-        if ((requestTaskBindingRevision & 1L) != 0L) {
-            wakeForLocalStateChange();
-            return;
-        }
-        String requestTaskCode = taskCode;
-        boolean requestStartupScreenObservation = startupScreenObservationPending;
-        boolean requestStartupCombatObservation = startupCombatObservationPending;
-        List<ObservationInterest> requestInterests = interests;
-        if (taskBindingRevision.get() != requestTaskBindingRevision) {
-            wakeForLocalStateChange();
-            return;
+        long requestTaskBindingRevision;
+        String requestTaskCode;
+        boolean requestStartupScreenObservation;
+        boolean requestStartupCombatObservation;
+        long requestInterestRevision;
+        List<ObservationInterest> requestInterests;
+        ObservationPreparedFrameDemand demand;
+        PreparedFrameIdentity deliveredIdentity;
+        ObservationPreparedFrame retainedFrame;
+        synchronized (taskBindingMonitor) {
+            requestTaskBindingRevision = taskBindingRevision.get();
+            requestTaskCode = taskCode;
+            requestStartupScreenObservation = startupScreenObservationPending;
+            requestStartupCombatObservation = startupCombatObservationPending;
+            requestInterestRevision = interestRevision;
+            requestInterests = interests;
+            demand = preparedFrameDemand;
+            deliveredIdentity = deliveredPreparedFrameIdentity;
+            retainedFrame = retainedPreparedFrame;
         }
         // Execute due Cloud-issued interests first: fresh facts/ROIs are latest-wins for this request, while key
         // edges enter the bounded retention so they survive transport failure until acknowledged.
@@ -453,17 +499,29 @@ public final class WindowObservationRunner {
         List<ObservationTerminalFrame> terminalFramesForThisRequest = List.of();
         List<ObservationPreparedFrame> preparedFramesForThisRequest = List.of();
         long requestObserverSeq = observerSeq.get() + 1L;
-        // A Cloud-requested exact frame is the active protocol step. Capture it before ordinary sampling so
-        // multi-window observer work cannot starve a demand that remains valid until ACK/cancel/replacement.
-        ObservationPreparedFrameDemand demand = preparedFrameDemand;
-        if (preparedFrameCapture != null && demand != null) {
-            ObservationPreparedFrame retained = retainedPreparedFrame;
+        // A Cloud-requested exact frame is the active protocol step. Capture it before ordinary sampling, retain it
+        // across transport failure, then stop attaching the immutable bytes after one successful HTTP exchange.
+        // Cloud may keep the business demand active while its prepared-action slot is occupied; that is not a request
+        // to upload the same payload again.
+        boolean demandAlreadyDelivered = deliveredIdentity != null && deliveredIdentity.matches(demand);
+        if (preparedFrameCapture != null && demand != null && !demandAlreadyDelivered) {
+            ObservationPreparedFrame retained = retainedFrame;
             if (retained == null
                     || !Objects.equals(retained.demandId(), demand.demandId())
                     || retained.generation() != demand.generation()) {
                 try {
                     retained = preparedFrameCapture.capture(demand);
-                    retainedPreparedFrame = retained;
+                    synchronized (taskBindingMonitor) {
+                        if (stopRequested.get()
+                                || taskBindingRevision.get() != requestTaskBindingRevision
+                                || !PreparedFrameIdentity.from(retained).matches(preparedFrameDemand)
+                                || deliveredPreparedFrameIdentity != null
+                                && deliveredPreparedFrameIdentity.matches(preparedFrameDemand)) {
+                            wakeForLocalStateChange();
+                            return;
+                        }
+                        retainedPreparedFrame = retained;
+                    }
                     log.info("Prepared-frame captured for upload: windowId={} taskRunId={} demandId={} purpose={} "
                                     + "generation={} capturedAtMs={} size={}x{} pngBytes={}",
                             windowId, taskRunId, demand.demandId(), demand.purpose(), demand.generation(),
@@ -479,11 +537,21 @@ public final class WindowObservationRunner {
         }
         if (sampler != null) {
             try {
-                WindowObservationSampler.SampleBatch batch = sampler.collect(
-                        requestInterests,
-                        requestObserverSeq,
-                        requestStartupCombatObservation,
-                        requestStartupScreenObservation && observesWuhuan(requestTaskCode));
+                WindowObservationSampler.SampleBatch batch;
+                synchronized (samplerMonitor) {
+                    synchronized (taskBindingMonitor) {
+                        if (stopRequested.get()
+                                || taskBindingRevision.get() != requestTaskBindingRevision) {
+                            wakeForLocalStateChange();
+                            return;
+                        }
+                    }
+                    batch = sampler.collect(
+                            requestInterests,
+                            requestObserverSeq,
+                            requestStartupCombatObservation,
+                            requestStartupScreenObservation && observesWuhuan(requestTaskCode));
+                }
                 factsForThisRequest = batch.facts();
                 pathingFactsForThisRequest = batch.pathingFacts().stream()
                         .filter(fact -> taskRunId.equals(fact.taskRunId())
@@ -563,34 +631,43 @@ public final class WindowObservationRunner {
             pathingFactsForThisRequest = List.of();
             currentIntentId = null;
         }
-        long assignedObserverSeq = observerSeq.incrementAndGet();
-        if (assignedObserverSeq != requestObserverSeq) {
-            throw new IllegalStateException("Observation sequence changed outside the runner thread");
+        ObservationRequest request;
+        synchronized (taskBindingMonitor) {
+            if (stopRequested.get()
+                    || Thread.currentThread().isInterrupted()
+                    || taskBindingRevision.get() != requestTaskBindingRevision) {
+                wakeForLocalStateChange();
+                return;
+            }
+            long assignedObserverSeq = observerSeq.incrementAndGet();
+            if (assignedObserverSeq != requestObserverSeq) {
+                throw new IllegalStateException("Observation sequence changed outside the runner thread");
+            }
+            request = new ObservationRequest(
+                    ObservationProtocolValidator.CONTRACT_VERSION,
+                    tenantId,
+                    deviceId,
+                    windowId,
+                    hwnd,
+                    requestTaskCode,
+                    taskRunId,
+                    requestObserverSeq,
+                    System.currentTimeMillis(),
+                    requestInterestRevision,
+                    currentIntentId,
+                    null,
+                    null,
+                    requestStartupScreenObservation ? "startup-screen-observation" : RUNNER_SOURCE,
+                    null,
+                    pathingFactsForThisRequest,
+                    factsForThisRequest,
+                    eventsForThisRequest,
+                    roisForThisRequest,
+                    dialogInterestsForThisRequest,
+                    preparedDialogsForThisRequest,
+                    terminalFramesForThisRequest,
+                    preparedFramesForThisRequest);
         }
-        ObservationRequest request = new ObservationRequest(
-                ObservationProtocolValidator.CONTRACT_VERSION,
-                tenantId,
-                deviceId,
-                windowId,
-                hwnd,
-                requestTaskCode,
-                taskRunId,
-                requestObserverSeq,
-                System.currentTimeMillis(),
-                interestRevision,
-                currentIntentId,
-                null,
-                null,
-                requestStartupScreenObservation ? "startup-screen-observation" : RUNNER_SOURCE,
-                null,
-                pathingFactsForThisRequest,
-                factsForThisRequest,
-                eventsForThisRequest,
-                roisForThisRequest,
-                dialogInterestsForThisRequest,
-                preparedDialogsForThisRequest,
-                terminalFramesForThisRequest,
-                preparedFramesForThisRequest);
         for (ObservationRoi roi : roisForThisRequest) {
             if ("xiuluo-dialog".equals(roi.roiKey())) {
                 log.info("Observation dialog ROI sending: windowId={} taskRunId={} observerSeq={} capturedAtMs={} "
@@ -600,112 +677,173 @@ public final class WindowObservationRunner {
                         sha256Hex(roi.pngBytes()));
             }
         }
-        for (ObservationPreparedFrame frame : preparedFramesForThisRequest) {
-            log.info("Prepared-frame upload sending: windowId={} taskRunId={} observerSeq={} demandId={} purpose={} "
-                            + "generation={} capturedAtMs={} pngBytes={}",
-                    windowId, taskRunId, request.observerSeq(), frame.demandId(), frame.purpose(),
-                    frame.generation(), frame.capturedAtMs(), frame.pngBytes().length);
-        }
         try {
-            ObservationResponse response = client.send(request);
-            if (taskBindingRevision.get() != requestTaskBindingRevision) {
-                log.info("Observation response ignored after child task rebind: windowId={} taskRunId={} "
-                                + "requestTaskCode={} currentTaskCode={} observerSeq={} requestBindingRevision={} "
-                                + "currentBindingRevision={}",
-                        windowId, taskRunId, requestTaskCode, taskCode, requestObserverSeq,
-                        requestTaskBindingRevision, taskBindingRevision.get());
-                wakeForLocalStateChange();
-                return;
-            }
-            // A failed send deliberately keeps the startup marker so the next request describes the same fresh
-            // screen boundary. Only the first accepted request consumes it.
-            startupScreenObservationPending = false;
-            if (response.acceptedObserverSeq() == requestObserverSeq
-                    && hasConfirmedOutOfCombatFact(factsForThisRequest)) {
-                startupCombatObservationPending = false;
-            }
-            synchronized (pendingKeyEvents) {
-                for (String acknowledged : response.acknowledgedEventIds()) {
-                    pendingKeyEvents.remove(acknowledged);
+            ObservationResponse response;
+            ObservationSendCancellation sendCancellation = new ObservationSendCancellation();
+            synchronized (taskBindingMonitor) {
+                if (stopRequested.get()
+                        || Thread.currentThread().isInterrupted()
+                        || taskBindingRevision.get() != requestTaskBindingRevision) {
+                    wakeForLocalStateChange();
+                    return;
                 }
+                /*
+                 * Installing this exact call is the send-start linearization point. Rebind/stop that
+                 * wins first prevents installation; one that wins later cancels this token. The
+                 * transport checks cancellation both before and immediately after creating its future.
+                 */
+                inFlightSendCancellation = sendCancellation;
             }
-            long previousInterestRevision = interestRevision;
-            List<ObservationInterest> previousInterests = interests;
-            interestRevision = response.interestRevision();
-            interests = response.interests();
-            if (previousInterestRevision != interestRevision || !previousInterests.equals(interests)) {
-                log.info("Observation interests applied: windowId={} taskRunId={} observerSeq={} revision={} interests={}",
-                        windowId, taskRunId, request.observerSeq(), interestRevision,
-                        interests.stream().map(ObservationInterest::interestKey).toList());
-            }
-            ObservationPreparedFrameDemand previousDemand = preparedFrameDemand;
-            ObservationPreparedFrameDemand nextDemand = response.preparedFrameDemands().isEmpty()
-                    ? null : response.preparedFrameDemands().getFirst();
-            preparedFrameDemand = nextDemand;
-            if (nextDemand == null
-                    || retainedPreparedFrame != null
-                    && (!Objects.equals(retainedPreparedFrame.demandId(), nextDemand.demandId())
-                    || retainedPreparedFrame.generation() != nextDemand.generation())) {
-                retainedPreparedFrame = null;
-            }
-            if (nextDemand != null) {
-                if (previousDemand == null
-                        || !Objects.equals(previousDemand.demandId(), nextDemand.demandId())
-                        || previousDemand.generation() != nextDemand.generation()) {
-                    log.info("Prepared-frame demand received: windowId={} taskRunId={} observerSeq={} demandId={} "
-                                    + "purpose={} generation={} issuedAtMs={}",
-                            windowId, taskRunId, request.observerSeq(), nextDemand.demandId(), nextDemand.purpose(),
-                            nextDemand.generation(), nextDemand.issuedAtMs());
-                }
-                wakeForLocalStateChange();
-            }
-            if (sampler != null) {
-                sampler.acknowledgeTerminalFrames(terminalFramesForThisRequest.stream()
-                        .map(ObservationTerminalFrame::frameId)
-                        .toList());
-                sampler.acceptAnalysisResults(response.analysisResults());
-                sampler.acknowledgeDeliveredPathingFacts(pathingFactsForThisRequest);
-                if (response.acceptedObserverSeq() == requestObserverSeq) {
-                    sampler.acknowledgeDeliveredFacts(requestObserverSeq, factsForThisRequest);
-                    if (response.interestRevision() == request.interestRevision()) {
-                        sampler.acknowledgeDeliveredRois(requestObserverSeq, roisForThisRequest);
+            try {
+                response = client.send(request, sendCancellation);
+            } finally {
+                synchronized (taskBindingMonitor) {
+                    if (inFlightSendCancellation == sendCancellation) {
+                        inFlightSendCancellation = null;
                     }
                 }
             }
-            lastSuccessfulSendAtMs = System.currentTimeMillis();
-            if (!pathingFactsForThisRequest.isEmpty()) {
-                lastDeliveredPathingFact = pathingFactsForThisRequest.getFirst();
-            }
-            successfulSendCount++;
-            long recoveredFailures = consecutiveTransportFailures;
-            consecutiveTransportFailures = 0L;
-            if (recoveredFailures > 0L) {
-                log.info("Observation transport recovered: windowId={} taskRunId={} observerSeq={} interestRevision={} interests={} previousConsecutiveFailures={}",
-                        windowId, taskRunId, request.observerSeq(), interestRevision, interests.size(),
-                        recoveredFailures);
+            synchronized (samplerMonitor) {
+                synchronized (taskBindingMonitor) {
+                    if (taskBindingRevision.get() != requestTaskBindingRevision) {
+                        log.info("Observation response ignored after child task rebind: windowId={} taskRunId={} "
+                                        + "requestTaskCode={} currentTaskCode={} observerSeq={} "
+                                        + "requestBindingRevision={} currentBindingRevision={}",
+                                windowId, taskRunId, requestTaskCode, taskCode, requestObserverSeq,
+                                requestTaskBindingRevision, taskBindingRevision.get());
+                        wakeForLocalStateChange();
+                        return;
+                    }
+                    boolean requestAccepted = response.acceptedObserverSeq() >= requestObserverSeq;
+                    if (!requestAccepted) {
+                        // Sequence coverage is the acceptance boundary for every payload type. A 2xx response
+                        // below this request's sequence commits no ACK, interest, demand or sampler state.
+                        lastTransportFailureAtMs = System.currentTimeMillis();
+                        long failures = ++consecutiveTransportFailures;
+                        if (failures == 1L || failures % 12L == 0L) {
+                            log.warn("Observation response did not cover request; retained for retry: windowId={} "
+                                            + "taskRunId={} observerSeq={} acceptedObserverSeq={} "
+                                            + "preparedFrame={} consecutiveFailures={}",
+                                    windowId, taskRunId, requestObserverSeq, response.acceptedObserverSeq(),
+                                    !preparedFramesForThisRequest.isEmpty(), failures);
+                        }
+                        wakeForLocalStateChange();
+                        return;
+                    }
+                    boolean carriedPreparedFrame = !preparedFramesForThisRequest.isEmpty();
+                    if (carriedPreparedFrame) {
+                        ObservationPreparedFrame deliveredFrame = preparedFramesForThisRequest.getFirst();
+                        deliveredPreparedFrameIdentity = PreparedFrameIdentity.from(deliveredFrame);
+                        retainedPreparedFrame = null;
+                        log.info("Prepared-frame upload delivered once: windowId={} taskRunId={} observerSeq={} "
+                                        + "demandId={} purpose={} generation={} capturedAtMs={} pngBytes={}",
+                                windowId, taskRunId, request.observerSeq(), deliveredFrame.demandId(),
+                                deliveredFrame.purpose(), deliveredFrame.generation(), deliveredFrame.capturedAtMs(),
+                                deliveredFrame.pngBytes().length);
+                    }
+                    // A failed send deliberately keeps the startup marker so the next request describes the same
+                    // fresh screen boundary. Only a sequence-covered request consumes it.
+                    startupScreenObservationPending = false;
+                    if (hasConfirmedOutOfCombatFact(factsForThisRequest)) {
+                        startupCombatObservationPending = false;
+                    }
+                    synchronized (pendingKeyEvents) {
+                        for (String acknowledged : response.acknowledgedEventIds()) {
+                            pendingKeyEvents.remove(acknowledged);
+                        }
+                    }
+                    long previousInterestRevision = interestRevision;
+                    List<ObservationInterest> previousInterests = interests;
+                    interestRevision = response.interestRevision();
+                    interests = response.interests();
+                    if (previousInterestRevision != interestRevision || !previousInterests.equals(interests)) {
+                        log.info("Observation interests applied: windowId={} taskRunId={} observerSeq={} "
+                                        + "revision={} interests={}",
+                                windowId, taskRunId, request.observerSeq(), interestRevision,
+                                interests.stream().map(ObservationInterest::interestKey).toList());
+                    }
+                    ObservationPreparedFrameDemand previousDemand = preparedFrameDemand;
+                    ObservationPreparedFrameDemand nextDemand = response.preparedFrameDemands().isEmpty()
+                            ? null : response.preparedFrameDemands().getFirst();
+                    preparedFrameDemand = nextDemand;
+                    PreparedFrameIdentity currentDeliveredIdentity = deliveredPreparedFrameIdentity;
+                    if (currentDeliveredIdentity == null || !currentDeliveredIdentity.matches(nextDemand)) {
+                        deliveredPreparedFrameIdentity = null;
+                    }
+                    if (nextDemand == null || retainedPreparedFrame != null
+                            && (!Objects.equals(retainedPreparedFrame.demandId(), nextDemand.demandId())
+                            || retainedPreparedFrame.generation() != nextDemand.generation())) {
+                        retainedPreparedFrame = null;
+                    }
+                    if (nextDemand != null) {
+                        if (previousDemand == null
+                                || !Objects.equals(previousDemand.demandId(), nextDemand.demandId())
+                                || previousDemand.generation() != nextDemand.generation()) {
+                            log.info("Prepared-frame demand received: windowId={} taskRunId={} observerSeq={} "
+                                            + "demandId={} purpose={} generation={} issuedAtMs={}",
+                                    windowId, taskRunId, request.observerSeq(), nextDemand.demandId(),
+                                    nextDemand.purpose(), nextDemand.generation(), nextDemand.issuedAtMs());
+                        }
+                        wakeForLocalStateChange();
+                    }
+                    if (sampler != null) {
+                        sampler.acknowledgeTerminalFrames(terminalFramesForThisRequest.stream()
+                                .map(ObservationTerminalFrame::frameId)
+                                .toList());
+                        sampler.acceptAnalysisResults(response.analysisResults());
+                        sampler.acknowledgeDeliveredPathingFacts(pathingFactsForThisRequest);
+                        sampler.acknowledgeDeliveredFacts(requestObserverSeq, factsForThisRequest);
+                        if (response.interestRevision() == request.interestRevision()) {
+                            sampler.acknowledgeDeliveredRois(requestObserverSeq, roisForThisRequest);
+                        }
+                    }
+                    lastSuccessfulSendAtMs = System.currentTimeMillis();
+                    if (!pathingFactsForThisRequest.isEmpty()) {
+                        lastDeliveredPathingFact = pathingFactsForThisRequest.getFirst();
+                    }
+                    successfulSendCount++;
+                    long recoveredFailures = consecutiveTransportFailures;
+                    consecutiveTransportFailures = 0L;
+                    if (recoveredFailures > 0L) {
+                        log.info("Observation transport recovered: windowId={} taskRunId={} observerSeq={} "
+                                        + "interestRevision={} interests={} previousConsecutiveFailures={}",
+                                windowId, taskRunId, request.observerSeq(), interestRevision, interests.size(),
+                                recoveredFailures);
+                    }
+                }
             }
         } catch (ObservationTransportException transportFailure) {
             // Transport failure is never a business fact: keep every unacknowledged key event and the bounded
             // latest state, and simply try again on the next cycle.
-            lastTransportFailureAtMs = System.currentTimeMillis();
-            long failures = ++consecutiveTransportFailures;
-            if (failures == 1L || failures % 12L == 0L) {
-                log.warn("Observation send failed (retained state, will retry): windowId={} taskRunId={} observerSeq={} interestRevision={} interests={} rois={} consecutiveFailures={} kind={} message={}",
-                        windowId, taskRunId, request.observerSeq(), interestRevision, interests.size(),
-                        roisForThisRequest.size(), failures, transportFailure.kind(), transportFailure.getMessage());
-            }
-            /*
-             * A semantic 400 is not a transient transport hiccup: identical content can never
-             * succeed on retry. When the rejected batch carried a retained pathing fact, suppress
-             * it so one poisoned fact cannot dead-lock the whole observation plane (coordinates,
-             * combat facts and key events all travel in the same batch).
-             */
-            if (sampler != null
-                    && transportFailure.kind() == ObservationTransportException.Kind.HTTP_STATUS
-                    && transportFailure.getMessage() != null
-                    && transportFailure.getMessage().contains("INVALID_OBSERVATION_REQUEST")
-                    && !pathingFactsForThisRequest.isEmpty()) {
-                sampler.suppressRejectedPathingFact(transportFailure.getMessage());
+            synchronized (samplerMonitor) {
+                synchronized (taskBindingMonitor) {
+                    if (taskBindingRevision.get() != requestTaskBindingRevision) {
+                        wakeForLocalStateChange();
+                        return;
+                    }
+                    lastTransportFailureAtMs = System.currentTimeMillis();
+                    long failures = ++consecutiveTransportFailures;
+                    if (failures == 1L || failures % 12L == 0L) {
+                        log.warn("Observation send failed (retained state, will retry): windowId={} taskRunId={} "
+                                        + "observerSeq={} interestRevision={} interests={} rois={} "
+                                        + "consecutiveFailures={} kind={} message={}",
+                                windowId, taskRunId, request.observerSeq(), interestRevision, interests.size(),
+                                roisForThisRequest.size(), failures, transportFailure.kind(),
+                                transportFailure.getMessage());
+                    }
+                    /*
+                     * A semantic 400 is not a transient transport hiccup: identical content can never
+                     * succeed on retry. Suppression is serialized with collect/reset and belongs only
+                     * to the still-current child revision.
+                     */
+                    if (sampler != null
+                            && transportFailure.kind() == ObservationTransportException.Kind.HTTP_STATUS
+                            && transportFailure.getMessage() != null
+                            && transportFailure.getMessage().contains("INVALID_OBSERVATION_REQUEST")
+                            && !pathingFactsForThisRequest.isEmpty()) {
+                        sampler.suppressRejectedPathingFact(transportFailure.getMessage());
+                    }
+                }
             }
         }
     }
@@ -811,5 +949,18 @@ public final class WindowObservationRunner {
             throw new IllegalArgumentException(field + " must be nonblank");
         }
         return value;
+    }
+
+    private record PreparedFrameIdentity(String demandId, long generation) {
+
+        private static PreparedFrameIdentity from(ObservationPreparedFrame frame) {
+            return new PreparedFrameIdentity(frame.demandId(), frame.generation());
+        }
+
+        private boolean matches(ObservationPreparedFrameDemand demand) {
+            return demand != null
+                    && Objects.equals(demandId, demand.demandId())
+                    && generation == demand.generation();
+        }
     }
 }

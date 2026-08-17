@@ -119,11 +119,11 @@ public final class LocalTurnActionExecutor {
                             window.context().currentPendingDirectCombatEnterClaim();
                     boolean markedDirectTarget = pendingDirectCombatClaim != null
                             && isDirectCombatTargetMouseSequence(mouseSequence);
-                    // A pending Alt+A ticket may span Cloud turns.  A later ordinary left click must never
-                    // consume it; instead it proves that the promised direct-combat target action was replaced.
+                    // A pending task-owned combat ticket may span Cloud turns. A later ordinary left click must
+                    // never consume it; instead it proves that the promised target action was replaced.
                     if (pendingDirectCombatClaim != null && !markedDirectTarget
                             && containsLeftClick(mouseSequence)) {
-                        window.context().clearPendingDirectCombatEnterClaim("alt-a target click marker mismatch");
+                        window.context().clearPendingDirectCombatEnterClaim("direct-combat target click marker mismatch");
                         pendingDirectCombatClaim = null;
                     }
                     TurnInputStepExecutor.MouseSequenceResult sequenceResult;
@@ -143,7 +143,7 @@ public final class LocalTurnActionExecutor {
                         if (sequenceResult.result().status() == TurnInputStepExecutor.Status.COMPLETED) {
                             window.context().consumePendingDirectCombatEnterClaim(pendingDirectCombatClaim.claimId());
                         } else {
-                            window.context().clearPendingDirectCombatEnterClaim("alt-a target click not executed");
+                            window.context().clearPendingDirectCombatEnterClaim("direct-combat target click not executed");
                         }
                     }
                     terminal = sequenceResult.result().status() != TurnInputStepExecutor.Status.COMPLETED;

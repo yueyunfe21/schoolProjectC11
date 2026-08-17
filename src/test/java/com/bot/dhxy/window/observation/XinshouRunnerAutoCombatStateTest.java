@@ -10,35 +10,34 @@ import java.util.Deque;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class XinshouRunnerAutoCombatStateTest {
 
     @Test
-    void startsDisarmedAndIgnoresNonXinshouRuns() {
+    void ordinaryTaskStartsArmedAndMaintainsWithoutBusinessPhasePermission() {
         RecordingPort port = new RecordingPort();
         XinshouRunnerAutoCombatState state = new XinshouRunnerAutoCombatState(port);
         WindowRuntimeContext context = context("window-1");
 
         state.begin(context, "XIULUO_V2", "run-1");
 
-        assertFalse(state.arm(context));
+        assertTrue(state.isArmed(context, "run-1"));
         assertEquals(
-                XinshouRunnerAutoCombatState.MaintenanceResult.SKIPPED,
+                XinshouRunnerAutoCombatState.MaintenanceResult.COMPLETED,
                 state.maintain(context, "run-1", 1L, 1_000L));
-        assertEquals(0, port.calls.get());
+        assertEquals(1, port.calls.get());
     }
 
     @Test
-    void cloudRestoreArmAllowsExactlyOneMaintenancePerCombatGeneration() {
+    void maintainsExactlyOncePerCombatGeneration() {
         RecordingPort port = new RecordingPort();
         XinshouRunnerAutoCombatState state = new XinshouRunnerAutoCombatState(port);
         WindowRuntimeContext context = context("window-1");
         state.begin(context, "XINSHOU", "run-1");
 
-        assertFalse(state.isArmed(context, "run-1"));
+        assertTrue(state.isArmed(context, "run-1"));
         assertTrue(state.arm(context));
         assertEquals(
                 XinshouRunnerAutoCombatState.MaintenanceResult.COMPLETED,
@@ -53,7 +52,7 @@ class XinshouRunnerAutoCombatStateTest {
     }
 
     @Test
-    void wildBattleIsRunnerArmedAndMaintainsWithoutACloudInputTurn() {
+    void wildBattleUsesTheSameGenericRunnerOwnership() {
         RecordingPort port = new RecordingPort();
         XinshouRunnerAutoCombatState state = new XinshouRunnerAutoCombatState(port);
         WindowRuntimeContext context = context("window-1");
@@ -75,8 +74,6 @@ class XinshouRunnerAutoCombatStateTest {
         XinshouRunnerAutoCombatState state = new XinshouRunnerAutoCombatState(port);
         WindowRuntimeContext context = context("window-1");
         state.begin(context, "XINSHOU", "run-1");
-        state.arm(context);
-
         assertEquals(
                 XinshouRunnerAutoCombatState.MaintenanceResult.RETRY_LATER,
                 state.maintain(context, "run-1", 1L, 1_000L));
@@ -96,8 +93,6 @@ class XinshouRunnerAutoCombatStateTest {
         XinshouRunnerAutoCombatState state = new XinshouRunnerAutoCombatState(port);
         WindowRuntimeContext context = context("window-1");
         state.begin(context, "XINSHOU", "run-1");
-        state.arm(context);
-
         assertThrows(IllegalStateException.class,
                 () -> state.maintain(context, "run-1", 1L, 1_000L));
         assertEquals(
@@ -115,16 +110,30 @@ class XinshouRunnerAutoCombatStateTest {
         XinshouRunnerAutoCombatState state = new XinshouRunnerAutoCombatState(port);
         WindowRuntimeContext context = context("window-1");
         state.begin(context, "XINSHOU", "run-1");
-        state.arm(context);
         state.begin(context, "XINSHOU", "run-2");
 
-        assertFalse(state.isArmed(context, "run-2"));
+        assertTrue(state.isArmed(context, "run-2"));
         assertEquals(
                 XinshouRunnerAutoCombatState.MaintenanceResult.SKIPPED,
                 state.maintain(context, "run-1", 1L, 1_000L));
         state.close(context, "run-1");
         assertTrue(state.arm(context));
         assertTrue(state.isArmed(context, "run-2"));
+        assertEquals(0, port.calls.get());
+    }
+
+    @Test
+    void closingCurrentRunStopsFurtherMaintenance() {
+        RecordingPort port = new RecordingPort();
+        XinshouRunnerAutoCombatState state = new XinshouRunnerAutoCombatState(port);
+        WindowRuntimeContext context = context("window-1");
+        state.begin(context, "WUHUAN_V3", "run-1");
+
+        state.close(context, "run-1");
+
+        assertEquals(
+                XinshouRunnerAutoCombatState.MaintenanceResult.SKIPPED,
+                state.maintain(context, "run-1", 1L, 1_000L));
         assertEquals(0, port.calls.get());
     }
 

@@ -21,6 +21,7 @@ class G059RuntimeSettingsConnectivityTest {
         properties.setLeaderCommonBoxEnabled(false);
         properties.setMemberCommonBoxEnabled(true);
         properties.setTaskStartupPreparationEnabled(false);
+        properties.setXiuluoSkipBossEnabled(true);
         properties.setDoubleExperienceClaimEnabled(false);
         properties.setPlayerHpSupplyEnabled(true);
         properties.setPlayerHpSupplyThreshold(70);
@@ -42,6 +43,7 @@ class G059RuntimeSettingsConnectivityTest {
         assertFalse(settings.leaderCommonBoxEnabled());
         assertTrue(settings.memberCommonBoxEnabled());
         assertFalse(settings.taskStartupPreparationEnabled());
+        assertTrue(settings.xiuluoSkipBossEnabled());
         assertFalse(settings.doubleExperienceClaimEnabled());
         assertTrue(settings.playerHpSupplyEnabled());
         assertEquals(70, settings.playerHpSupplyThreshold());

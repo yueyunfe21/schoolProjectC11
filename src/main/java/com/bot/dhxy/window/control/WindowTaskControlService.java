@@ -774,7 +774,7 @@ public class WindowTaskControlService {
                 : retainedRuntimeSettings;
         log.info("Remote task runtime settings: windowId={} healPetMs={} repairMs={} maintenanceImmediate={} "
                         + "summonClean={}/{} startupPreparation={} doubleExperienceClaim={} leaderBox={} memberBox={} "
-                        + "supply=playerHp:{}/{} playerMp:{}/{} petHp:{}/{} petMp:{}/{}",
+                        + "xiuluoSkipBoss={} supply=playerHp:{}/{} playerMp:{}/{} petHp:{}/{} petMp:{}/{}",
                 windowId,
                 runtimeSettings.healPetMaintenanceIntervalMs(),
                 runtimeSettings.repairEquipmentMaintenanceIntervalMs(),
@@ -783,6 +783,7 @@ public class WindowTaskControlService {
                 runtimeSettings.taskStartupPreparationEnabled(),
                 runtimeSettings.doubleExperienceClaimEnabled(),
                 runtimeSettings.leaderCommonBoxEnabled(), runtimeSettings.memberCommonBoxEnabled(),
+                runtimeSettings.xiuluoSkipBossEnabled(),
                 runtimeSettings.playerHpSupplyEnabled(), runtimeSettings.playerHpSupplyThreshold(),
                 runtimeSettings.playerMpSupplyEnabled(), runtimeSettings.playerMpSupplyThreshold(),
                 runtimeSettings.petHpSupplyEnabled(), runtimeSettings.petHpSupplyThreshold(),
@@ -908,6 +909,7 @@ public class WindowTaskControlService {
                 botProperties.isLeaderCommonBoxEnabled(),
                 botProperties.isMemberCommonBoxEnabled(),
                 botProperties.isTaskStartupPreparationEnabled(),
+                botProperties.isXiuluoSkipBossEnabled(),
                 botProperties.isDoubleExperienceClaimEnabled(),
                 botProperties.isPlayerHpSupplyEnabled(),
                 botProperties.getPlayerHpSupplyThreshold(),

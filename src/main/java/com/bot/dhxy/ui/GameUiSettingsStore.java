@@ -41,6 +41,7 @@ public class GameUiSettingsStore {
     private static final String LEADER_COMMON_BOX_ENABLED = "leaderCommonBoxEnabled";
     private static final String MEMBER_COMMON_BOX_ENABLED = "memberCommonBoxEnabled";
     private static final String TASK_STARTUP_PREPARATION_ENABLED = "taskStartupPreparationEnabled";
+    private static final String XIULUO_SKIP_BOSS_ENABLED = "xiuluoSkipBossEnabled";
     private static final String DOUBLE_EXPERIENCE_CLAIM_ENABLED = "doubleExperienceClaimEnabled";
     private static final String PLAYER_HP_SUPPLY_ENABLED = "playerHpSupplyEnabled";
     private static final String PLAYER_HP_SUPPLY_THRESHOLD = "playerHpSupplyThreshold";
@@ -90,6 +91,8 @@ public class GameUiSettingsStore {
         botProperties.setLeaderCommonBoxEnabled(readBoolean(properties, LEADER_COMMON_BOX_ENABLED, botProperties.isLeaderCommonBoxEnabled()));
         botProperties.setMemberCommonBoxEnabled(readBoolean(properties, MEMBER_COMMON_BOX_ENABLED, botProperties.isMemberCommonBoxEnabled()));
         botProperties.setTaskStartupPreparationEnabled(readBoolean(properties, TASK_STARTUP_PREPARATION_ENABLED, botProperties.isTaskStartupPreparationEnabled()));
+        botProperties.setXiuluoSkipBossEnabled(readBoolean(
+                properties, XIULUO_SKIP_BOSS_ENABLED, botProperties.isXiuluoSkipBossEnabled()));
         botProperties.setDoubleExperienceClaimEnabled(readBoolean(
                 properties, DOUBLE_EXPERIENCE_CLAIM_ENABLED, botProperties.isDoubleExperienceClaimEnabled()));
         botProperties.setPlayerHpSupplyEnabled(readBoolean(properties, PLAYER_HP_SUPPLY_ENABLED, botProperties.isPlayerHpSupplyEnabled()));
@@ -132,6 +135,7 @@ public class GameUiSettingsStore {
         properties.setProperty(LEADER_COMMON_BOX_ENABLED, String.valueOf(botProperties.isLeaderCommonBoxEnabled()));
         properties.setProperty(MEMBER_COMMON_BOX_ENABLED, String.valueOf(botProperties.isMemberCommonBoxEnabled()));
         properties.setProperty(TASK_STARTUP_PREPARATION_ENABLED, String.valueOf(botProperties.isTaskStartupPreparationEnabled()));
+        properties.setProperty(XIULUO_SKIP_BOSS_ENABLED, String.valueOf(botProperties.isXiuluoSkipBossEnabled()));
         properties.setProperty(DOUBLE_EXPERIENCE_CLAIM_ENABLED, String.valueOf(botProperties.isDoubleExperienceClaimEnabled()));
         properties.setProperty(PLAYER_HP_SUPPLY_ENABLED, String.valueOf(botProperties.isPlayerHpSupplyEnabled()));
         properties.setProperty(PLAYER_HP_SUPPLY_THRESHOLD, String.valueOf(botProperties.getPlayerHpSupplyThreshold()));

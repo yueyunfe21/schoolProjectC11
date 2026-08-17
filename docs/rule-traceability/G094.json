@@ -1,0 +1,136 @@
+{
+  "schemaVersion": 1,
+  "card": "G094",
+  "changeType": "business",
+  "status": "REVIEW_PASSED",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "bb41052498ec769624ac8617498e4ac91fd8f9c9",
+    "pushedReference": "origin/dev",
+    "cloudBranch": "dev",
+    "cloudCommit": "400857d82a4be23b70ee00b0868e548054dc2ab7",
+    "cloudPushedReference": "origin/dev",
+    "protectedWuhuanReference": "D:/mavenProject/DHXY@696a12b0ffb8aa21f7d5dee841a65cecd78be9f7"
+  },
+  "repositories": {
+    "cloud": "../DHXY-cloud-brain"
+  },
+  "rules": ["BR-WUHAN-005"],
+  "affectedPaths": [
+    "docs/业务逻辑.md",
+    "docs/business-rules.json",
+    "docs/云端迁移常见错误清单.md",
+    "docs/rule-traceability/G094.json",
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/cr-dashboard-data.js",
+    "src/main/java/com/bot/dhxy/window/observation/WindowObservationRunner.java",
+    "src/main/java/com/bot/dhxy/window/observation/ObservationClient.java",
+    "src/main/java/com/bot/dhxy/window/observation/ObservationSendCancellation.java",
+    "src/main/java/com/bot/dhxy/window/observation/HttpsObservationClient.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/local/LeftTopStatusLocalOperationExecutor.java",
+    "src/main/java/com/bot/dhxy/capture/WindowCaptureEvidenceStore.java",
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/observation/CloudWindowObservationInbox.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/dialog/CloudDialogPreparedActionState.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wuhuan/v3/FiveRingTaskV3.java"}
+  ],
+  "businessDifference": {
+    "kind": "NONE"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-WUHAN-005",
+      "producer": "Client WindowObservationRunner captures one exact-HWND immutable prepared frame for the active demandId and generation, and records successful HTTP delivery separately from demand lifetime.",
+      "transport": "ObservationRequest.preparedFrames carries the payload once; ObservationResponse.preparedFrameDemands keeps business demand identity without requiring payload retransmission after successful delivery.",
+      "consumer": "CloudWholeTaskObserver consumes the exact accepted frame from CloudWindowObservationInbox and FiveRingTaskV3 consumes only an exact actionId whose operation belongs to the current requested Dialog operation set.",
+      "ordering": "exact demand -> capture once -> successful HTTP delivery -> Client marks generation delivered -> Cloud retains accepted frame while slot is occupied -> exact operation publish -> validated actionId consume -> action ACK/cancel retires frame and demand; replacement/cancel fences every older generation.",
+      "contracts": [
+        {
+          "path": "src/main/java/com/bot/dhxy/window/observation/WindowObservationRunner.java",
+          "command": "rg -n \"retainedPreparedFrame|preparedFrameDemand|Prepared-frame upload\" src/main/java/com/bot/dhxy/window/observation/WindowObservationRunner.java",
+          "proves": [
+            "Client production producer and transport delivery state are reachable in the observation send path.",
+            "Successful delivery, transport retry, cancel, and replacement are reviewed on one exact demand identity."
+          ]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java",
+          "command": "rg -n \"acceptedPreparedFrame|acknowledgePreparedFrame|prepared-slot-occupied|publish-rejected\" src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java",
+          "proves": [
+            "Cloud receives and retains the exact accepted frame independently from prepared-slot availability.",
+            "Slot occupancy cannot demand a second upload of the same immutable payload."
+          ]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/main/java/com/bot/dhxy/service/dialog/CloudDialogPreparedActionState.java",
+          "command": "rg -n \"publishIfSlotUnchanged|takeConsumedReceipt|consumedActionReceipts\" src/main/java/com/bot/dhxy/service/dialog/CloudDialogPreparedActionState.java",
+          "proves": [
+            "Prepared publication cannot overwrite an action that won the slot during frame analysis.",
+            "Exact action consumption remains observable by actionId until the retained frame lifecycle claims its one-shot receipt."
+          ]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/main/java/com/bot/dhxy/task/wuhuan/v3/FiveRingTaskV3.java",
+          "command": "rg -n \"awaitPreparedDialog|consumeValidatedForActionId|TASK_TRACKER_PATHING\" src/main/java/com/bot/dhxy/task/wuhuan/v3/FiveRingTaskV3.java",
+          "proves": [
+            "Dialog waiting and consumption are bound to the requested operation and exact actionId.",
+            "A tracker action cannot masquerade as a give-item or inspect Dialog result."
+          ]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/main/java/com/bot/dhxy/task/wuhuan/v3/FiveRingTaskV3.java",
+          "command": "rg -n \"HANDLE_DIALOG|consumeTaskOwnedPathingConsequences|clearPathing\" src/main/java/com/bot/dhxy/task/wuhuan/v3/FiveRingTaskV3.java",
+          "proves": [
+            "A give-item-map terminal reaches HANDLE_DIALOG before transfer/route memory settlement or pathing clear.",
+            "The retained exact terminal permits leaving HANDLE_DIALOG only after transfer, route and exact intent clear all succeed."
+          ]
+        },
+        {
+          "path": "src/main/java/com/bot/dhxy/cloud/turn/local/LeftTopStatusLocalOperationExecutor.java",
+          "command": "rg -n \"captureRegionFast|ROI_WIDTH|ROI_HEIGHT\" src/main/java/com/bot/dhxy/cloud/turn/local/LeftTopStatusLocalOperationExecutor.java src/main/java/com/bot/dhxy/capture/WindowCaptureEvidenceStore.java",
+          "proves": [
+            "The left-top status probe captures only the exact 16x29 bound-window ROI.",
+            "Diagnostic evidence backlog is bounded and cannot block or alter business capture results."
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {
+      "name": "business-rule-gate",
+      "result": "PASS",
+      "evidence": "node scripts/check-business-rule-gate.js --card G094"
+    },
+    {
+      "name": "client-production-compile",
+      "result": "PASS",
+      "evidence": "D:/mavenProject/DHXY-cr271: mvn -q -DskipTests compile"
+    },
+    {
+      "name": "cloud-production-compile",
+      "result": "PASS",
+      "evidence": "D:/mavenProject/DHXY-cloud-brain: mvn compile"
+    },
+    {
+      "name": "round-one-cross-review-findings-repaired",
+      "result": "PASS",
+      "evidence": "Three independent reviewers reported P0/P1/P2/P3=0/8/3/0; every finding was repaired and recompiled."
+    },
+    {
+      "name": "round-two-cross-review-final",
+      "result": "PASS",
+      "evidence": "Changed reviewers re-reviewed Client, Cloud ACK/cache, and FiveRing paths after repairs; final P0/P1/P2/P3=0/0/0/0 on all three paths."
+    },
+    {
+      "name": "static-connectivity",
+      "result": "PASS",
+      "evidence": "Exact demand delivery, cancellable HTTP, retained Cloud frame, atomic prepared publication/consume receipt, Title/dialog fencing, exact settlement, fast ROI capture, and bounded evidence queue are connected in production call paths."
+    }
+  ]
+}
