@@ -49,6 +49,7 @@ public final class QuestLocalOperationExecutor {
             case QUEST_CAPTURE_DETAIL -> sourceStepIndex < 0
                     ? LocalServiceExecution.failed("INVALID_SOURCE_STEP_INDEX", null)
                     : executeCaptureDetail(call, sourceStepIndex);
+            case QUEST_REFRESH_CURRENT_TAB -> executeRefreshCurrentTab(call);
             default -> LocalServiceExecution.failed("UNSUPPORTED_LOCAL_OPERATION", null);
         };
     }
@@ -92,6 +93,20 @@ public final class QuestLocalOperationExecutor {
         }
     }
 
+    /**
+     * 2026-08-22 用户契约：追踪面板防过期刷新只允许「Alt+Q 开面板→点当前任务页→关面板」，
+     * 严禁复用 QUEST_ACTIVATE 去列表里找任务并点击——那一步是多余动作。
+     */
+    private LocalServiceExecution executeRefreshCurrentTab(TurnLocalServiceCall call) {
+        if (call.bag() != null || call.ui() != null || call.giveItem() != null || call.quest() != null) {
+            return LocalServiceExecution.failed("INVALID_QUEST_ARGUMENTS", null);
+        }
+        boolean refreshed = questManagerService.refreshCurrentTaskPanelTab();
+        return refreshed
+                ? LocalServiceExecution.completed("OK", json(new QuestRefreshResult(true)), null)
+                : LocalServiceExecution.failed("QUEST_PANEL_NOT_OPENED", json(new QuestRefreshResult(false)));
+    }
+
     private static boolean hasOnlyQuestArguments(TurnLocalServiceCall call) {
         return call.bag() == null
                 && call.ui() == null
@@ -115,5 +130,8 @@ public final class QuestLocalOperationExecutor {
     }
 
     private record QuestCaptureResult(boolean captured) {
+    }
+
+    private record QuestRefreshResult(boolean refreshed) {
     }
 }

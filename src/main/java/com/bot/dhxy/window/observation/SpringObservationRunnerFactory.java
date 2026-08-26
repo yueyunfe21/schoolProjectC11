@@ -42,9 +42,10 @@ public class SpringObservationRunnerFactory implements WindowObservationRunnerFa
     private final InputSequences inputSequences;
     private final LocalMaintenanceBroadcastHandler maintenanceBroadcastHandler;
     private final DeferredReturnHomeReplayCoordinator returnHomeReplayCoordinator;
-    private final XinshouRunnerAutoCombatState xinshouAutoCombatState;
     private final UICleanerService uiCleanerService;
+    private final com.bot.dhxy.cloud.turn.local.XinshouCombatLocalMechanics combatLocalMechanics;
     private final boolean localKandaEnabled;
+    private final LocalLeaderCombatBroadcast leaderCombatBroadcast;
 
     public SpringObservationRunnerFactory(TurnClient turnClient,
                                           CloudTurnSidecarProperties sidecarProperties,
@@ -56,8 +57,8 @@ public class SpringObservationRunnerFactory implements WindowObservationRunnerFa
                                           InputSequences inputSequences,
                                           LocalMaintenanceBroadcastHandler maintenanceBroadcastHandler,
                                           DeferredReturnHomeReplayCoordinator returnHomeReplayCoordinator,
-                                          XinshouRunnerAutoCombatState xinshouAutoCombatState,
                                           UICleanerService uiCleanerService,
+                                          com.bot.dhxy.cloud.turn.local.XinshouCombatLocalMechanics combatLocalMechanics,
                                           @Value("${bot.xiuluo.local-kanda-enabled:false}") boolean localKandaEnabled) {
         Objects.requireNonNull(turnClient, "turnClient");
         this.tenantId = Objects.requireNonNull(sidecarProperties, "sidecarProperties").getTenantId();
@@ -71,10 +72,15 @@ public class SpringObservationRunnerFactory implements WindowObservationRunnerFa
                 maintenanceBroadcastHandler, "maintenanceBroadcastHandler");
         this.returnHomeReplayCoordinator = Objects.requireNonNull(
                 returnHomeReplayCoordinator, "returnHomeReplayCoordinator");
-        this.xinshouAutoCombatState = Objects.requireNonNull(
-                xinshouAutoCombatState, "xinshouAutoCombatState");
         this.uiCleanerService = Objects.requireNonNull(uiCleanerService, "uiCleanerService");
+        this.combatLocalMechanics = Objects.requireNonNull(combatLocalMechanics, "combatLocalMechanics");
         this.localKandaEnabled = localKandaEnabled;
+        this.leaderCombatBroadcast = new LocalLeaderCombatBroadcast(() -> taskManager.getAllSnapshots().stream()
+                .map(snapshot -> taskManager.getRunner(snapshot.getWindowId())
+                        .map(runner -> runner.getWindowContext())
+                        .orElse(null))
+                .filter(Objects::nonNull)
+                .toList());
         if (turnClient instanceof HttpsTurnClient httpsTurnClient) {
             this.observationClient = httpsTurnClient.newObservationClient();
             ObservationRunnerWiring.register(this);
@@ -98,15 +104,17 @@ public class SpringObservationRunnerFactory implements WindowObservationRunnerFa
                 .map(runner -> runner.getWindowContext())
                 .orElse(null);
         returnHomeReplayCoordinator.clear(context, "new acknowledged taskRun " + taskRunId);
-        xinshouAutoCombatState.begin(context, taskCode, taskRunId);
         WindowObservationSampler sampler = context == null
                 ? null
                 : new WindowObservationSampler(context, contextHolder, tracker, coordinateHelper,
                 kandaDialogService, inputSequences, taskRunId, localKandaEnabled,
                 new LocalCombatSignalMechanics(tracker, coordinateHelper),
-                returnHomeReplayCoordinator, xinshouAutoCombatState);
-        // a0f5ba85 added this pre-terminal cleanup for 五环 V3. Other tasks own their visible
-        // windows and dialogs; binding it globally lets arrival sampling close business UI such as 封妖符.
+                returnHomeReplayCoordinator);
+        if (sampler != null) {
+            sampler.bindAutoPanelMechanics(combatLocalMechanics);
+            sampler.bindLeaderCombatBroadcast(leaderCombatBroadcast);
+        }
+        // 五环仍可复用被动 UI 探针；terminal-frame capture 本身不再调用 cleanup。
         if (sampler != null && "WUHUAN_V3".equalsIgnoreCase(taskCode)) {
             sampler.bindUiCleanerService(uiCleanerService);
         }

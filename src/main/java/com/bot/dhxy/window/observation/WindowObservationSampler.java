@@ -11,13 +11,14 @@ import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPathingFact;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPathingState;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPathingTransition;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPathingType;
-import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPositionValue;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPreparedDialogFact;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationProtocolValidator;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationRoi;
+import com.bot.dhxy.cloud.turn.local.XinshouCombatLocalMechanics;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.dialog.DialogOperation;
@@ -26,11 +27,13 @@ import com.bot.dhxy.service.DialogService;
 import com.bot.dhxy.service.UICleanerService;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.tools.CoordinateHelper;
+import com.bot.dhxy.window.observation.coordread.LocalCoordinateStripReader;
 import com.bot.dhxy.window.model.WindowDialogInterest;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.model.WindowPathingIntent;
 import com.bot.dhxy.window.model.WindowPathingSnapshot;
 import com.bot.dhxy.window.model.WindowPathingState;
+import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import org.slf4j.Logger;
@@ -53,6 +56,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
@@ -100,8 +106,25 @@ public final class WindowObservationSampler {
     private static final int LOCAL_COMBAT_FRAME_UNKNOWN = 0;
     private static final int LOCAL_COMBAT_FRAME_WORLD_CONFIRMED = 1;
     private static final int LOCAL_COMBAT_FRAME_COMBAT_CONFIRMED = 2;
+    /** One incomplete PrintWindow frame must not fabricate a combat exit. */
+    private static final int LOCAL_COMBAT_DUAL_ABSENT_CONFIRMATIONS = 2;
+    /*
+     * 2026-08-21 用户定案（21:51 修罗队长单人出发事故）：脱战确认后 3 秒内忽略一切进战信号。
+     * 战斗收尾过渡画面上战斗模板仍会高分命中（21:46:30.3 实证 0.962），曾抖出
+     * 出→假进→出 三条边沿；多出的那封脱战信 2 分钟后在第二场战斗刚开打时被云端消费，
+     * 导致回程链在战斗中执行、跳过死亡门与归队等待。真实再进战必然要先移动或点进战
+     * 对话框，物理上不可能在 3 秒内完成，冷却窗口内的进战信号只能是过渡残影。
+     */
+    private static final long LOCAL_COMBAT_REENTRY_COOLDOWN_MS = 3_000L;
     private static final String RUNNER_SOURCE = "window-observation-runner";
-    static final long LOCAL_PATHING_SAMPLE_PERIOD_MS = 1_500L;
+    /*
+     * 2026-08-20 用户定案:恢复 V1 基线 300ms(commit 49cc45ce 曾改 1500ms,把停下判定从 ~8s
+     * 拖到 ~18s——每个静止/消费门都按采样粒度跳动)。数字条 diff 是共享帧内存裁剪,300ms 廉价。
+     */
+    static final long LOCAL_PATHING_SAMPLE_PERIOD_MS = 300L;
+    /** 走路基线预热节拍:寻路 ACTIVE 期间每 4s 解析一次坐标,停下时基线已在手(一轮即判)。 */
+    private static final long LOCAL_PATHING_WALKING_BASELINE_REFRESH_MS = 4_000L;
+    private static final long LOCAL_PATHING_BASELINE_TIMEOUT_MS = 10_000L;
     static final long LOCAL_PATHING_ARRIVAL_STATIONARY_MS = 600L;
     private static final long LOCAL_PATHING_COORDINATE_PROBE_MIN_INTERVAL_MS = 2_000L;
     private static final long LOCAL_PATHING_STOPPED_AWAY_MS = 2_200L;
@@ -126,7 +149,7 @@ public final class WindowObservationSampler {
     private final CoordinateHelper coordinateHelper;
     private final DialogService dialogService;
     private final InputSequences inputSequences;
-    /** Optional heavy-cleanup service for the pre-terminal-frame scene guard; null disables the guard. */
+    /** Optional local UI mechanics used by passive scene probes and task-specific cleanup paths. */
     private volatile UICleanerService uiCleanerService;
     private final boolean localKandaEnabled;
     private final LocalCombatSignalMechanics combatSignalMechanics;
@@ -134,7 +157,6 @@ public final class WindowObservationSampler {
     private final WuhuanPresenceLocalMechanics wuhuanPresenceMechanics;
     private final UnknownPhasePresenceLocalMechanics unknownPhasePresenceMechanics;
     private final FlyingSaturationLocalMechanics flyingSaturationMechanics;
-    private final XinshouRunnerAutoCombatState xinshouAutoCombatState;
     private final DialogFramePresenceMechanics dialogFramePresenceMechanics = new DialogFramePresenceMechanics();
     /** Last Cloud-acknowledged content per new-player ROI key; sampler-thread confined. */
     private final Map<String, XinshouRoiVersion> deliveredXinshouRois = new HashMap<>();
@@ -156,12 +178,49 @@ public final class WindowObservationSampler {
     private boolean xinshouRefreshPending;
     private long xinshouRefreshObserverSeq;
     private boolean localCombatVisible;
+    /**
+     * In-combat auto-panel watch: shared-frame template match cadence and repair throttles. The
+     * watch is a safety net — combat entry already confirmed the panel — so a relaxed 15s period is
+     * enough to catch a mid-combat loss without paying a template match every combat tick.
+     */
+    private static final String AUTO_PANEL_WATCH_KEY = "combat:auto-panel-watch";
+    private static final long AUTO_PANEL_WATCH_PERIOD_MS = 15_000L;
+    private static final long AUTO_PANEL_REPAIR_SUCCESS_COOLDOWN_MS = 5_000L;
+    private static final long AUTO_PANEL_REPAIR_FAILURE_COOLDOWN_MS = 2_000L;
+    /** Baseline panel geometry: auto_remaining center -> panel drag grip, and the safe drop point. */
+    private static final int AUTO_PANEL_CENTER_OFFSET_X = 43;
+    private static final int AUTO_PANEL_CENTER_OFFSET_Y = 28;
+    private static final int AUTO_PANEL_SAFE_OFFSET_X = 489;
+    private static final int AUTO_PANEL_SAFE_OFFSET_Y = 726;
+    private static final double AUTO_PANEL_ALIGN_TOLERANCE_PX = 20.0;
+    private XinshouCombatLocalMechanics autoPanelMechanics;
+    private BufferedImage autoPanelTemplate;
+    private boolean autoPanelTemplateLoadFailed;
+    private LocalLeaderCombatBroadcast leaderCombatBroadcast;
+    /**
+     * G002 W1 client half: whether the Cloud currently wants this window to sample its own combat
+     * signal. The Cloud suppresses the {@code combat-signal} interest for members while a locally
+     * controlled leader is present; sampling and the shared whole-frame refresh follow that
+     * decision instead of running unconditionally. Defaults to true so the pre-interest startup
+     * phase keeps legacy self-detection.
+     */
+    private volatile boolean combatSignalInterestActive = true;
+    private final AtomicBoolean autoPanelRepairInFlight = new AtomicBoolean();
+    private volatile long autoPanelRepairCooldownUntilMs;
+    private volatile long autoPanelAlignedGeneration = -1L;
     private int lastLocalCombatFrameState = LOCAL_COMBAT_FRAME_UNSET;
+    private int localCombatDualAbsentStreak;
     private long localCombatGeneration;
+    /** 上一次脱战确认时刻；进战冷却门（LOCAL_COMBAT_REENTRY_COOLDOWN_MS）的基准。 */
+    private long lastLocalCombatExitConfirmedAtMs;
     private boolean localCombatEntryPublished;
     private com.bot.dhxy.window.model.WindowExpectedCombatEnterClaim boundExpectedCombatClaim;
     private final DeferredReturnHomeReplayCoordinator returnHomeReplayCoordinator;
     private volatile Consumer<ObservationKeyEvent> asyncEventPublisher;
+    /** Completion payloads produced by the input worker; exact successful transport ACK removes them. */
+    private final Map<String, ObservationRoi> pendingAsyncRois = new ConcurrentHashMap<>();
+    /** Fallback mailbox for tests that construct a sampler without a bound runner publisher. */
+    private final ConcurrentLinkedQueue<ObservationKeyEvent> pendingAsyncEvents = new ConcurrentLinkedQueue<>();
     /**
      * TURN-40G review#4: the authoritative observation run identity this sampler belongs to (its runner's
      * taskRunId). The local-kanda fast path acts ONLY on a green-chain schedule whose taskRunId equals this
@@ -193,6 +252,9 @@ public final class WindowObservationSampler {
     private String localPathingIntentId;
     private String terminalCoordinateAcknowledgedIntentId;
     private boolean localPathingCoordinatePending;
+    /** 走路基线预热在途标志(独立于终局判定 pending,回包只更新基线不做分类)。 */
+    private boolean localPathingBaselinePending;
+    private long localPathingBaselineRequestedAtMs;
     private long localPathingCoordinateRequestedChangedAtMs;
     private long localPathingCoordinateRequestedAtMs;
     private long localPathingCoordinateRequestedStableMs;
@@ -214,8 +276,21 @@ public final class WindowObservationSampler {
     private Long lastTerminalFrameId;
     private Long lastTerminalFrameGeneration;
     private String lastTerminalFrameIntentId;
-    /** Latest bound-window position accepted from Cloud analysis, retained until Cloud acknowledges the fact. */
-    private ObservationFact pendingPositionFact;
+    // ==== 2026-08-23 停稳事实重设计（五环首批）：数值判稳状态 ====
+    /** 进入停稳所需的连续有效同值时长。 */
+    private static final long VALUE_STABLE_ENTER_MS = 900L;
+    /** 连续不可读多久后明报 STRIP_UNAVAILABLE（并保守撤销既有停稳）。 */
+    private static final long VALUE_UNREADABLE_REPORT_MS = 2_000L;
+    /** 共享条帧超过此龄仍没有新帧=本拍按不可读处理（成员静默期共享帧可能停更，审查 P1）。 */
+    private static final long VALUE_STRIP_FRESH_MS = 1_000L;
+    private Integer valueLastX;
+    private Integer valueLastY;
+    private long valueSameSinceMs;
+    private boolean valueStableActive;
+    private boolean valueStableFramePending;
+    private long valueUnreadableSinceMs;
+    /** 上一有效拍之后出现过不可读缺口：停稳计时须重新累计（不可读不推进任何计时）。 */
+    private boolean valueHadUnreadableGap;
     /** Last local 五环 presence state; facts are edge/terminal driven, never a recurring image stream. */
     private Boolean observedWuhuanTitlePresent;
     private Boolean observedWuhuanDialogPresent;
@@ -275,21 +350,6 @@ public final class WindowObservationSampler {
                              boolean localKandaEnabled,
                              LocalCombatSignalMechanics combatSignalMechanics,
                              DeferredReturnHomeReplayCoordinator returnHomeReplayCoordinator) {
-        this(context, contextHolder, tracker, coordinateHelper, dialogService, inputSequences,
-                taskRunId, localKandaEnabled, combatSignalMechanics, returnHomeReplayCoordinator, null);
-    }
-
-    WindowObservationSampler(WindowRuntimeContext context,
-                             WindowTaskContextHolder contextHolder,
-                             GameClientTracker tracker,
-                             CoordinateHelper coordinateHelper,
-                             DialogService dialogService,
-                             InputSequences inputSequences,
-                             String taskRunId,
-                             boolean localKandaEnabled,
-                             LocalCombatSignalMechanics combatSignalMechanics,
-                             DeferredReturnHomeReplayCoordinator returnHomeReplayCoordinator,
-                             XinshouRunnerAutoCombatState xinshouAutoCombatState) {
         this.context = Objects.requireNonNull(context, "context");
         this.contextHolder = Objects.requireNonNull(contextHolder, "contextHolder");
         this.tracker = Objects.requireNonNull(tracker, "tracker");
@@ -303,7 +363,6 @@ public final class WindowObservationSampler {
         this.wuhuanPresenceMechanics = new WuhuanPresenceLocalMechanics(coordinateHelper);
         this.unknownPhasePresenceMechanics = new UnknownPhasePresenceLocalMechanics(coordinateHelper);
         this.flyingSaturationMechanics = new FlyingSaturationLocalMechanics(coordinateHelper);
-        this.xinshouAutoCombatState = xinshouAutoCombatState;
         this.returnHomeReplayCoordinator = returnHomeReplayCoordinator;
         this.combatSignalMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
         this.xinshouAnchorMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
@@ -312,9 +371,227 @@ public final class WindowObservationSampler {
         this.flyingSaturationMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
     }
 
-    /** Enables the pre-terminal-frame scene guard; without this the sampler stays observation-only. */
+    /** Binds passive UI probes and explicit task-owned cleanup; terminal-frame capture never cleans business UI. */
     public void bindUiCleanerService(UICleanerService uiCleanerService) {
         this.uiCleanerService = uiCleanerService;
+    }
+
+    /** Enables the in-combat auto-panel watcher; without this the sampler never presses Alt+8 itself. */
+    public void bindAutoPanelMechanics(XinshouCombatLocalMechanics autoPanelMechanics) {
+        this.autoPanelMechanics = autoPanelMechanics;
+    }
+
+    /** Binds the in-process leader combat fan-out (G002 W1); absent in fixtures that predate it. */
+    public void bindLeaderCombatBroadcast(LocalLeaderCombatBroadcast leaderCombatBroadcast) {
+        this.leaderCombatBroadcast = leaderCombatBroadcast;
+    }
+
+    /**
+     * Bidirectional auto-panel contract, local half: during combat only the local runner watches the
+     * auto-combat panel (matched on the already-captured shared cycle frame — no extra capture), and
+     * a lost panel is repaired immediately with one Alt+8 through the shared input queue. Every
+     * physical repair is reported upward as one retained {@code AUTO_PANEL_MAINTAINED} key event so
+     * the Cloud can reset its remaining-rounds ledger; the Cloud half never matches panel pixels and
+     * only commands a refresh from that ledger (entry threshold / five-minute combat).
+     */
+    private void watchAutoPanelDuringCombat(long now) {
+        // The context flag covers both sources of combat truth: this sampler's own signal and the
+        // in-process leader broadcast that keeps quiet member windows informed (G002 W1).
+        if (autoPanelMechanics == null || !context.isLocalCombatVisible()) {
+            return;
+        }
+        // 2026-08-17 user report: pause must silence the watcher completely — no Alt+8, no drag.
+        // The sampler keeps observing through a pause, so the input-side reflexes gate here.
+        com.bot.dhxy.window.model.WindowRuntimeStatus runtimeStatus = context.getStatus();
+        if (runtimeStatus == com.bot.dhxy.window.model.WindowRuntimeStatus.PAUSED
+                || runtimeStatus == com.bot.dhxy.window.model.WindowRuntimeStatus.STOPPING) {
+            return;
+        }
+        if (!isDue(AUTO_PANEL_WATCH_KEY, AUTO_PANEL_WATCH_PERIOD_MS, now)) {
+            return;
+        }
+        BufferedImage frame = sharedCycleFrame;
+        if (frame == null) {
+            // No shared frame this cycle (busy input lock / capture failure): try again next tick
+            // without consuming the watch slot — absence of evidence is not panel absence.
+            return;
+        }
+        markSampled(AUTO_PANEL_WATCH_KEY, now);
+        BufferedImage template = autoPanelTemplate();
+        if (template == null) {
+            return;
+        }
+        double[] panelMatch = ImageFinder.find(frame, template,
+                XinshouCombatLocalMechanics.AUTO_REMAINING_THRESHOLD);
+        if (panelMatch != null) {
+            maybeAlignAutoPanel(panelMatch);
+            return;
+        }
+        if (now < autoPanelRepairCooldownUntilMs
+                || !autoPanelRepairInFlight.compareAndSet(false, true)) {
+            return;
+        }
+        long generation = localCombatGeneration;
+        log.warn("[local-runner] auto-combat panel missing on shared frame; repairing with one Alt+8: "
+                        + "windowId={} generation={}",
+                context.getWindowId(), generation);
+        Thread.startVirtualThread(() -> {
+            XinshouCombatLocalMechanics.Result result = null;
+            RuntimeException failure = null;
+            try {
+                result = contextHolder.callWith(context,
+                        () -> autoPanelMechanics.maintainAutoPanelOnce(false));
+            } catch (RuntimeException caught) {
+                failure = caught;
+            }
+            boolean completed = failure == null && result != null
+                    && result.status() == XinshouCombatLocalMechanics.Status.COMPLETED;
+            autoPanelRepairCooldownUntilMs = System.currentTimeMillis()
+                    + (completed
+                            ? AUTO_PANEL_REPAIR_SUCCESS_COOLDOWN_MS
+                            : AUTO_PANEL_REPAIR_FAILURE_COOLDOWN_MS);
+            autoPanelRepairInFlight.set(false);
+            if (completed && XinshouCombatLocalMechanics.DETAIL_ALT8_PRESSED.equals(result.detail())) {
+                publishAsyncEvent(new ObservationKeyEvent(
+                        UUID.randomUUID().toString(),
+                        ObservationKeyEventType.AUTO_PANEL_MAINTAINED,
+                        System.currentTimeMillis(),
+                        null, null, null,
+                        "runner-auto-panel-watch",
+                        "alt8-after-panel-lost:generation-" + generation));
+                log.info("[local-runner] auto-combat panel repaired and reported: windowId={} generation={}",
+                        context.getWindowId(), generation);
+            } else if (!completed) {
+                log.warn("[local-runner] auto-combat panel repair did not complete: windowId={} generation={} "
+                                + "status={} failure={}",
+                        context.getWindowId(), generation,
+                        result == null ? null : result.status(),
+                        failure == null ? null : failure.getMessage());
+            }
+        });
+    }
+
+    /**
+     * Baseline safe-area alignment, local half: when the visible panel's inferred center has
+     * drifted more than 20px from the safe drop point (window base + 489,726), one drag pulls it
+     * back — at most once per combat generation, and never concurrently with an Alt+8 repair.
+     */
+    private void maybeAlignAutoPanel(double[] panelMatch) {
+        int[] frameRect = sharedCycleFrameRect;
+        long generation = localCombatGeneration;
+        if (frameRect == null || generation == autoPanelAlignedGeneration) {
+            return;
+        }
+        int panelX = frameRect[0] + (int) Math.round(panelMatch[0]) + AUTO_PANEL_CENTER_OFFSET_X;
+        int panelY = frameRect[1] + (int) Math.round(panelMatch[1]) + AUTO_PANEL_CENTER_OFFSET_Y;
+        int targetX = frameRect[0] + AUTO_PANEL_SAFE_OFFSET_X;
+        int targetY = frameRect[1] + AUTO_PANEL_SAFE_OFFSET_Y;
+        if (Math.hypot(panelX - targetX, panelY - targetY) <= AUTO_PANEL_ALIGN_TOLERANCE_PX) {
+            autoPanelAlignedGeneration = generation;
+            return;
+        }
+        if (!autoPanelRepairInFlight.compareAndSet(false, true)) {
+            return;
+        }
+        log.info("[local-runner] auto-combat panel off safe area; dragging back: windowId={} "
+                        + "from=({}, {}) to=({}, {}) generation={}",
+                context.getWindowId(), panelX, panelY, targetX, targetY, generation);
+        Thread.startVirtualThread(() -> {
+            boolean dragged = false;
+            try {
+                dragged = Boolean.TRUE.equals(contextHolder.callWith(context, () ->
+                        inputSequences.submitAndWait("battle:dragAutoPanel:watch", List.of(
+                                InputAction.dragAndDrop(panelX, panelY, targetX, targetY),
+                                InputAction.sleep(500)))));
+            } catch (RuntimeException ignored) {
+            }
+            if (dragged) {
+                autoPanelAlignedGeneration = generation;
+                log.info("[local-runner] auto-combat panel dragged into safe area: windowId={} generation={}",
+                        context.getWindowId(), generation);
+            } else {
+                log.warn("[local-runner] auto-combat panel drag did not execute: windowId={} generation={}",
+                        context.getWindowId(), generation);
+            }
+            autoPanelRepairInFlight.set(false);
+        });
+    }
+
+    /**
+     * Clears the physical cursor off the dialog option band right before a dialog-identification
+     * capture, and only then. Replaces the retired per-request tail sweep (2026-08-17 user
+     * decision): the cursor is touched only when it is over THIS window AND inside the zone, and
+     * it leaves by the nearest edge in a short 3-step glide — never a cross-screen teleport.
+     */
+    /** Overlapping windows can ping-pong one physical cursor between their zones; rate limits break the loop. */
+    private static final java.util.concurrent.atomic.AtomicLong NUDGE_LAST_GLOBAL_MS =
+            new java.util.concurrent.atomic.AtomicLong();
+    private volatile long nudgeLastWindowMs;
+
+    void nudgeCursorOutOfDialogZone(String reason) {
+        try {
+            long now = System.currentTimeMillis();
+            if (now - nudgeLastWindowMs < 5_000L) {
+                return;
+            }
+            long lastGlobal = NUDGE_LAST_GLOBAL_MS.get();
+            if (now - lastGlobal < 2_500L || !NUDGE_LAST_GLOBAL_MS.compareAndSet(lastGlobal, now)) {
+                return;
+            }
+            nudgeLastWindowMs = now;
+            WindowNativeBinding binding = context.getNativeBinding();
+            if (binding == null || !binding.hasGeometry()) {
+                return;
+            }
+            java.awt.PointerInfo pointerInfo = java.awt.MouseInfo.getPointerInfo();
+            java.awt.Point pointer = pointerInfo == null ? null : pointerInfo.getLocation();
+            if (pointer == null
+                    || pointer.x < binding.getX() || pointer.y < binding.getY()
+                    || pointer.x >= binding.getX() + binding.getWidth()
+                    || pointer.y >= binding.getY() + binding.getHeight()) {
+                return;
+            }
+            if (!com.bot.dhxy.input.action.DialogMouseNoParkZone.containsScreenPoint(
+                    pointer.x, pointer.y, binding.getX(), binding.getY())) {
+                return;
+            }
+            java.awt.Point exit = com.bot.dhxy.input.action.DialogMouseNoParkZone.nearestExitTarget(
+                    pointer.x, pointer.y, binding.getX(), binding.getY());
+            List<InputAction> glide = new ArrayList<>();
+            for (int step = 1; step <= 3; step++) {
+                glide.add(InputAction.moveMouse(
+                        pointer.x + (exit.x - pointer.x) * step / 3,
+                        pointer.y + (exit.y - pointer.y) * step / 3));
+                glide.add(InputAction.sleep(25));
+            }
+            boolean moved = inputSequences.submitAndWait("dialog-zone-nudge:" + reason, glide);
+            log.info("[INPUT_TRACE] dialog-zone nudge: windowId={} reason={} from=({}, {}) to=({}, {}) moved={}",
+                    context.getWindowId(), reason, pointer.x, pointer.y, exit.x, exit.y, moved);
+        } catch (RuntimeException nudgeFailure) {
+            log.debug("dialog-zone nudge skipped: windowId={} reason={} cause={}",
+                    context.getWindowId(), reason, nudgeFailure.toString());
+        }
+    }
+
+    private BufferedImage autoPanelTemplate() {
+        if (autoPanelTemplate != null) {
+            return autoPanelTemplate;
+        }
+        if (autoPanelTemplateLoadFailed) {
+            return null;
+        }
+        try {
+            autoPanelTemplate = ImageIO.read(
+                    java.nio.file.Path.of(XinshouCombatLocalMechanics.AUTO_REMAINING_TEMPLATE_PATH).toFile());
+        } catch (IOException ignored) {
+            autoPanelTemplate = null;
+        }
+        if (autoPanelTemplate == null) {
+            autoPanelTemplateLoadFailed = true;
+            log.warn("[local-runner] auto-panel watch disabled: template unreadable at {}",
+                    XinshouCombatLocalMechanics.AUTO_REMAINING_TEMPLATE_PATH);
+        }
+        return autoPanelTemplate;
     }
 
     /**
@@ -326,20 +603,86 @@ public final class WindowObservationSampler {
      */
     private BufferedImage sharedCycleFrame;
     private int[] sharedCycleFrameRect;
+    /**
+     * G103：当前共享帧的捕获时刻；限频复用与 pace 绝对 deadline 的共同基准。写在 transport
+     * 线程（sendOnce 采集）或 runLoop 线程（物理采样），读在 runLoop 的 pace()——volatile。
+     * clearSharedCycleFrame 一并清零。
+     */
+    private volatile long sharedCycleFrameCapturedAtMs;
+
+    /**
+     * G103-CR：pace 绝对 deadline 读取口。0 = 当前无共享帧（清屏/捕获失败/静默成员）。
+     * 值为 {@link #monotonicMillis()} 时基（nanoTime 派生），与墙钟无关、NTP 跳变免疫。
+     */
+    long sharedCycleFrameCapturedAtMs() {
+        return sharedCycleFrameCapturedAtMs;
+    }
+
+    /** G103-CR：采样 deadline 专用单调毫秒钟；只可与同源值相减，绝不能当墙钟用。 */
+    static long monotonicMillis() {
+        return System.nanoTime() / 1_000_000L;
+    }
+    /**
+     * G103（2026-08-25 用户确认）：Runner 每拍写入的有效采样周期（currentPeriodMs()——战斗 1s /
+     * 寻路 300ms / 五倍进战 100ms）。周期内的额外 tick（定点 wake、transport 并行采样）复用
+     * 现有共享帧，不再多付一次整窗 PrintWindow 重绘。0 = 不限频（未接线的旧路径/测试保持原行为）。
+     */
+    private volatile long effectiveSharedFramePeriodMs;
+
+    void setEffectiveSharedFramePeriodMs(long periodMs) {
+        this.effectiveSharedFramePeriodMs = periodMs;
+    }
 
     private void refreshSharedCycleFrame() {
-        if (sharedCycleFrame != null) {
-            sharedCycleFrame.flush();
-            sharedCycleFrame = null;
-            sharedCycleFrameRect = null;
-        }
+        clearSharedCycleFrame();
         int[] rect = coordinateHelper.getScaledRect(0, 0, 1024, 768);
         BufferedImage frame = tracker.captureToMemory(
                 "observe:shared-cycle-frame", rect[0], rect[1], rect[2], rect[3]);
         if (frame != null) {
             sharedCycleFrame = frame;
             sharedCycleFrameRect = rect;
+            sharedCycleFrameCapturedAtMs = monotonicMillis();
         }
+    }
+
+    private void clearSharedCycleFrame() {
+        if (sharedCycleFrame != null) {
+            sharedCycleFrame.flush();
+            sharedCycleFrame = null;
+            sharedCycleFrameRect = null;
+        }
+        sharedCycleFrameCapturedAtMs = 0L;
+    }
+
+    /**
+     * G002 member-quiet: a member window whose {@code combat-signal} interest the Cloud suppressed
+     * refreshes the shared whole-window frame only when the auto-panel watch is about to consume
+     * it; every other tick skips the PrintWindow redraw entirely and leaves no stale frame behind.
+     * Leaders, solo and role-unresolved windows keep the per-cycle shared frame, as does a member
+     * whenever the Cloud republishes its combat interest (leader gone -> self-detection resumes).
+     */
+    private void refreshSharedFramesIfNeeded(long now) {
+        boolean memberQuiet = context.getRole() == WindowRole.MEMBER && !combatSignalInterestActive;
+        boolean panelWatchWantsFrame = autoPanelMechanics != null
+                && context.isLocalCombatVisible()
+                && isDue(AUTO_PANEL_WATCH_KEY, AUTO_PANEL_WATCH_PERIOD_MS, now);
+        if (memberQuiet && !panelWatchWantsFrame) {
+            clearSharedCycleFrame();
+            return;
+        }
+        /*
+         * G103：共享帧按有效采样周期限频。周期内到达的额外 tick 复用现帧——同时跳过位置条带
+         * 刷新（同一物理样本不得二次推进停稳/位移判定的前后帧对）。周期边界照常重拍。
+         */
+        long periodMs = effectiveSharedFramePeriodMs;
+        if (periodMs > 0L
+                && sharedCycleFrame != null
+                && sharedCycleFrameCapturedAtMs > 0L
+                && monotonicMillis() - sharedCycleFrameCapturedAtMs < periodMs) {
+            return;
+        }
+        refreshSharedCycleFrame();
+        refreshSharedPositionStripFrame(now);
     }
 
     /**
@@ -698,6 +1041,45 @@ public final class WindowObservationSampler {
                 safeInterests, observerSeq, startupCombatObservation, startupWuhuanPresence));
     }
 
+    /**
+     * Continues exact-window physical observation while an earlier HTTP batch is still in flight.
+     *
+     * <p>This lane never consumes Cloud interest slots and never creates a second transport request.
+     * It only advances local combat/pathing state, local-template actions and critical event edges;
+     * those edges enter the runner's retained event mailbox through {@link #publishAsyncEvent}.</p>
+     *
+     * @param observerSeq latest assigned observation sequence, used only for local diagnostics
+     */
+    void collectPhysicalStateOnly(long observerSeq) {
+        contextHolder.runWith(context, () -> {
+            long now = System.currentTimeMillis();
+            refreshSharedFramesIfNeeded(now);
+            sampleGhostKingChangshouFlightAssist();
+            armGhostKingChangshouFlightAssistFromMovingFrame();
+            List<ObservationKeyEvent> events = new ArrayList<>();
+            List<ObservationRoi> ignoredRois = new ArrayList<>();
+            if (localKandaEnabled && isDue(KANDA_PROBE_KEY, KANDA_PROBE_PERIOD_MS, now)) {
+                markSampled(KANDA_PROBE_KEY, now);
+                sampleXiuluoLocalKanda(now, events, ignoredRois);
+            }
+            if (isDue(TIANTING_PROBE_KEY, TIANTING_PROBE_PERIOD_MS, now)) {
+                markSampled(TIANTING_PROBE_KEY, now);
+                sampleTiantingDialogProbe(now, events, ignoredRois);
+            }
+            refreshLocalPathingTerminal(now);
+            samplePreBattleTimerEdge(now, events);
+            if (combatSignalInterestActive
+                    && isDue(LocalCombatSignalMechanics.INTEREST_KEY,
+                    LocalCombatSignalMechanics.SAMPLE_PERIOD_MS, now)) {
+                markSampled(LocalCombatSignalMechanics.INTEREST_KEY, now);
+                LocalCombatSignalMechanics.Signal signal = combatSignalMechanics.sample();
+                observeLocalCombatTransition(signal, now, observerSeq, events);
+            }
+            watchAutoPanelDuringCombat(now);
+            events.forEach(this::publishAsyncEvent);
+        });
+    }
+
     /** Whether the frozen 100ms WUBEI_ENTER_BATTLE preparation cadence currently applies. */
     boolean hasActiveWubeiEnterBattleInterest() {
         WindowDialogInterest interest = context.getDialogInterest().orElse(null);
@@ -713,7 +1095,11 @@ public final class WindowObservationSampler {
         return snapshot != null
                 && snapshot.getIntent() != null
                 && (snapshot.getState() == WindowPathingState.ACTIVE
-                || snapshot.getState() == WindowPathingState.UNKNOWN);
+                || snapshot.getState() == WindowPathingState.UNKNOWN
+                // 数值判稳新态也算"腿还活着"：场景探针缓存要继续保鲜，否则 STABLE 期间
+                // 到达帧清障会拿 12 秒陈缓存判 blocked、反复 cleanUpAll（审查修正）。
+                || snapshot.getState() == WindowPathingState.STABLE
+                || snapshot.getState() == WindowPathingState.STRIP_UNAVAILABLE);
     }
 
     private SampleBatch collectBound(List<ObservationInterest> interests,
@@ -721,18 +1107,24 @@ public final class WindowObservationSampler {
                                      boolean startupCombatObservation,
                                      boolean startupWuhuanPresence) {
         long now = System.currentTimeMillis();
-        refreshSharedCycleFrame();
-        refreshSharedPositionStripFrame(now);
+        // Interest-driven (G002): the Cloud publishes what it wants sampled. A fully suppressed
+        // member arrives here with an EMPTY interest list, so empty must mean quiet, not legacy-on.
+        combatSignalInterestActive = startupCombatObservation
+                || interests.stream().anyMatch(
+                        i -> LocalCombatSignalMechanics.INTEREST_KEY.equals(i.interestKey()));
+        refreshSharedFramesIfNeeded(now);
         // Consume only an arm created by an earlier shared-frame tick. The current frame may arm below.
         sampleGhostKingChangshouFlightAssist();
         armGhostKingChangshouFlightAssistFromMovingFrame();
         boolean forceXinshouRefresh = beginXinshouObservationCycle(interests, now);
         List<ObservationFact> facts = new ArrayList<>();
-        if (pendingPositionFact != null) {
-            facts.add(pendingPositionFact);
-        }
         List<ObservationKeyEvent> events = new ArrayList<>();
         List<ObservationRoi> rois = new ArrayList<>();
+        ObservationKeyEvent completedInputEvent;
+        while ((completedInputEvent = pendingAsyncEvents.poll()) != null) {
+            events.add(completedInputEvent);
+        }
+        rois.addAll(pendingAsyncRois.values());
         List<TerminalCandidateFrame> terminalFrames = new ArrayList<>(1);
         // Local kanda owns first refusal for this observation cycle. A successful click publishes its claim in
         // the dialog fact below and prevents a stale Cloud ROI from being captured in the same request.
@@ -751,29 +1143,29 @@ public final class WindowObservationSampler {
         try {
             if (isDue(TIANTING_PROBE_KEY, TIANTING_PROBE_PERIOD_MS, now)) {
                 markSampled(TIANTING_PROBE_KEY, now);
+                // nudge disabled 2026-08-17: misplaced hook fired for ALL tasks/windows every cycle,
+                // flooding the focused input queue (starved real dialog clicks + focused idle windows).
+                // nudgeCursorOutOfDialogZone("tianting-dialog-probe");
                 sampleTiantingDialogProbe(now, events, rois);
             }
         } catch (RuntimeException probeFailure) {
             log.debug("Task-local dialog probe failed (no fact fabricated): windowId={} message={}",
                     context.getWindowId(), probeFailure.getMessage());
         }
-        maintainScenePresenceCache(now);
         refreshLocalPathingTerminal(now);
         List<ObservationPathingFact> pathingFacts = sampleCurrentPathingFact();
         String pathingIntentId = pathingFacts.isEmpty() ? null : pathingFacts.getFirst().intentId();
         sampleTerminalCoordinateFrame(pathingFacts, rois, terminalFrames);
+        sampleWalkingBaselineCoordinateRoi(pathingFacts, rois, now);
         List<ObservationDialogInterestFact> dialogInterests = sampleCurrentDialogInterestFact();
         List<ObservationPreparedDialogFact> preparedDialogs =
                 sampleWubeiEnterBattlePrepared(dialogInterests, observerSeq, now);
-        if (isDue(LocalCombatSignalMechanics.INTEREST_KEY, LocalCombatSignalMechanics.SAMPLE_PERIOD_MS, now)) {
+        if (combatSignalInterestActive
+                && isDue(LocalCombatSignalMechanics.INTEREST_KEY, LocalCombatSignalMechanics.SAMPLE_PERIOD_MS, now)) {
             markSampled(LocalCombatSignalMechanics.INTEREST_KEY, now);
             try {
                 LocalCombatSignalMechanics.Signal signal = combatSignalMechanics.sample();
                 observeLocalCombatTransition(signal, now, observerSeq, events);
-                if (xinshouAutoCombatState != null && localCombatVisible) {
-                    xinshouAutoCombatState.maintain(
-                            context, taskRunId, localCombatGeneration, now);
-                }
                 if (startupCombatObservation
                         || interests.stream().anyMatch(
                                 i -> LocalCombatSignalMechanics.INTEREST_KEY.equals(i.interestKey()))) {
@@ -784,6 +1176,7 @@ public final class WindowObservationSampler {
                         context.getWindowId(), sampleFailure.getMessage());
             }
         }
+        watchAutoPanelDuringCombat(now);
         sampleWuhuanPresence(interests, dialogInterests, pathingFacts, events, observerSeq, now, facts, rois,
                 startupWuhuanPresence);
         sampleUnknownPhasePresence(interests, now, facts, rois);
@@ -981,11 +1374,18 @@ public final class WindowObservationSampler {
                 boolean completionChanged =
                         !Objects.equals(observedWuhuanCompletionVerdict, sample.completionVerdict());
                 observedWuhuanCompletionVerdict = sample.completionVerdict();
-                if (completionChanged || changed || newTitleSnapshot || terminalEdge || combatEdge) {
-                    facts.add(new ObservationFact(
-                            ObservationFactType.WUHUAN_COMPLETION_PRESENCE,
-                            sample.completionVerdict(),
-                            now));
+                /*
+                 * 2026-08-18 19:33 完成误判事故:完成事实曾是边沿上报(值不变不发),而云端
+                 * resolveCompletionAfterTitleGone 只认判定窗入口前后新鲜采出的事实——故事早弹、
+                 * 边沿事实超龄被滤,窗内又无新事实,连续 completion undecidable→FAILED→重启后
+                 * 误去重接任务。完成结论改为电平上报:title 不在且本地判到结论,每次采样(1s)
+                 * 都发,仅完成窗口期间有流量,云端判定窗内永远有新鲜事实。
+                 */
+                facts.add(new ObservationFact(
+                        ObservationFactType.WUHUAN_COMPLETION_PRESENCE,
+                        sample.completionVerdict(),
+                        now));
+                if (completionChanged) {
                     log.info("Wuhuan completion presence queued: windowId={} taskRunId={} observerSeq={} verdict={}",
                             context.getWindowId(), taskRunId, observerSeq, sample.completionVerdict());
                 }
@@ -1048,14 +1448,19 @@ public final class WindowObservationSampler {
     private boolean observeWuhuanTerminal(List<ObservationPathingFact> pathingFacts) {
         ObservationPathingFact terminal = pathingFacts.stream()
                 .filter(fact -> fact.state() == ObservationPathingState.ARRIVED
-                        || fact.state() == ObservationPathingState.STOPPED_AWAY)
+                        || fact.state() == ObservationPathingState.STOPPED_AWAY
+                        // 数值判稳：STABLE=停下，同样触发标题/对话的即时采样边沿（审查修正）。
+                        || fact.state() == ObservationPathingState.STABLE)
                 .findFirst()
                 .orElse(null);
         if (terminal == null) {
             lastWuhuanTerminalKey = null;
             return false;
         }
-        String key = terminal.intentId() + ":" + terminal.state() + ":" + terminal.pathingUpdatedAtMs();
+        // STABLE 是电平（updatedAtMs 每拍都变），边沿键改用停稳代号，一次停稳只触发一次。
+        String key = terminal.state() == ObservationPathingState.STABLE
+                ? terminal.intentId() + ":" + terminal.state() + ":" + terminal.terminalFrameGeneration()
+                : terminal.intentId() + ":" + terminal.state() + ":" + terminal.pathingUpdatedAtMs();
         boolean changed = !Objects.equals(lastWuhuanTerminalKey, key);
         lastWuhuanTerminalKey = key;
         return changed;
@@ -1064,8 +1469,9 @@ public final class WindowObservationSampler {
     /**
      * Applies the 59b combat-state mechanics locally. Entry is the first visible template stage.
      * Once combat is visible, local world and combat evidence are reciprocal: a visible mini-map
-     * anchor confirms exit, a visible combat template confirms combat, and an explicit miss from
-     * both confirms exit. An unavailable capture remains unknown and retains the current state.
+     * anchor confirms exit, a visible combat template confirms combat, and consecutive explicit misses
+     * from both confirm exit. A single dual miss can be an incomplete PrintWindow frame and is retained.
+     * An unavailable capture remains unknown and retains the current state.
      * Only exact task-run edges cross the wire.
      */
     void observeLocalCombatTransition(
@@ -1083,11 +1489,18 @@ public final class WindowObservationSampler {
             if (minimapSignal.state() == LocalCombatSignalMechanics.State.ABSENT
                     && signal != null
                     && signal.state() == LocalCombatSignalMechanics.State.ABSENT) {
-                // The minimap is a fast positive exit proof. If that tiny anchor misses, the normal
-                // combat templates are its reciprocal proof: with both explicitly absent, retaining
-                // IN_COMBAT would permanently freeze this window after a visually completed fight.
-                finishLocalCombat(now, events, "minimap-and-combat-absent");
-                return;
+                localCombatDualAbsentStreak++;
+                // PrintWindow can briefly return the world while omitting the complete HUD. Require a
+                // second independently sampled miss so that one partial frame cannot fabricate exit.
+                if (localCombatDualAbsentStreak >= LOCAL_COMBAT_DUAL_ABSENT_CONFIRMATIONS) {
+                    finishLocalCombat(now, events, "minimap-and-combat-absent-confirmed");
+                    return;
+                }
+                log.info("Local combat dual-absent retained for confirmation: windowId={} generation={} streak={}/{}",
+                        context.getWindowId(), localCombatGeneration, localCombatDualAbsentStreak,
+                        LOCAL_COMBAT_DUAL_ABSENT_CONFIRMATIONS);
+            } else {
+                localCombatDualAbsentStreak = 0;
             }
             if (signal != null && signal.state() == LocalCombatSignalMechanics.State.VISIBLE) {
                 frameState = LOCAL_COMBAT_FRAME_COMBAT_CONFIRMED;
@@ -1106,6 +1519,17 @@ public final class WindowObservationSampler {
         }
         if (signal.state() == LocalCombatSignalMechanics.State.VISIBLE) {
             if (!localCombatVisible) {
+                // 脱战后 3 秒进战冷却：过渡画面的战斗模板残影不得铸造新战斗（见常量处事故注释）。
+                long sinceExitMs = now - lastLocalCombatExitConfirmedAtMs;
+                if (lastLocalCombatExitConfirmedAtMs > 0L
+                        && sinceExitMs >= 0L
+                        && sinceExitMs < LOCAL_COMBAT_REENTRY_COOLDOWN_MS) {
+                    log.info("Local combat entry ignored inside post-exit cooldown: "
+                                    + "windowId={} sinceExitMs={} cooldownMs={} generation={}",
+                            context.getWindowId(), sinceExitMs,
+                            LOCAL_COMBAT_REENTRY_COOLDOWN_MS, localCombatGeneration);
+                    return;
+                }
                 localCombatGeneration++;
                 localCombatEntryPublished = false;
                 context.updateLocalCombatGeneration(localCombatGeneration, true);
@@ -1113,8 +1537,12 @@ public final class WindowObservationSampler {
                         context.bindExpectedCombatEnterClaim(taskRunId, localCombatGeneration);
                 context.confirmLocalTemplateCombatEntry(boundExpectedCombatClaim);
                 endActivePathingLegOnCombatEntry(now);
+                if (leaderCombatBroadcast != null) {
+                    leaderCombatBroadcast.publishLeaderCombatEdge(context, true);
+                }
             }
             localCombatVisible = true;
+            localCombatDualAbsentStreak = 0;
             lastLocalCombatFrameState = LOCAL_COMBAT_FRAME_COMBAT_CONFIRMED;
             if (!localCombatEntryPublished) {
                 localCombatEntryPublished = publishCombatEdge(
@@ -1130,9 +1558,14 @@ public final class WindowObservationSampler {
             String source) {
         log.info("Local combat exit confirmed: windowId={} generation={} source={} entryPublished={}",
                 context.getWindowId(), localCombatGeneration, source, localCombatEntryPublished);
+        lastLocalCombatExitConfirmedAtMs = occurredAtMs;
         localCombatVisible = false;
+        localCombatDualAbsentStreak = 0;
         lastLocalCombatFrameState = LOCAL_COMBAT_FRAME_UNSET;
         context.updateLocalCombatGeneration(localCombatGeneration, false);
+        if (leaderCombatBroadcast != null) {
+            leaderCombatBroadcast.publishLeaderCombatEdge(context, false);
+        }
         if (localCombatEntryPublished) {
             publishCombatEdge(
                     ObservationKeyEventType.COMBAT_EXITED, occurredAtMs, events, source, true);
@@ -1332,12 +1765,10 @@ public final class WindowObservationSampler {
         lastWuhuanTitleSnapshotKey = null;
         lastWuhuanDialogInterestId = null;
         lastWuhuanTerminalKey = null;
-        pendingPositionFact = null;
         pendingGhostKingChangshouFlightIntentId = null;
         handledGhostKingChangshouFlightIntentId = null;
-        if (xinshouAutoCombatState != null) {
-            xinshouAutoCombatState.close(context, taskRunId);
-        }
+        pendingAsyncEvents.clear();
+        pendingAsyncRois.clear();
         if (returnHomeReplayCoordinator != null) {
             returnHomeReplayCoordinator.clear(context, "observation runner closed");
         }
@@ -1390,6 +1821,15 @@ public final class WindowObservationSampler {
             localPathingLastSampleAtMs = observedAtMs;
             localPathingLastChangedAtMs = observedAtMs;
         }
+        /*
+         * 2026-08-23 停稳事实重设计（五环首批）：五环走数值判稳——本地字模逐位读出坐标值，
+         * 停/动在数值上判定，OCR 问答循环整个不走。其余任务仍走下方的像素差值老路，
+         * 分批迁移（设计卡 dhxy-cloud-brain/docs/2026-08-22-local-stability-fact-redesign.md）。
+         */
+        if (isValueStabilityMode()) {
+            refreshValueStability(intent, observedAtMs);
+            return;
+        }
         BufferedImage current = cropMovementDigits(sharedPositionStripFrame);
         if (current == null) {
             return;
@@ -1397,6 +1837,15 @@ public final class WindowObservationSampler {
 
         boolean changed = localPathingFrame != null
                 && !ImageFinder.isMatch(localPathingFrame, current, LOCAL_PATHING_DIFF_RATIO);
+        /*
+         * 2026-08-19 22:12 呆站取证(3511 停稳判定拖 32s/52s):这里每一次"判变"都会把静止
+         * 计时清零——若数字框被飘字/特效扫过误判为变化,停稳永远攒不满 2.2s。用户铁律:判定
+         * 点必须留证——前后小图落盘(images/temp/match-evidence/pathing-strip-diff,变/没变
+         * 翻转时另存时间戳对,平时只覆盖 latest),下轮直接看图定罪。
+         */
+        MatchEvidenceStore.saveOnChange("pathing-strip-diff", context.getWindowId(),
+                current, localPathingFrame == null ? current : localPathingFrame,
+                changed ? null : new double[]{0D, 0D, 1D});
         if (changed) {
             localPathingCoordinateMovementObserved = true;
             advanceLocalPathingGeneration();
@@ -1474,6 +1923,8 @@ public final class WindowObservationSampler {
         localPathingLastChangedAtMs = 0L;
         localPathingCoordinateMovementObserved = false;
         localPathingCoordinatePending = false;
+        localPathingBaselinePending = false;
+        localPathingBaselineRequestedAtMs = 0L;
         localPathingCoordinateRequestedChangedAtMs = 0L;
         localPathingCoordinateRequestedAtMs = 0L;
         localPathingCoordinateRequestedStableMs = 0L;
@@ -1484,11 +1935,145 @@ public final class WindowObservationSampler {
         localPathingRecognizedX = null;
         localPathingRecognizedY = null;
         localPathingRecognizedChangedAtMs = 0L;
-        clearScenePresenceCache();
         invalidateTerminalFrameEvidence();
         if (!retainTerminalLineage) {
             clearTerminalFrameLineage();
         }
+        valueLastX = null;
+        valueLastY = null;
+        valueSameSinceMs = 0L;
+        valueStableActive = false;
+        valueStableFramePending = false;
+        valueUnreadableSinceMs = 0L;
+        valueHadUnreadableGap = false;
+    }
+
+    /** 数值判稳的启用面：五环先行（另含专测任务），验证后分批扩到其余任务。 */
+    private boolean isValueStabilityMode() {
+        return context.getSelectedTaskType() == TaskType.WUHUAN_V3
+                || context.getSelectedTaskType() == TaskType.PATHING_TEST;
+    }
+
+    /**
+     * 数值判稳核心（替代像素差值+云端 OCR 问答）：每拍对整条坐标条做字模读值。
+     * 有效变值=动了（单拍铁证，撤销既有停稳=整代作废）；连续同值≥{@link #VALUE_STABLE_ENTER_MS}
+     * =停稳（新一代+拍到达帧）；不可读=第三态，不推进也不撤销（撤销只认有效变值——
+     * 2026-08-23 21:19 事故：输入宏占全局锁造成全窗口条子断供，旧的"保守撤稳+清基线"
+     * 让每次断供都拆掉停稳、恢复时又伪造"新基线 ACTIVE"把云端已备好的到达点击作废），
+     * 未进停稳时持续≥{@link #VALUE_UNREADABLE_REPORT_MS} 明报 STRIP_UNAVAILABLE；
+     * 已进停稳时电平续报 STABLE。到达/半路的业务判定全部移交云端（翻译层）。
+     */
+    private void refreshValueStability(WindowPathingIntent intent, long observedAtMs) {
+        /*
+         * 审查 P1 修正：共享条帧在成员静默等场景可能停更——陈帧读出"值没变"不是停稳证据。
+         * 帧龄超过一拍半就按本拍不可读处理，绝不用旧条子作证。
+         */
+        boolean stripFresh = sharedPositionStripFrame != null
+                && sharedPositionStripCapturedAtMs > 0L
+                && observedAtMs - sharedPositionStripCapturedAtMs <= VALUE_STRIP_FRESH_MS;
+        LocalCoordinateStripReader.Reading reading = stripFresh
+                ? LocalCoordinateStripReader.read(sharedPositionStripFrame)
+                : LocalCoordinateStripReader.Reading.invalid();
+        if (!reading.valid()) {
+            valueHadUnreadableGap = true;
+            if (valueUnreadableSinceMs == 0L) {
+                valueUnreadableSinceMs = observedAtMs;
+            }
+            if (observedAtMs - valueUnreadableSinceMs < VALUE_UNREADABLE_REPORT_MS) {
+                return;
+            }
+            if (valueStableActive) {
+                // 第三态不撤销停稳、不清基线：停稳主张一直站着，只有之后读到"有效且不同的值"
+                // 才算被推翻。电平续报 STABLE（云端按新鲜度过滤，断供期也不能让事实过期）。
+                updateValueSnapshot(intent, WindowPathingState.STABLE, valueLastX, valueLastY,
+                        observedAtMs, "stable claim held through unreadable strip (third state)");
+                return;
+            }
+            updateValueSnapshot(intent, WindowPathingState.STRIP_UNAVAILABLE, null, null,
+                    observedAtMs, "coordinate strip unreadable (occlusion/black-frame/anchor-miss)");
+            return;
+        }
+        valueUnreadableSinceMs = 0L;
+        boolean changed = valueLastX == null || valueLastY == null
+                || valueLastX != reading.x() || valueLastY != reading.y();
+        /*
+         * 审查修正（设计契约"不可读不推进任何计时"）：有效拍之间隔着不可读缺口时，
+         * 未进停稳的同值不许把缺口时间算进 900ms——重新开始累计。已进停稳的不受影响
+         * （第三态不撤销，撤销只认有效变值）。
+         */
+        if (valueHadUnreadableGap) {
+            valueHadUnreadableGap = false;
+            if (!changed && !valueStableActive) {
+                valueSameSinceMs = observedAtMs;
+            }
+        }
+        if (changed) {
+            boolean hadBaseline = valueLastX != null;
+            if (valueStableActive) {
+                valueStableActive = false;
+                valueStableFramePending = false;
+                advanceLocalPathingGeneration();
+                log.info("Value stability RETRACTED by value change: windowId={} intentId={} value=({}, {})",
+                        context.getWindowId(), intent.getIntentId(), reading.x(), reading.y());
+            }
+            if (hadBaseline) {
+                localPathingCoordinateMovementObserved = true;
+                localPathingLastChangedAtMs = observedAtMs;
+            }
+            valueLastX = reading.x();
+            valueLastY = reading.y();
+            valueSameSinceMs = observedAtMs;
+            updateValueSnapshot(intent, WindowPathingState.ACTIVE, reading.x(), reading.y(),
+                    observedAtMs, hadBaseline
+                            ? "coordinate value changed; moving"
+                            : "coordinate value baseline established");
+            return;
+        }
+        if (!valueStableActive && observedAtMs - valueSameSinceMs >= VALUE_STABLE_ENTER_MS) {
+            valueStableActive = true;
+            valueStableFramePending = true;
+            advanceLocalPathingGeneration();
+            log.info("Value stability ENTERED: windowId={} intentId={} value=({}, {}) stableMs={} score={}",
+                    context.getWindowId(), intent.getIntentId(), reading.x(), reading.y(),
+                    observedAtMs - valueSameSinceMs, reading.score());
+        }
+        updateValueSnapshot(intent,
+                valueStableActive ? WindowPathingState.STABLE : WindowPathingState.ACTIVE,
+                reading.x(), reading.y(), observedAtMs,
+                valueStableActive ? "coordinate value stable" : "coordinate value holding");
+    }
+
+    private void updateValueSnapshot(WindowPathingIntent intent,
+                                     WindowPathingState state,
+                                     Integer x,
+                                     Integer y,
+                                     long observedAtMs,
+                                     String message) {
+        WindowPathingSnapshot latest = context.getPathingSnapshot();
+        if (latest == null || latest.getIntent() == null
+                || !Objects.equals(intent.getIntentId(), latest.getIntent().getIntentId())) {
+            return;
+        }
+        String mapName = null;
+        com.bot.dhxy.model.PlayerCharacter me = context.getGameState().getMe();
+        if (me != null && me.getCurrentMapName() != null && !me.getCurrentMapName().isBlank()) {
+            mapName = me.getCurrentMapName();
+        }
+        // 协议约束：非 STABLE 状态带坐标必须带地图名；STABLE 例外（字模只出数字）。
+        boolean allowCoordinates = x != null && y != null
+                && (state == WindowPathingState.STABLE || mapName != null);
+        context.updatePathingSnapshot(latest.toBuilder()
+                .state(state)
+                .currentMapName(allowCoordinates ? mapName : null)
+                .currentX(allowCoordinates ? x : null)
+                .currentY(allowCoordinates ? y : null)
+                .message(message)
+                .locationChangedAtMs(localPathingLastChangedAtMs)
+                .coordinateMovementObserved(localPathingCoordinateMovementObserved)
+                .updatedAtMs(observedAtMs)
+                .probeFinishedAtMs(observedAtMs)
+                .probeInProgress(false)
+                .build());
     }
 
     /**
@@ -1499,6 +2084,10 @@ public final class WindowObservationSampler {
     private void sampleTerminalCoordinateFrame(List<ObservationPathingFact> pathingFacts,
                                                List<ObservationRoi> rois,
                                                List<TerminalCandidateFrame> terminalFrames) {
+        if (isValueStabilityMode()) {
+            sampleValueStableTerminalFrame(pathingFacts, terminalFrames);
+            return;
+        }
         if (pathingFacts.isEmpty() || localPathingFrame == null) {
             return;
         }
@@ -1509,7 +2098,6 @@ public final class WindowObservationSampler {
             return;
         }
         if (terminalCoordinateRoi == null) {
-            ensureCleanSceneBeforeTerminalFrame(fact);
             captureTerminalFrameEvidence(fact);
         }
         if (terminalCoordinateRoi == null) {
@@ -1530,105 +2118,123 @@ public final class WindowObservationSampler {
                 : Math.max(0L, localPathingLastSampleAtMs - intent.getCreatedAtMs());
     }
 
-    /**
-     * Precomputed scene-presence cache, maintained every observation cycle while a pathing intent
-     * is active. The arrival moment reads these booleans in O(1) instead of recognizing on demand
-     * — the runner is always watching, so the answer is already known when the character stops.
+    /*
+     * G102 收口（2026-08-24）：scene-presence 缓存整体删除。它的最后一个读者（终局帧前
+     * 的自动清场钩子）已下线，此后它每 5 秒白跑一次旧的方差门 Dialog 判定纯烧 CPU。
      */
-    private Boolean scenePresenceDialog;
-    private Boolean scenePresenceClosable;
-    private long scenePresenceSampledAtMs;
-    /** Recompute cadence during travel; the scene changes slowly, so 5s is plenty. */
-    private static final long SCENE_PRESENCE_SAMPLE_PERIOD_MS = 5_000L;
-    /** Two sample periods + margin; older cache counts as unknown (treated as blocked). */
-    private static final long SCENE_PRESENCE_CACHE_FRESH_MS = 12_000L;
-
-    /** Refreshes the scene-presence cache from the already-captured shared cycle frame. */
-    private void maintainScenePresenceCache(long now) {
-        UICleanerService cleaner = uiCleanerService;
-        if (cleaner == null || !hasActivePathingIntent()) {
-            return;
-        }
-        if (scenePresenceSampledAtMs > 0
-                && now - scenePresenceSampledAtMs < SCENE_PRESENCE_SAMPLE_PERIOD_MS) {
-            return;
-        }
-        String probeSource = "pathing-cycle:" + context.getWindowId();
-        Boolean dialogPresent = dialogService.probeOptionDialogPresent(
-                this::cropSharedCycleFrame, probeSource);
-        Boolean closablePresent = null;
-        BufferedImage fullFrame = cropSharedCycleFrame(
-                coordinateHelper.getScaledRect(0, 0, 1024, 768));
-        if (fullFrame != null) {
-            try {
-                closablePresent = cleaner.probeGenericCloseButtonPresent(fullFrame, probeSource);
-            } finally {
-                fullFrame.flush();
-            }
-        }
-        scenePresenceDialog = dialogPresent;
-        scenePresenceClosable = closablePresent;
-        scenePresenceSampledAtMs = now;
-    }
-
-    private void clearScenePresenceCache() {
-        scenePresenceDialog = null;
-        scenePresenceClosable = null;
-        scenePresenceSampledAtMs = 0L;
-    }
 
     /**
-     * Pre-terminal-frame scene guard: the stationary-candidate frame becomes the Cloud's NPC
-     * arrival frame, so a leaked route panel or dialog left open during travel poisons every
-     * downstream OCR candidate. The verdict comes from the precomputed cache (instant); only a
-     * stale/missing cache falls back to one in-memory scan of the current shared frame. Only a
-     * hit triggers the heavy cleanup — a clean scene costs zero input and zero extra latency.
+     * 走路基线预热(用户批准 2026-08-20):寻路 ACTIVE 期间每 4s 从共享周期帧内存裁一张坐标
+     * 数字条上云解析,让"识别坐标基线"在停下之前就位——停下判定从两轮往返(首轮只建基线
+     * 必返 ACTIVE)缩为一轮。纯旁路:独立 pending、不走终局帧通道(零清屏/零整帧上传副作用)、
+     * 回包只更新基线不做终局分类。
      */
-    private void ensureCleanSceneBeforeTerminalFrame(ObservationPathingFact fact) {
-        UICleanerService cleaner = uiCleanerService;
-        if (cleaner == null) {
+    private void sampleWalkingBaselineCoordinateRoi(List<ObservationPathingFact> pathingFacts,
+                                                    List<ObservationRoi> rois,
+                                                    long now) {
+        if (isValueStabilityMode()) {
+            // 数值判稳模式：本地自己读值，不再走"基线预热上云 OCR"的旁路。
             return;
         }
-        long now = System.currentTimeMillis();
-        long cacheAgeMs = scenePresenceSampledAtMs <= 0 ? -1L : now - scenePresenceSampledAtMs;
-        Boolean dialogPresent;
-        Boolean closablePresent;
-        String verdictSource;
-        boolean cleanupNeeded;
-        if (cacheAgeMs >= 0 && cacheAgeMs <= SCENE_PRESENCE_CACHE_FRESH_MS) {
-            dialogPresent = scenePresenceDialog;
-            closablePresent = scenePresenceClosable;
-            verdictSource = "cache";
-            cleanupNeeded = Boolean.TRUE.equals(dialogPresent)
-                    || Boolean.TRUE.equals(closablePresent);
-        } else {
-            /*
-             * No fresh precomputed answer (e.g. the trip ended before the first 5s sample).
-             * Per design the arrival moment never recognizes on demand — an unknown scene is
-             * treated as blocked and cleaned unconditionally.
-             */
-            dialogPresent = null;
-            closablePresent = null;
-            verdictSource = "no-cache-assume-blocked";
-            cleanupNeeded = true;
+        if (localPathingBaselinePending
+                && now - localPathingBaselineRequestedAtMs > LOCAL_PATHING_BASELINE_TIMEOUT_MS) {
+            localPathingBaselinePending = false;
         }
-        log.info("Terminal frame scene probe: windowId={} intentId={} dialogPresent={} closablePresent={} cleanup={} source={} cacheAgeMs={}",
-                context.getWindowId(), fact.intentId(), dialogPresent, closablePresent,
-                cleanupNeeded, verdictSource, cacheAgeMs);
-        if (!cleanupNeeded) {
+        if (pathingFacts.isEmpty() || localPathingBaselinePending || localPathingCoordinatePending) {
+            return;
+        }
+        ObservationPathingFact fact = pathingFacts.getFirst();
+        if (fact.state() != ObservationPathingState.ACTIVE || fact.intentId() == null) {
+            return;
+        }
+        if (localPathingCoordinateResolvedAtMs > 0L
+                && now - localPathingCoordinateResolvedAtMs < LOCAL_PATHING_WALKING_BASELINE_REFRESH_MS) {
+            return;
+        }
+        WindowPathingSnapshot snapshot = context.getPathingSnapshot();
+        WindowPathingIntent intent = snapshot == null ? null : snapshot.getIntent();
+        if (intent == null || !Objects.equals(intent.getIntentId(), fact.intentId())
+                || now - intent.getCreatedAtMs() < 2_000L) {
+            return;
+        }
+        if (sharedCycleFrame == null || sharedCycleFrameRect == null) {
+            return;
+        }
+        int[] stripRect = coordinateHelper.getScaledRect(
+                PATHING_COORDINATE_STRIP_X, PATHING_COORDINATE_STRIP_Y,
+                PATHING_COORDINATE_STRIP_WIDTH, PATHING_COORDINATE_STRIP_HEIGHT);
+        int cropX = stripRect[0] - sharedCycleFrameRect[0];
+        int cropY = stripRect[1] - sharedCycleFrameRect[1];
+        int cropWidth = stripRect[2] - stripRect[0];
+        int cropHeight = stripRect[3] - stripRect[1];
+        if (cropX < 0 || cropY < 0 || cropWidth <= 0 || cropHeight <= 0
+                || cropX + cropWidth > sharedCycleFrame.getWidth()
+                || cropY + cropHeight > sharedCycleFrame.getHeight()) {
             return;
         }
         try {
-            cleaner.cleanUpAll();
-        } catch (RuntimeException cleanupFailure) {
-            log.warn("Terminal frame scene cleanup failed; capturing frame as-is: windowId={} intentId={} reason={}",
-                    context.getWindowId(), fact.intentId(), cleanupFailure.toString(), cleanupFailure);
-        } finally {
-            clearScenePresenceCache();
+            BufferedImage strip = sharedCycleFrame.getSubimage(cropX, cropY, cropWidth, cropHeight);
+            ByteArrayOutputStream png = new ByteArrayOutputStream(4096);
+            ImageIO.write(strip, "png", png);
+            rois.add(new ObservationRoi(
+                    COORDINATE_STRIP_INTEREST,
+                    cropX,
+                    cropY,
+                    cropWidth,
+                    cropHeight,
+                    png.toByteArray(),
+                    null,
+                    fact.intentId(),
+                    null,
+                    null));
+            localPathingBaselinePending = true;
+            localPathingBaselineRequestedAtMs = now;
+            log.info("Local pathing walking baseline requested: windowId={} intentId={}",
+                    context.getWindowId(), fact.intentId());
+        } catch (IOException encodeFailure) {
+            log.debug("Walking baseline strip encode failed: windowId={} message={}",
+                    context.getWindowId(), encodeFailure.getMessage());
+        }
+    }
+
+    /**
+     * 数值判稳的到达帧交付：一次停稳=一张图=一个 generation。进入停稳后拍一次整窗到达帧
+     * （沿用既有清障探针+捕获通道），随停稳事实上云；撤销停稳时 generation 推进已把
+     * pending 帧和 lineage 作废。不再交付 OCR 数字条 ROI——云端无需读数（值在事实里）。
+     */
+    private void sampleValueStableTerminalFrame(List<ObservationPathingFact> pathingFacts,
+                                                List<TerminalCandidateFrame> terminalFrames) {
+        if (pathingFacts.isEmpty()) {
+            return;
+        }
+        ObservationPathingFact fact = pathingFacts.getFirst();
+        if (fact.state() != ObservationPathingState.STABLE) {
+            return;
+        }
+        if (valueStableFramePending) {
+            captureTerminalFrameEvidence(fact);
+            if (lastTerminalFrameId != null) {
+                valueStableFramePending = false;
+            }
+        }
+        if (pendingTerminalFrame != null) {
+            terminalFrames.add(pendingTerminalFrame);
         }
     }
 
     private void captureTerminalFrameEvidence(ObservationPathingFact fact) {
+        /*
+         * Tracker 基址是 ThreadLocal（记忆条目 tracker-threadlocal-state-trap 的第三次复发，
+         * 2026-08-21 17:35 实锤）：本方法跑在 dhxy-observe-transport-* 线程上，该线程从不走常规
+         * 采样入口，ThreadLocal 里的 base 永远是初始值 -1。拿 (-1,-1) 去抓一个和真实窗口毫无重叠
+         * 的矩形，每拍必失败、失败只计数就重来——三个窗口同时以 ~20 次/秒白烧整窗 PrintWindow，
+         * 正好落在走路腿收尾时（用户"散步中移动会卡"的直接原因）。抓屏前必须先刷新本线程的
+         * 窗口状态；刷不出来说明窗口暂不可用，弃掉本拍即可，下一拍自然重试。
+         */
+        if (!tracker.refreshWindowState()) {
+            coordinateFramesUnavailable++;
+            return;
+        }
         int baseX = tracker.getWindowBaseX();
         int baseY = tracker.getWindowBaseY();
         BufferedImage fullFrame = tracker.captureToMemory(
@@ -1716,6 +2322,9 @@ public final class WindowObservationSampler {
         advanceLocalPathingGeneration();
         deliveredXinshouRois.clear();
         sampledXinshouRois.clear();
+        // 审查修正：暂停恢复落在停稳期内时，本代到达帧已被上面作废——重臂拍帧旗，
+        // 恢复后同一停稳补拍一张，否则该代 STABLE 事实永远无 lineage。
+        valueStableFramePending = valueStableActive;
     }
 
     private void advanceLocalPathingGeneration() {
@@ -1740,12 +2349,13 @@ public final class WindowObservationSampler {
 
     /**
      * Applies a Cloud-recognized pathing coordinate to the exact window's local state, then uses
-     * the same fact for the CR142 arrival/stopped-away classifier.
+     * the same result for the CR142 arrival/stopped-away classifier.
      *
      * <p>The map/X/Y are logical game coordinates, not screen pixels. Updating the per-window
-     * {@link PlayerCharacter} here keeps later Cloud task decisions from reusing a location that
-     * predates a completed local pathing terminal. This update is data-only: it neither wakes a
-     * task nor changes the terminal classifier's existing intent/generation guards.</p>
+     * {@link PlayerCharacter} here serves Runner pathing mechanics and local diagnostics. Cloud
+     * commits its own task-position cache in the request that performed recognition, so this
+     * Client must not echo the result as a later {@code POSITION_SAMPLE}. This update is data-only:
+     * it neither wakes a task nor changes the terminal classifier's existing intent/generation guards.</p>
      */
     void acceptAnalysisResults(List<ObservationAnalysisResult> results) {
         if (results == null) {
@@ -1765,6 +2375,31 @@ public final class WindowObservationSampler {
             }
             WindowPathingSnapshot snapshot = context.getPathingSnapshot();
             WindowPathingIntent intent = snapshot == null ? null : snapshot.getIntent();
+            /*
+             * 走路基线预热旁路(用户批准 2026-08-20):只更新识别坐标基线,不做终局分类,
+             * 也不受"请求时刻静止戳"门约束(走路中戳必然前移)。
+             */
+            if (localPathingBaselinePending
+                    && !localPathingCoordinatePending
+                    && intent != null
+                    && Objects.equals(intent.getIntentId(), result.intentId())) {
+                localPathingBaselinePending = false;
+                updateWindowPlayerLocation(result, "pathing walking baseline");
+                long baselineAtMs = System.currentTimeMillis();
+                if (hasRecognizedPathingCoordinateChanged(
+                        localPathingRecognizedX, localPathingRecognizedY,
+                        result.coordinateX(), result.coordinateY())) {
+                    localPathingRecognizedMapName = result.mapName();
+                    localPathingRecognizedX = result.coordinateX();
+                    localPathingRecognizedY = result.coordinateY();
+                    localPathingRecognizedChangedAtMs = baselineAtMs;
+                }
+                localPathingCoordinateResolvedAtMs = baselineAtMs;
+                log.info("Local pathing walking baseline refreshed: windowId={} intentId={} map={} coord=({}, {})",
+                        context.getWindowId(), result.intentId(), result.mapName(),
+                        result.coordinateX(), result.coordinateY());
+                continue;
+            }
             if (intent == null
                     || !Objects.equals(intent.getIntentId(), result.intentId())
                     || !localPathingCoordinatePending
@@ -1920,22 +2555,22 @@ public final class WindowObservationSampler {
             return;
         }
 
-        boolean pressed;
-        try {
-            // InputActionQueue serializes every window. With FakerInput, PRESS_ALT_C is a focused
-            // keyboard transaction because Alt+C is not on the background Alt whitelist.
-            pressed = inputSequences.submitAndWait(
-                    "ghost-king:changshou-enable-flight",
-                    List.of(InputAction.pressAltC()));
-        } catch (RuntimeException inputFailure) {
-            pressed = false;
-            log.warn("Ghost King Changshou Alt+C failed: windowId={} intentId={} type={} message={}",
-                    context.getWindowId(), intentId, inputFailure.getClass().getSimpleName(),
-                    inputFailure.getMessage());
-        }
-        log.info("Ghost King Changshou flight assist Alt+C completed: windowId={} taskRunId={} intentId={} "
-                        + "focusedSerialized=true executed={}",
-                context.getWindowId(), taskRunId, intentId, pressed);
+        // The global input worker remains the sole physical-input owner. The sampler only submits
+        // the intent and immediately returns to combat/pathing observation.
+        inputSequences.submitAsync(
+                        "ghost-king:changshou-enable-flight",
+                        List.of(InputAction.pressAltC()))
+                .whenComplete((pressed, inputFailure) -> {
+                    if (inputFailure != null) {
+                        log.warn("Ghost King Changshou Alt+C failed: windowId={} intentId={} type={} message={}",
+                                context.getWindowId(), intentId, inputFailure.getClass().getSimpleName(),
+                                inputFailure.getMessage());
+                    }
+                    log.info("Ghost King Changshou flight assist Alt+C completed: windowId={} taskRunId={} "
+                                    + "intentId={} focusedSerialized=true executed={}",
+                            context.getWindowId(), taskRunId, intentId,
+                            inputFailure == null && Boolean.TRUE.equals(pressed));
+                });
     }
 
     /**
@@ -1975,16 +2610,11 @@ public final class WindowObservationSampler {
                 context.getWindowId(), intent.getIntentId(), intent.getSource());
     }
 
-    /** Updates only this bound window's logical player location from this sampler's recognized full strip. */
+    /** Updates only this bound window's local logical position from Cloud's analysis response. */
     private void updateWindowPlayerLocation(ObservationAnalysisResult result, String source) {
         long observedAtMs = System.currentTimeMillis();
         context.updateRecognizedPlayerLocation(
                 result.mapName(), result.coordinateX(), result.coordinateY(), observedAtMs, source);
-        pendingPositionFact = new ObservationFact(
-                ObservationFactType.POSITION_SAMPLE,
-                new ObservationPositionValue(
-                        result.mapName(), result.coordinateX(), result.coordinateY()).encode(),
-                observedAtMs);
         log.info("Window player location memory updated from {}: windowId={} map={} coord=({}, {})",
                 source, context.getWindowId(), result.mapName(), result.coordinateX(), result.coordinateY());
     }
@@ -2155,10 +2785,12 @@ public final class WindowObservationSampler {
                 snapshot.isDialogBlocking(),
                 snapshot.isDialogBlocking() ? snapshot.getDialogBlockingReason() : null,
                 dialogBlockingDetectedAtMs,
-                snapshot.getState() == WindowPathingState.ARRIVED
+                (snapshot.getState() == WindowPathingState.ARRIVED
+                                || snapshot.getState() == WindowPathingState.STABLE)
                                 && Objects.equals(intent.getIntentId(), lastTerminalFrameIntentId)
                         ? lastTerminalFrameId : null,
-                snapshot.getState() == WindowPathingState.ARRIVED
+                (snapshot.getState() == WindowPathingState.ARRIVED
+                                || snapshot.getState() == WindowPathingState.STABLE)
                                 && Objects.equals(intent.getIntentId(), lastTerminalFrameIntentId)
                         ? lastTerminalFrameGeneration : null);
         lastPathingFact = current;
@@ -2368,7 +3000,6 @@ public final class WindowObservationSampler {
                 if (Boolean.TRUE.equals(mapPresent)) {
                     boolean closed = cleaner.closeMapIfPresent(
                             "ghost-king:local-kanda:" + schedule.getAttemptId());
-                    clearScenePresenceCache();
                     log.info("Local-kanda probe deferred for map cleanup: windowId={} task={} schedule={} closed={}",
                             context.getWindowId(), interest.getTaskType(), schedule.identityText(), closed);
                     return;
@@ -2428,23 +3059,7 @@ public final class WindowObservationSampler {
                     context.getWindowId(), schedule.identityText());
             return;
         }
-        capturePreCombatCoordinateFrame(rois);
-        boolean clicked;
-        try {
-            clicked = inputSequences.moveAndClickLeft(
-                    "xiuluo-40g:local-kanda:" + schedule.getRound(),
-                    validated.absoluteX(), validated.absoluteY(), 80, 150);
-        } catch (RuntimeException inputFailure) {
-            clicked = false;
-        }
-        if (!clicked) {
-            // An unexecuted click consumes nothing: release the claim so the open attempt keeps its fast path.
-            // The release is fenced to this exact schedule's full identity, so a stale/replaced schedule can
-            // never release (and thereby re-arm) a different schedule's claim.
-            context.releaseXiuluoEnterBattleClick(schedule, "click-not-executed");
-            return;
-        }
-        context.recordXiuluoLocalKandaClick(schedule, System.currentTimeMillis());
+        ObservationRoi preCombatRoi = capturePreCombatCoordinateFrame();
         String claimId = UUID.randomUUID().toString();
         if (!context.registerExpectedCombatEnterClaim(new com.bot.dhxy.window.model.WindowExpectedCombatEnterClaim(
                 claimId,
@@ -2459,38 +3074,67 @@ public final class WindowObservationSampler {
             context.releaseXiuluoEnterBattleClick(schedule, "expected-combat-claim-rejected");
             return;
         }
-        events.add(new ObservationKeyEvent(
-                "enter-battle-clicked-" + schedule.getAttemptId(),
-                ObservationKeyEventType.ENTER_BATTLE_CLICKED,
-                System.currentTimeMillis(),
-                null,
-                schedule.getAttemptId(),
-                schedule.getRound(),
-                "local-kanda",
-                "clickX=" + validated.absoluteX() + "|clickY=" + validated.absoluteY()
-                        + "|score=" + validated.score() + "|executed=true",
-                claimId,
-                null,
-                interest.getTaskType().getCode(),
-                schedule.getTaskRunId()));
+        try {
+            inputSequences.moveAndClickLeftAsync(
+                            "xiuluo-40g:local-kanda:" + schedule.getRound(),
+                            validated.absoluteX(), validated.absoluteY(), 80, 150)
+                    .whenComplete((clicked, inputFailure) -> {
+                        if (inputFailure != null || !Boolean.TRUE.equals(clicked)) {
+                            // Release only this exact asynchronous attempt. A newer expected claim or
+                            // schedule must never be cleared by a late completion.
+                            context.clearExpectedCombatEnterClaim(claimId, "local-kanda-input-failed");
+                            context.releaseXiuluoEnterBattleClick(schedule, "click-not-executed");
+                            log.warn("Local-kanda async click failed: windowId={} schedule={} type={} message={}",
+                                    context.getWindowId(), schedule.identityText(),
+                                    inputFailure == null ? null : inputFailure.getClass().getSimpleName(),
+                                    inputFailure == null ? null : inputFailure.getMessage());
+                            return;
+                        }
+                        long clickedAtMs = System.currentTimeMillis();
+                        context.recordXiuluoLocalKandaClick(schedule, clickedAtMs);
+                        if (preCombatRoi != null) {
+                            pendingAsyncRois.put(preCombatRoi.roiKey(), preCombatRoi);
+                        }
+                        publishAsyncEvent(new ObservationKeyEvent(
+                                "enter-battle-clicked-" + schedule.getAttemptId(),
+                                ObservationKeyEventType.ENTER_BATTLE_CLICKED,
+                                clickedAtMs,
+                                null,
+                                schedule.getAttemptId(),
+                                schedule.getRound(),
+                                "local-kanda",
+                                "clickX=" + validated.absoluteX() + "|clickY=" + validated.absoluteY()
+                                        + "|score=" + validated.score() + "|executed=true",
+                                claimId,
+                                null,
+                                interest.getTaskType().getCode(),
+                                schedule.getTaskRunId()));
+                    });
+        } catch (RuntimeException inputFailure) {
+            context.clearExpectedCombatEnterClaim(claimId, "local-kanda-submit-failed");
+            context.releaseXiuluoEnterBattleClick(schedule, "click-submit-failed");
+            log.warn("Local-kanda async submit failed: windowId={} schedule={} type={} message={}",
+                    context.getWindowId(), schedule.identityText(), inputFailure.getClass().getSimpleName(),
+                    inputFailure.getMessage());
+        }
     }
 
     /**
      * Reuses this cycle's complete position strip immediately before an already-confirmed local
      * enter-battle click. Encoding/upload happens after the click and never requests another HWND capture.
      */
-    private void capturePreCombatCoordinateFrame(List<ObservationRoi> rois) {
+    private ObservationRoi capturePreCombatCoordinateFrame() {
         byte[] pngBytes = encodePng(sharedPositionStripFrame);
         if (pngBytes == null) {
-            return;
+            return null;
         }
-        rois.add(new ObservationRoi(
+        return new ObservationRoi(
                 PRE_COMBAT_COORDINATE_STRIP_ROI,
                 PATHING_COORDINATE_STRIP_X,
                 PATHING_COORDINATE_STRIP_Y,
                 PATHING_COORDINATE_STRIP_WIDTH,
                 PATHING_COORDINATE_STRIP_HEIGHT,
-                pngBytes));
+                pngBytes);
     }
 
     /**
@@ -2643,6 +3287,9 @@ public final class WindowObservationSampler {
             return;
         }
         for (ObservationRoi roi : deliveredRois) {
+            if (roi != null) {
+                pendingAsyncRois.remove(roi.roiKey(), roi);
+            }
             if (roi == null || !isXinshouChangeInterest(roi.roiKey())) {
                 continue;
             }
@@ -2663,7 +3310,7 @@ public final class WindowObservationSampler {
     }
 
     /**
-     * Commits each new-player fact only when Cloud accepted the exact request that carried it.
+     * Commits versioned facts only when Cloud accepted the exact request that carried them.
      * A transport failure or stale acknowledgement leaves candidates uncommitted, so the next
      * observation cycle resends the current values.
      */
@@ -2673,12 +3320,6 @@ public final class WindowObservationSampler {
         }
         for (ObservationFact fact : deliveredFacts) {
             if (fact == null) {
-                continue;
-            }
-            if (fact.factType() == ObservationFactType.POSITION_SAMPLE) {
-                if (fact.equals(pendingPositionFact)) {
-                    pendingPositionFact = null;
-                }
                 continue;
             }
             if (!isVersionedXinshouFact(fact.factType())) {
@@ -2871,44 +3512,11 @@ public final class WindowObservationSampler {
         if (!context.tryClaimTiantingDialogOption(optionKey)) {
             return;
         }
-        boolean clicked;
+        byte[] firstPng;
+        byte[] freshPng;
         try {
-            int optionX = rect[0] + validated.roiOffsetX();
-            int optionY = rect[1] + validated.roiOffsetY();
-            /*
-             * Clicking 引妖香 redraws the Tracker panel. A point prepared before this option therefore
-             * belongs to the old panel and must never be chained here, even if an older Cloud still sends
-             * a follow-up payload. Cloud will consume the refreshed prepared action on its next turn.
-             */
-            clicked = inputSequences.moveAndClickLeft(
-                    optionSet == TiantingOptionSet.GHOST_KING_ACCEPT
-                            ? "ghost-king:dialog-option"
-                            : "tianting:dialog-option",
-                    optionX, optionY, 80, 150);
-        } catch (RuntimeException inputFailure) {
-            clicked = false;
-        }
-        // Input has completed. Only now encode the two already-retained pixels for the observation
-        // response; no capture or encode work is permitted to delay the physical accept click.
-        try {
-            if (clicked && firstAcceptFrame != null && freshAcceptFrame != null) {
-                byte[] firstPng = encodePng(firstAcceptFrame);
-                byte[] freshPng = encodePng(freshAcceptFrame);
-                if (firstPng != null && freshPng != null) {
-                    rois.add(new ObservationRoi("tianting-daily-count-first",
-                        TiantingDialogLocalMechanics.DIALOG_ROI_LEFT,
-                        TiantingDialogLocalMechanics.DIALOG_ROI_TOP,
-                        TiantingDialogLocalMechanics.DIALOG_ROI_WIDTH,
-                        TiantingDialogLocalMechanics.DIALOG_ROI_HEIGHT,
-                        firstPng));
-                    rois.add(new ObservationRoi("tianting-daily-count-fresh",
-                        TiantingDialogLocalMechanics.DIALOG_ROI_LEFT,
-                        TiantingDialogLocalMechanics.DIALOG_ROI_TOP,
-                        TiantingDialogLocalMechanics.DIALOG_ROI_WIDTH,
-                        TiantingDialogLocalMechanics.DIALOG_ROI_HEIGHT,
-                        freshPng));
-                }
-            }
+            firstPng = encodePng(firstAcceptFrame);
+            freshPng = encodePng(freshAcceptFrame);
         } finally {
             if (firstAcceptFrame != null) {
                 firstAcceptFrame.flush();
@@ -2917,50 +3525,86 @@ public final class WindowObservationSampler {
                 freshAcceptFrame.flush();
             }
         }
-        log.info("{} dialog option {}: windowId={} template={} score={} click=({}, {})",
-                optionSet == TiantingOptionSet.GHOST_KING_ACCEPT ? "Ghost King" : "Tianting",
-                clicked ? "clicked" : "click failed", context.getWindowId(),
-                templateName(validated.templatePath()), validated.score(),
-                rect[0] + validated.roiOffsetX(), rect[1] + validated.roiOffsetY());
-        if (clicked && TiantingDialogLocalMechanics.DUOXIE.equals(validated.templatePath())) {
-            /*
-             * 多谢 is what puts 使用封妖符 on screen. Record the causal state here, in the same pass as
-             * the click, and keep it until the follow-up is actually consumed; sampling/HTTP latency is
-             * not evidence that the business branch ended.
-             */
-            context.markTiantingFengyaoPending(optionKey);
-            log.info("Tianting 封妖符 local follow-up pending: windowId={} sourceOptionKey={}",
-                    context.getWindowId(), optionKey);
-        } else if (clicked && TiantingDialogLocalMechanics.FENGYAO.equals(validated.templatePath())) {
-            context.clearTiantingFengyaoPending();
-            log.info("Tianting 封妖符 local follow-up consumed: windowId={}", context.getWindowId());
-        }
-        /*
-         * No task/run identity on this edge, and that is not an omission. The wire validator requires the
-         * identity fields to be present EXACTLY for expected-combat and replay edges, and it runs on this
-         * side before the request is sent. A dialog-click edge that carried them would be rejected as a
-         * contract violation — and because a key event is retained until acked, the rejection would repeat
-         * on every subsequent request: the whole window's observation plane stops uploading pathing,
-         * combat, tracker, everything, and never recovers. The cloud reader does not look at these fields
-         * anyway; the window and run are already established by the observation-run binding.
-         */
+        int optionX = rect[0] + validated.roiOffsetX();
+        int optionY = rect[1] + validated.roiOffsetY();
         boolean ghostKingAccept = optionSet == TiantingOptionSet.GHOST_KING_ACCEPT;
-        events.add(new ObservationKeyEvent(
-                (ghostKingAccept ? "ghost-king-dialog-" : "tianting-dialog-")
-                        + interest.getCreatedAtMs() + "-" + validated.actionKey(),
-                ghostKingAccept
-                        ? ObservationKeyEventType.GHOST_KING_DIALOG_CLICKED
-                        : ObservationKeyEventType.TIANTING_DIALOG_CLICKED,
-                now,
-                null,
-                null,
-                0,
-                ghostKingAccept ? "ghost-king-dialog-option" : "tianting-dialog-option",
-                validated.actionKey()
-                        + "|score=" + validated.score()
-                        + "|executed=" + clicked
-                        + "|trackerChained=false"
-                        + "|probeCorrelation=" + interest.getSource()));
+        try {
+            /*
+             * Clicking 引妖香 redraws the Tracker panel. The global input worker owns the atomic
+             * move/click, while this sampler returns immediately and keeps observing combat/pathing.
+             */
+            inputSequences.moveAndClickLeftAsync(
+                            ghostKingAccept ? "ghost-king:dialog-option" : "tianting:dialog-option",
+                            optionX, optionY, 80, 150)
+                    .whenComplete((clicked, inputFailure) -> {
+                        boolean executed = inputFailure == null && Boolean.TRUE.equals(clicked);
+                        if (executed && firstPng != null && freshPng != null) {
+                            ObservationRoi firstRoi = new ObservationRoi("tianting-daily-count-first",
+                                    TiantingDialogLocalMechanics.DIALOG_ROI_LEFT,
+                                    TiantingDialogLocalMechanics.DIALOG_ROI_TOP,
+                                    TiantingDialogLocalMechanics.DIALOG_ROI_WIDTH,
+                                    TiantingDialogLocalMechanics.DIALOG_ROI_HEIGHT,
+                                    firstPng);
+                            ObservationRoi freshRoi = new ObservationRoi("tianting-daily-count-fresh",
+                                    TiantingDialogLocalMechanics.DIALOG_ROI_LEFT,
+                                    TiantingDialogLocalMechanics.DIALOG_ROI_TOP,
+                                    TiantingDialogLocalMechanics.DIALOG_ROI_WIDTH,
+                                    TiantingDialogLocalMechanics.DIALOG_ROI_HEIGHT,
+                                    freshPng);
+                            pendingAsyncRois.put(firstRoi.roiKey(), firstRoi);
+                            pendingAsyncRois.put(freshRoi.roiKey(), freshRoi);
+                        }
+                        log.info("{} dialog option {}: windowId={} template={} score={} click=({}, {})",
+                                ghostKingAccept ? "Ghost King" : "Tianting",
+                                executed ? "clicked" : "click failed", context.getWindowId(),
+                                templateName(validated.templatePath()), validated.score(), optionX, optionY);
+                        if (executed && TiantingDialogLocalMechanics.DUOXIE.equals(validated.templatePath())) {
+                            context.markTiantingFengyaoPending(optionKey);
+                            log.info("Tianting 封妖符 local follow-up pending: windowId={} sourceOptionKey={}",
+                                    context.getWindowId(), optionKey);
+                        } else if (executed
+                                && TiantingDialogLocalMechanics.FENGYAO.equals(validated.templatePath())) {
+                            context.clearTiantingFengyaoPending();
+                            log.info("Tianting 封妖符 local follow-up consumed: windowId={}",
+                                    context.getWindowId());
+                        }
+                        if (executed) {
+                            // NPC 点击 FIFO 用这一刻判"上一下点中 NPC 没有";见 WindowRuntimeContext 注释。
+                            context.markTaskDialogOptionAnswered(validated.actionKey());
+                        }
+                        publishAsyncEvent(new ObservationKeyEvent(
+                                (ghostKingAccept ? "ghost-king-dialog-" : "tianting-dialog-")
+                                        + interest.getCreatedAtMs() + "-" + validated.actionKey(),
+                                ghostKingAccept
+                                        ? ObservationKeyEventType.GHOST_KING_DIALOG_CLICKED
+                                        : ObservationKeyEventType.TIANTING_DIALOG_CLICKED,
+                                System.currentTimeMillis(),
+                                null,
+                                null,
+                                0,
+                                ghostKingAccept ? "ghost-king-dialog-option" : "tianting-dialog-option",
+                                validated.actionKey()
+                                        + "|score=" + validated.score()
+                                        + "|executed=" + executed
+                                        + "|trackerChained=false"
+                                        + "|probeCorrelation=" + interest.getSource()));
+                    });
+        } catch (RuntimeException inputFailure) {
+            log.warn("{} dialog option async submit failed: windowId={} template={} type={} message={}",
+                    ghostKingAccept ? "Ghost King" : "Tianting", context.getWindowId(),
+                    templateName(validated.templatePath()), inputFailure.getClass().getSimpleName(),
+                    inputFailure.getMessage());
+            publishAsyncEvent(new ObservationKeyEvent(
+                    (ghostKingAccept ? "ghost-king-dialog-" : "tianting-dialog-")
+                            + interest.getCreatedAtMs() + "-" + validated.actionKey(),
+                    ghostKingAccept
+                            ? ObservationKeyEventType.GHOST_KING_DIALOG_CLICKED
+                            : ObservationKeyEventType.TIANTING_DIALOG_CLICKED,
+                    System.currentTimeMillis(), null, null, 0,
+                    ghostKingAccept ? "ghost-king-dialog-option" : "tianting-dialog-option",
+                    validated.actionKey() + "|score=" + validated.score()
+                            + "|executed=false|trackerChained=false|probeCorrelation=" + interest.getSource()));
+        }
     }
 
     /** Encodes an already-captured observation ROI without requesting another window capture. */
@@ -2974,6 +3618,19 @@ public final class WindowObservationSampler {
             return buffer.toByteArray();
         } catch (IOException ignored) {
             return null;
+        }
+    }
+
+    /** Publishes an input-worker completion without making that worker depend on the next sample cycle. */
+    private void publishAsyncEvent(ObservationKeyEvent event) {
+        if (event == null) {
+            return;
+        }
+        Consumer<ObservationKeyEvent> publisher = asyncEventPublisher;
+        if (publisher != null) {
+            publisher.accept(event);
+        } else {
+            pendingAsyncEvents.add(event);
         }
     }
 

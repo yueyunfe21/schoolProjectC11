@@ -21,7 +21,7 @@ class BackgroundTaskTestControlContractTest {
         assertTrue(source.contains("public WindowTaskCommandResult startTiantingTest()"));
         assertTrue(source.contains("public WindowTaskCommandResult startCatchGhostTest()"));
         assertTrue(source.contains("public WindowTaskCommandResult startGhostKingTest()"));
-        assertTrue(source.contains("startTest(TaskType.WUHuan_V2, maxRuns)"));
+        assertTrue(source.contains("startTest(TaskType.WUHUAN_V3, maxRuns)"));
         assertTrue(source.contains("startTest(TaskType.TIANTING, maxRuns)"));
         assertTrue(source.contains("startTest(TaskType.CATCH_GHOST, maxRuns)"));
         assertTrue(source.contains("startTest(TaskType.GHOST_KING, maxRuns)"));

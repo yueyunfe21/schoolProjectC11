@@ -33,11 +33,12 @@ import java.util.function.Supplier;
 @Component
 public final class XinshouCombatLocalMechanics {
 
-    static final String AUTO_REMAINING_TEMPLATE_PATH =
+    private static final Logger log = LoggerFactory.getLogger(XinshouCombatLocalMechanics.class);
+
+    public static final String AUTO_REMAINING_TEMPLATE_PATH =
             "images/template/battle/auto_remaining.png";
-    static final double AUTO_REMAINING_THRESHOLD = 0.80d;
+    public static final double AUTO_REMAINING_THRESHOLD = 0.80d;
     static final int PANEL_SETTLE_MS = 1_000;
-    static final int RUNNER_PANEL_SETTLE_MS = 500;
     static final int RESTORE_ALT_A_GAP_MS = 1_000;
     static final int CLICK_SETTLE_MS = 80;
     static final int POST_CLICK_DELAY_MS = 250;
@@ -230,18 +231,36 @@ public final class XinshouCombatLocalMechanics {
         });
     }
 
+    /** Result detail marking that this call physically pressed Alt+8 and verified the panel after. */
+    public static final String DETAIL_ALT8_PRESSED = "alt8-pressed";
+
     /**
-     * Maintains automatic combat for one Runner-observed combat generation.
+     * Maintains the auto-combat panel once as a dumb mechanic; every decision about WHEN to call
+     * this lives elsewhere (local panel watcher on visibility loss, Cloud rounds ledger on command).
      *
-     * <p>The task-agnostic Runner calls this local-only mechanic after it confirms combat. It first
-     * checks {@code auto_remaining.png}; a visible panel completes without input, while an absent
-     * panel receives one exact-HWND {@code Alt+8} and one bounded verification. It never classifies
-     * task state or publishes a business event.</p>
+     * <p>{@code forcePress=false}: a visible panel completes without input (watcher path — the panel
+     * came back on its own or another actor repaired it first). {@code forcePress=true}: Alt+8 is
+     * pressed even over a visible panel (Cloud-commanded rounds refresh). A completed result whose
+     * {@link Result#detail()} is {@link #DETAIL_ALT8_PRESSED} means the key was physically sent and
+     * the panel verified visible afterwards.</p>
      *
-     * @return completed when the panel was already visible or became visible after one Alt+8
+     * @param forcePress press Alt+8 even when the panel is already visible
+     * @return completed when the panel is visible at the end of the transaction
      */
-    public Result maintainRunnerAutoCombatOnce() {
-        return exactWindowPort.executeBackground("runner:combat:auto-maintenance", session -> {
+    public Result maintainAutoPanelOnce(boolean forcePress) {
+        return exactWindowPort.executeBackground("runner:combat:auto-panel-maintenance", session -> {
+            CombatVisibility combatVisibility = session.probeCombatVisible();
+            if (combatVisibility != CombatVisibility.VISIBLE) {
+                log.warn("[panel-verify] Alt+8 refused: combat not visible on this window: windowId={} force={} combat={}",
+                        session.sessionWindowId(), forcePress, combatVisibility);
+                return Result.failed(
+                        combatVisibility == CombatVisibility.UNAVAILABLE
+                                ? Status.COMBAT_STATE_UNAVAILABLE
+                                : Status.COMBAT_NOT_VISIBLE,
+                        null,
+                        "auto-panel-maintenance-gated-by-current-combat-"
+                                + combatVisibility.name().toLowerCase());
+            }
             PanelVisibility visibility = session.probeAutoRemaining();
             if (visibility == PanelVisibility.UNAVAILABLE) {
                 return Result.failed(
@@ -249,16 +268,22 @@ public final class XinshouCombatLocalMechanics {
                         visibility,
                         "auto-panel-capture-unavailable");
             }
-            if (visibility == PanelVisibility.VISIBLE) {
+            if (visibility == PanelVisibility.VISIBLE && !forcePress) {
                 return Result.completed(visibility);
             }
+            log.info("[panel-verify] pressing Alt+8: windowId={} force={} combatVisible=true panelBefore={}",
+                    session.sessionWindowId(), forcePress, visibility);
+            session.saveEvidenceFrame("before-alt8");
             if (!session.pressAlt8()) {
                 return Result.failed(Status.INPUT_FAILED, visibility, "alt-8-failed");
             }
-            if (!session.waitMillis(RUNNER_PANEL_SETTLE_MS)) {
-                return Result.failed(Status.INPUT_FAILED, visibility, "runner-panel-settle-interrupted");
+            if (!session.waitMillis(PANEL_SETTLE_MS)) {
+                return Result.failed(Status.INPUT_FAILED, visibility, "panel-settle-interrupted");
             }
             PanelVisibility verified = session.probeAutoRemaining();
+            session.saveEvidenceFrame("after-alt8");
+            log.info("[panel-verify] Alt+8 pressed and settled: windowId={} force={} panelBefore={} panelAfter={}",
+                    session.sessionWindowId(), forcePress, visibility, verified);
             if (verified == PanelVisibility.UNAVAILABLE) {
                 return Result.failed(
                         Status.CAPTURE_UNAVAILABLE,
@@ -266,7 +291,7 @@ public final class XinshouCombatLocalMechanics {
                         "auto-panel-recheck-unavailable");
             }
             return verified == PanelVisibility.VISIBLE
-                    ? Result.completed(verified)
+                    ? new Result(Status.COMPLETED, verified, DETAIL_ALT8_PRESSED)
                     : Result.failed(Status.PANEL_NOT_VISIBLE, verified, "auto-panel-not-visible-after-alt-8");
         });
     }
@@ -322,6 +347,15 @@ public final class XinshouCombatLocalMechanics {
     }
 
     interface ExactWindowSession {
+        /** @return diagnostic window id for evidence logs; production sessions return the bound window id. */
+        default String sessionWindowId() {
+            return "unknown";
+        }
+
+        /** Best-effort full-window evidence screenshot; never fails the mechanic. */
+        default void saveEvidenceFrame(String tag) {
+        }
+
         /**
          * Rechecks the current exact window just before an ordinary-combat key sequence.
          * Test sessions default to visible so unrelated mechanical tests retain their existing setup.
@@ -485,6 +519,42 @@ public final class XinshouCombatLocalMechanics {
             this.keyboard = keyboard;
             this.inputProvider = inputProvider;
             this.tracker = tracker;
+        }
+
+        @Override
+        public String sessionWindowId() {
+            return windowId;
+        }
+
+        @Override
+        public void saveEvidenceFrame(String tag) {
+            BufferedImage frame = null;
+            try {
+                frame = tracker.captureToMemory(
+                        "panel-verify-evidence",
+                        binding.getX(),
+                        binding.getY(),
+                        binding.getX() + binding.getWidth(),
+                        binding.getY() + binding.getHeight());
+                if (frame == null) {
+                    log.warn("[panel-verify] evidence capture unavailable: windowId={} tag={}", windowId, tag);
+                    return;
+                }
+                java.nio.file.Path dir = Path.of("images", "temp", "panel-verify");
+                java.nio.file.Files.createDirectories(dir);
+                String name = java.time.LocalDateTime.now()
+                        .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS"))
+                        + "_" + windowId + "_" + tag + ".png";
+                ImageIO.write(frame, "png", dir.resolve(name).toFile());
+                log.info("[panel-verify] evidence saved: windowId={} tag={} file={}", windowId, tag, name);
+            } catch (IOException | RuntimeException error) {
+                log.warn("[panel-verify] evidence save failed: windowId={} tag={} reason={}",
+                        windowId, tag, error.toString());
+            } finally {
+                if (frame != null) {
+                    frame.flush();
+                }
+            }
         }
 
         @Override

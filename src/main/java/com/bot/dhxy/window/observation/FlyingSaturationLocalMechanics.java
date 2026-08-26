@@ -1,6 +1,7 @@
 package com.bot.dhxy.window.observation;
 
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.tools.CoordinateHelper;
 
 import javax.imageio.ImageIO;
@@ -67,6 +68,8 @@ final class FlyingSaturationLocalMechanics {
         }
         try {
             double[] match = ImageFinder.find(roi, template, MAP_LABEL_THRESHOLD);
+            // 用户铁律（2026-08-18 全量清扫）：模板匹配点落盘判定原图。
+            MatchEvidenceStore.saveOnChange("flying-changshou-map-label", null, roi, template, match);
             return match == null
                     ? MapLabelSample.absent()
                     : MapLabelSample.visible(match[2]);

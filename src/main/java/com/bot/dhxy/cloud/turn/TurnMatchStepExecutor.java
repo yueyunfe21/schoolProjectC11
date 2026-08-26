@@ -7,6 +7,7 @@ import com.bot.dhxy.cloud.turn.protocol.TurnRegion;
 import com.bot.dhxy.cloud.turn.protocol.TurnStep;
 import com.bot.dhxy.cloud.turn.protocol.TurnStepType;
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.core.MatchEvidenceStore;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -63,6 +64,10 @@ public final class TurnMatchStepExecutor {
         try {
             requireTemplateFitsCapture(template, source);
             double[] candidate = ImageFinder.find(source, template, matchSpec.threshold());
+            // 用户铁律（2026-08-18 全量清扫）：模板匹配点落盘判定原图。
+            MatchEvidenceStore.save("turn-match-step",
+                    window.context() == null ? null : window.context().getWindowId(),
+                    source, template, candidate);
             TurnMatchResult match = candidate == null
                     ? new TurnMatchResult(false, 0.0D, null, null, null)
                     : toAbsoluteMatch(candidate, template, captured.metadata().region());

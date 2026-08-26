@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "card": "G099",
+  "changeType": "business",
+  "status": "REVIEW_PASSED",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "5e05a9578a1b6116331def92ec255c27f490b68b",
+    "pushedReference": "origin/dev"
+  },
+  "rules": [
+    "BR-AUTOBATTLE-001",
+    "BR-TIANTING-006"
+  ],
+  "affectedPaths": [
+    "docs/rule-traceability/G099.json",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/ACTIVE_WORK.md",
+    "docs/cr-dashboard-data.js",
+    "src/main/java/com/bot/dhxy/input/InputSequences.java",
+    "src/main/java/com/bot/dhxy/input/action/InputActionQueue.java",
+    "src/main/java/com/bot/dhxy/window/observation/WindowObservationRunner.java",
+    "src/main/java/com/bot/dhxy/window/observation/WindowObservationSampler.java",
+    "src/main/java/com/bot/dhxy/window/observation/XinshouRunnerAutoCombatState.java",
+    "src/main/java/com/bot/dhxy/window/runtime/WindowRuntimeContext.java",
+    "src/test/java/com/bot/dhxy/window/observation/WindowObservationRunnerContractTest.java",
+    "src/test/java/com/bot/dhxy/window/observation/XinshouRunnerAutoCombatStateTest.java",
+    "src/test/java/com/bot/dhxy/window/observation/XinshouObservationPassiveSourceContractTest.java",
+    "src/test/java/com/bot/dhxy/window/observation/TiantingDialogProbeContractTest.java",
+    "src/test/java/com/bot/dhxy/window/observation/WindowObservationKandaContractTest.java",
+    "src/test/java/com/bot/dhxy/window/observation/WindowObservationTerminalFrameContractTest.java"
+  ],
+  "businessDifference": {
+    "kind": "NONE"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-AUTOBATTLE-001",
+      "producer": "The exact-window observation sampler detects the local combat generation and schedules one asynchronous automatic-combat maintenance intent without waiting for physical input.",
+      "transport": "XinshouRunnerAutoCombatState fences window, taskRunId and combat generation, while InputActionQueue retains the existing exact binding and pause/stop tokens for the global InputActionWorker.",
+      "consumer": "The existing XinshouCombatLocalMechanics executes through the serialized physical-input owner and asynchronously records completion or bounded retry without blocking observation.",
+      "ordering": "local combat edge -> exact generation claim -> one asynchronous maintenance -> global input serialization -> exact-session completion or retry; a replaced run ignores every late completion.",
+      "contracts": [
+        {
+          "path": "src/main/java/com/bot/dhxy/window/observation/XinshouRunnerAutoCombatState.java",
+          "command": "rg -n \"maintainAsync|inFlightGeneration|isCurrent\" src/main/java/com/bot/dhxy/window/observation/XinshouRunnerAutoCombatState.java",
+          "proves": [
+            "One combat generation has at most one in-flight maintenance operation.",
+            "A completion from a replaced task run cannot update the current session."
+          ]
+        },
+        {
+          "path": "src/test/java/com/bot/dhxy/window/observation/XinshouRunnerAutoCombatStateTest.java",
+          "command": "junit-platform-console-standalone --select-class com.bot.dhxy.window.observation.XinshouRunnerAutoCombatStateTest",
+          "proves": [
+            "An indefinitely blocked maintenance port does not block the observation caller.",
+            "The same in-flight generation is never submitted twice."
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "BR-TIANTING-006",
+      "producer": "The local dialog matcher retains the existing option set and exact click coordinate, then enqueues one atomic move/click instead of waiting in the observation thread.",
+      "transport": "Input completion publishes the existing stable TIANTING_DIALOG_CLICKED key event into the Runner retained mailbox; observation HTTPS uses a separate one-in-flight transport thread and exact ACK lifecycle.",
+      "consumer": "Cloud consumes the same stable action key and existing executed result; no dialog option, fallback order, coordinate, template or phase meaning changes.",
+      "ordering": "local match and revalidation -> asynchronous atomic input -> retained completion event -> next available observation request -> exact Cloud ACK; meanwhile local combat/pathing sampling continues.",
+      "contracts": [
+        {
+          "path": "src/main/java/com/bot/dhxy/window/observation/WindowObservationRunner.java",
+          "command": "rg -n \"startTransportCycle|samplePhysicalStateWhileTransportRuns|client.send\" src/main/java/com/bot/dhxy/window/observation/WindowObservationRunner.java",
+          "proves": [
+            "Only the observation transport thread waits for Cloud HTTP.",
+            "The resident observation thread keeps sampling while one request is in flight."
+          ]
+        },
+        {
+          "path": "src/test/java/com/bot/dhxy/window/observation/TiantingDialogProbeContractTest.java",
+          "command": "junit-platform-console-standalone --select-class com.bot.dhxy.window.observation.TiantingDialogProbeContractTest",
+          "proves": [
+            "All existing Tianting dialog options retain their action keys, one-shot behavior and follow-up semantics through asynchronous completion.",
+            "Failed physical input still reports the stable action with executed=false."
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {
+      "name": "isolated-production-compile",
+      "result": "PASS",
+      "evidence": "Java 21 javac compiled all six changed production classes to a new %TEMP% output directory; active target/classes was untouched."
+    },
+    {
+      "name": "focused-concurrency-contracts",
+      "result": "PASS",
+      "evidence": "Slow-Cloud, asynchronous automatic-combat, passive-source and Ghost-King assist contracts passed 14/14; Tianting dialog probe contracts passed 23/23."
+    },
+    {
+      "name": "static-ownership-scan",
+      "result": "PASS",
+      "evidence": "WindowObservationRunner/Sampler/XinshouRunnerAutoCombatState contain no submitAndWait, submitExclusiveAndWait or synchronous moveAndClickLeft calls; client.send remains reachable only from startTransportCycle's transport thread."
+    },
+    {
+      "name": "diff-check",
+      "result": "PASS",
+      "evidence": "git diff --check passed before documentation finalization."
+    }
+  ]
+}

@@ -47,6 +47,28 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class NpcArrivalFrameFifoLocalExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(NpcArrivalFrameFifoLocalExecutor.class);
+    /** defer 模式下等任务对话探针答复的上限;超时即判这一下点空,交给下一个候选。 */
+    private static final long DEFERRED_DIALOG_ANSWER_WAIT_MS = 2_500L;
+    private static final long DEFERRED_DIALOG_ANSWER_POLL_MS = 100L;
+    /*
+     * 2026-08-22 10:01 事故修正:只有客户端本地对话管线(采样器 tianting/ghost-king 选项机制)
+     * 会打 markTaskDialogOptionAnswered 这个戳。五环的接任务选项是云端 prepared 绿模板点的,
+     * 客户端永远打不出戳——昨天的等待逻辑对五环就成了"每个候选必等满 2.5s 再判失败",
+     * 五个窗口全部卡死在 ACCEPT_TASK。所以这个等待只对会打戳的任务开;其他任务 defer 模式
+     * 恢复原语义(点完即过,验证归任务层)。
+     */
+    private static final java.util.Set<String> DEFERRED_ANSWER_WAIT_TASK_CODES =
+            java.util.Set.of("ghost_king", "tianting");
+    /*
+     * 2026-08-23 13:43 事故修正（队长领不到双倍）：ghost_king/tianting 的“领双倍”维护流也走
+     * 本 FIFO（NPC=一品侍卫），但它点开的是双倍领取选项框——客户端本地任务选项探针只答复
+     * 接任务选项，永远不会为双倍框打 markTaskDialogOptionAnswered 戳。上面的等答复验证对它
+     * 必然 2.5s 超时 ×4 候选全判 miss → 云端报 “double-experience NPC click failed” → cleanup
+     * 点“告别”把框关掉，领取选项识别根本没有机会运行。对这个维护 NPC 恢复旧语义（点完即过，
+     * 验证归维护流自己的对话处理）。抓鬼也用一品侍卫接任务，但 zhuagui 不在上面的任务集里，
+     * 不受影响。
+     */
+    private static final String DOUBLE_EXPERIENCE_MAINTENANCE_NPC = "一品侍卫";
     private static final int WINDOW_WIDTH = 1024;
     private static final int WINDOW_HEIGHT = 768;
     private static final int CANDIDATE_LIMIT = 12;
@@ -227,6 +249,23 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                 }
                 TaskCheckpoint.throwIfStopRequested(
                         taskContextHolder, "NPC arrival FIFO stopped after poll");
+                if (message != null
+                        && message.getType() == NpcClickSmartQueueMessage.Type.INVALID
+                        && sameIdentity(spec.windowId(), message.getWindowId())
+                        && sameIdentity(spec.businessTaskRunId(), message.getTaskRunId())) {
+                    // 云端答"会话无效/不存在"（如 session-missing）时 sessionId 是空的，
+                    // 永远过不了下面的防串号门；必须先于该门终止本会话，否则轮询热循环
+                    // （2026-08-23 21:19 事故：一分钟 2.6 万条 stale 日志、接任务腿卡死）。
+                    log.warn("NPC arrival FIFO terminated by cloud INVALID: windowId={} taskRunId={} "
+                                    + "sessionId={} reason={}",
+                            spec.windowId(), spec.businessTaskRunId(),
+                            session.getSessionId(), message.getReason());
+                    reportOutcomeAsync(
+                            arguments, spec, message,
+                            NpcClickSmartQueueOutcome.FINAL_FAILED,
+                            "invalid cloud FIFO queue message: " + message.getReason());
+                    return SessionResult.terminal();
+                }
                 if (!isCurrentQueueMessage(spec, session, message)) {
                     log.warn("NPC arrival FIFO stale message ignored: expectedSessionId={} actualSessionId={} "
                                     + "expectedWindowId={} actualWindowId={} expectedTaskRunId={} actualTaskRunId={} "
@@ -241,6 +280,10 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                             arguments, spec, message,
                             NpcClickSmartQueueOutcome.STALE_IGNORED,
                             "stale session/window/task mismatch ignored");
+                    // 扔掉重问必须歇一拍：立即 continue 曾把串号应答刷成热循环。
+                    if (!TaskSleep.sleep(WAIT_SLEEP_MS)) {
+                        break;
+                    }
                     continue;
                 }
                 if (message.getType() == NpcClickSmartQueueMessage.Type.WAIT) {
@@ -293,7 +336,15 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                 reportOutcomeAsync(
                         arguments, spec, message, localOutcome,
                         "local verifier outcome after FIFO candidate");
-                if (localOutcome == NpcClickSmartQueueOutcome.VERIFIED) {
+                if (localOutcome == NpcClickSmartQueueOutcome.VERIFIED
+                        || (spec.deferDialogVerificationToTask()
+                        && localOutcome == NpcClickSmartQueueOutcome.DIALOG_OPEN_UNVERIFIED)) {
+                    if (localOutcome == NpcClickSmartQueueOutcome.DIALOG_OPEN_UNVERIFIED) {
+                        log.info("NPC arrival FIFO handed open dialog to task-owned classifier: "
+                                        + "windowId={} taskRunId={} intentId={} decisionId={}",
+                                spec.windowId(), spec.businessTaskRunId(), arguments.intentId(),
+                                message.getDecisionId());
+                    }
                     return SessionResult.verified();
                 }
                 if (localOutcome == NpcClickSmartQueueOutcome.SKIPPED
@@ -357,6 +408,7 @@ public final class NpcArrivalFrameFifoLocalExecutor {
         int absoluteY = binding.getY() + click.y;
         log.info("NPC arrival FIFO submitting point: source={} relative=({}, {}) absolute=({}, {})",
                 actionSource, click.x, click.y, absoluteX, absoluteY);
+        long clickAtMs = System.currentTimeMillis();
         boolean submitted = inputSequences.submitAndWait(
                 "npcClick:" + actionSource + ":" + arguments.targetKeyword(),
                 List.of(
@@ -374,11 +426,66 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                 || Thread.currentThread().isInterrupted()) {
             return NpcClickSmartQueueOutcome.CANCELLED;
         }
+        if (spec.deferDialogVerificationToTask()
+                && DEFERRED_ANSWER_WAIT_TASK_CODES.contains(
+                        arguments.taskCode() == null ? "" : arguments.taskCode().toLowerCase())
+                && !DOUBLE_EXPERIENCE_MAINTENANCE_NPC.equals(arguments.targetKeyword())) {
+            /*
+             * 2026-08-21 用户拍板(18:12 鬼王空点事故):defer 模式以前是"点出去就算成功",于是 FIFO
+             * 在第一个候选(固定点)之后立刻收工,后面的记忆点/tooltip/黄名永远轮不到——浮窗把 NPC
+             * 挡住时就一直空点同一个坐标,只能等云端 10 秒 park 超时整轮重来(实测每轮 ~28 秒)。
+             * 任务侧装的对话兴趣本来就每个采样周期在匹配"接任务"选项、匹配到就点,所以这里改成
+             * 等这条已有事实:等到=这一下确实点中了 NPC,收工;等不到=点空,交给下一个候选。
+             * 不新拍图、不新开校验,也不会和那个探针抢——用的就是它自己的答复。
+             */
+            return awaitDeferredDialogAnswer(clickAtMs, verificationSource);
+        }
+        /*
+         * G102 收口（2026-08-24 review P1）：这里曾被硬编码 false，把 defer 任务（五环）重新
+         * 踹回旧标准差截图判断——接任务框六行绿字必爆方差门 → VERIFICATION_FAILED → 重复
+         * 点 NPC 误开"恢复抽取"页（3465 实锤）。恢复 pushed 语义：defer 任务点完即过，
+         * 对话验证归任务自己的 presence/分类链。
+         */
         return queueOutcomeForVerification(dialogService.verifyNpcArrivalExpectedDialog(
                 spec.expectedDialogTemplatePaths(),
                 spec.expectedDialogRawTemplatePath(),
                 spec.deferDialogVerificationToTask(),
                 verificationSource));
+    }
+
+    /**
+     * Wait a bounded time for the task-owned dialog interest to report that it clicked its option.
+     *
+     * @param clickAtMs moment this candidate's click was submitted; only a later answer counts.
+     * @return VERIFIED once the option was answered, VERIFICATION_FAILED when the wait expires.
+     */
+    private NpcClickSmartQueueOutcome awaitDeferredDialogAnswer(long clickAtMs, String verificationSource) {
+        WindowRuntimeContext runtime = windowContextHolder.rawCurrent().orElse(null);
+        if (runtime == null) {
+            // 没有窗口上下文就拿不到这条事实:保持旧语义,不把正常流程判失败。
+            return NpcClickSmartQueueOutcome.VERIFIED;
+        }
+        long deadlineAtMs = System.currentTimeMillis() + DEFERRED_DIALOG_ANSWER_WAIT_MS;
+        while (System.currentTimeMillis() < deadlineAtMs) {
+            if (taskContextHolder.current().map(TaskExecutionContext::isStopRequested).orElse(false)
+                    || Thread.currentThread().isInterrupted()) {
+                return NpcClickSmartQueueOutcome.CANCELLED;
+            }
+            if (runtime.lastTaskDialogOptionAnsweredAtMs() >= clickAtMs) {
+                log.info("NPC arrival FIFO deferred verification satisfied by task dialog answer: source={} waitedMs={}",
+                        verificationSource, System.currentTimeMillis() - clickAtMs);
+                return NpcClickSmartQueueOutcome.VERIFIED;
+            }
+            try {
+                Thread.sleep(DEFERRED_DIALOG_ANSWER_POLL_MS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return NpcClickSmartQueueOutcome.CANCELLED;
+            }
+        }
+        log.info("NPC arrival FIFO deferred verification found no task dialog answer; treat as miss: source={} waitedMs={}",
+                verificationSource, DEFERRED_DIALOG_ANSWER_WAIT_MS);
+        return NpcClickSmartQueueOutcome.VERIFICATION_FAILED;
     }
 
     private NpcClickSmartQueueOutcome executeCtrlCandidates(
@@ -445,7 +552,16 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                 "npc-click-smart-fifo:retained-point-replay");
         log.info("NPC arrival retained-point replay finished: windowId={} taskRunId={} intentId={} point={} outcome={}",
                 spec.windowId(), spec.businessTaskRunId(), arguments.intentId(), retained, outcome);
-        return outcome == NpcClickSmartQueueOutcome.VERIFIED;
+        return outcome == NpcClickSmartQueueOutcome.VERIFIED
+                || (spec.deferDialogVerificationToTask()
+                && outcome == NpcClickSmartQueueOutcome.DIALOG_OPEN_UNVERIFIED);
+    }
+
+    /** 2026-08-23 用户契约（停止=彻底清空）：清该窗口累积的已验证点击点（键自带 run 围栏，此处只治泄漏）。 */
+    public void forgetWindowRealityMemory(String windowId) {
+        if (windowId != null && !windowId.isBlank()) {
+            verifiedReplayPoints.keySet().removeIf(key -> windowId.equals(key.windowId()));
+        }
     }
 
     private void rememberVerifiedPoint(

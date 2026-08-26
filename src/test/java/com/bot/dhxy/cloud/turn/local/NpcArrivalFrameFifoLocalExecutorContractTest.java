@@ -67,9 +67,11 @@ class NpcArrivalFrameFifoLocalExecutorContractTest {
                 "FINAL_FAILED"}) {
             assertTrue(source.contains("NpcClickSmartQueueOutcome." + outcome), outcome);
         }
-        assertTrue(source.contains("session.getSessionId().equals(message.getSessionId())"));
-        assertTrue(source.contains("spec.windowId().equals(message.getWindowId())"));
-        assertTrue(source.contains("spec.businessTaskRunId().equals(message.getTaskRunId())"));
+        // G102 收口修正：身份比对早已换成 null 安全的 sameIdentity 包装，旧断言按字面 equals
+        // 检查是陈旧合同；此处按现行真实形态断言三元组身份门仍然在。
+        assertTrue(source.contains("sameIdentity(session.getSessionId(), message.getSessionId())"));
+        assertTrue(source.contains("sameIdentity(spec.windowId(), message.getWindowId())"));
+        assertTrue(source.contains("sameIdentity(spec.businessTaskRunId(), message.getTaskRunId())"));
         assertTrue(source.contains("stale session/window/task mismatch ignored"));
         assertTrue(source.contains("TaskCheckpoint.throwIfStopRequested("));
         assertTrue(source.contains("message.getType() == NpcClickSmartQueueMessage.Type.MEMORY"));

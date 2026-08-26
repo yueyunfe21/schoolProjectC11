@@ -82,7 +82,7 @@ public class BackgroundTaskTestControlService {
      * @return the normal multi-window start result returned by the production control service.
      */
     public WindowTaskCommandResult startWuhuanTest(int maxRuns) {
-        return startTest(TaskType.WUHuan_V2, maxRuns);
+        return startTest(TaskType.WUHUAN_V3, maxRuns);
     }
 
     /** Start a real Tianting run through the production window/task path, using the configured default of 100 runs. */
@@ -228,7 +228,7 @@ public class BackgroundTaskTestControlService {
         gameUiSettingsStore.loadInto(botProperties);
 
         int previousMaxRuns;
-        if (taskType == TaskType.WUHuan_V2) {
+        if (taskType == TaskType.WUHUAN_V3) {
             previousMaxRuns = botProperties.getWuhuanMaxRuns();
             botProperties.setWuhuanMaxRuns(maxRuns);
         } else if (taskType == TaskType.TIANTING) {
@@ -252,7 +252,7 @@ public class BackgroundTaskTestControlService {
                     botProperties.getXiuluoRepairEquipmentMaintenanceIntervalMs());
             return registrationService.scanRegisterAndStartIndependentWindows(taskType);
         } finally {
-            if (taskType == TaskType.WUHuan_V2) {
+            if (taskType == TaskType.WUHUAN_V3) {
                 botProperties.setWuhuanMaxRuns(previousMaxRuns);
             } else if (taskType == TaskType.TIANTING) {
                 botProperties.setTiantingMaxRuns(previousMaxRuns);

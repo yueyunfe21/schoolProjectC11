@@ -2,6 +2,7 @@ package com.bot.dhxy.window.observation;
 
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.tools.CoordinateHelper;
 
 import javax.imageio.ImageIO;
@@ -78,8 +79,14 @@ final class LocalCombatSignalMechanics {
                 throw new IllegalStateException("combat template load failed: " + path, failure);
             }
         };
-        this.templateMatcher =
-                (source, template, threshold) -> ImageFinder.find(source, template, threshold) != null;
+        this.templateMatcher = (source, template, threshold) -> {
+            double[] match = ImageFinder.find(source, template, threshold);
+            // 用户铁律（2026-08-18 全量清扫）：模板匹配点落盘判定原图。
+            MatchEvidenceStore.saveOnChange(
+                    "combat-signal-probe-" + template.getWidth() + "x" + template.getHeight(),
+                    null, source, template, match);
+            return match != null;
+        };
     }
 
     LocalCombatSignalMechanics(FrameCapture frameCapture,

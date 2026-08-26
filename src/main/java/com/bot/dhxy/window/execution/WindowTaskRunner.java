@@ -84,6 +84,8 @@ public final class WindowTaskRunner {
         // prepareRemoteFreshStart() already cleared the task-owned context before the start ACK could create this
         // run's observation runner. Clearing here would erase fresh first-frame state after that runner begins.
         remoteQueue = safeQueue;
+        // 新一轮启动前清掉上一轮 TASK_STARTED 留下的"当前任务"显示，避免旧队列元素串台。
+        com.bot.dhxy.cloud.turn.RemoteRunningTaskDisplayStore.clear(windowContext.getWindowId());
         remoteRunning = true;
         remotePaused = false;
         remoteStartedAt = LocalDateTime.now();
@@ -178,7 +180,12 @@ public final class WindowTaskRunner {
 
     public WindowTaskSnapshot snapshot() {
         PlayerCharacter me = windowContext.getGameState().getMe();
-        TaskType runningTask = remoteRunning ? remoteQueue.firstTaskType() : TaskType.UNKNOWN;
+        // 2026-08-23：云端队列推进后 UI 跟着走——优先取 TASK_STARTED 宣布的当前元素，
+        // 没有事件（老运行/首元素启动前）回退队列第一个任务的旧显示。
+        TaskType runningTask = remoteRunning
+                ? com.bot.dhxy.cloud.turn.RemoteRunningTaskDisplayStore.currentOrDefault(
+                        windowContext.getWindowId(), remoteQueue.firstTaskType())
+                : TaskType.UNKNOWN;
         return new WindowTaskSnapshot(
                 windowContext.getWindowId(),
                 windowContext.getRoleName(),

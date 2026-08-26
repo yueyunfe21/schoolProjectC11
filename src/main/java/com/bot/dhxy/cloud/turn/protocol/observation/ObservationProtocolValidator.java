@@ -233,7 +233,15 @@ public final class ObservationProtocolValidator {
         require(fact.transition() != null, "pathingFact.transition must not be null");
         requireCoordinatePair(fact.targetX(), fact.targetY(), "pathingFact.target");
         requireCoordinatePair(fact.currentX(), fact.currentY(), "pathingFact.current");
-        if (fact.currentX() != null) {
+        if (fact.currentX() != null
+                && fact.state() != ObservationPathingState.STABLE
+                && fact.state() != ObservationPathingState.STOPPED_AWAY) {
+            // STABLE 例外（2026-08-23 停稳事实重设计）：字模读值只出数字不出地图名，
+            // 停稳事实允许带坐标不带地图名；其余状态维持原契约。
+            // STOPPED_AWAY 同享例外（2026-08-23 22:4x 活体实锤）：云端入口翻译层把 STABLE
+            // 翻成 STOPPED_AWAY 时保留数字坐标、图名不回填（回填会误导跨图判断），而
+            // inbox.accept 会对翻译产物复验——不豁免则整批 400，停稳期观察通道全断。
+            // 老像素判定路径的 STOPPED_AWAY 永远自带 OCR 图名，此放宽不影响它。
             require(fact.currentMapName() != null,
                     "pathingFact.currentMapName must be present with current coordinates");
         }
@@ -267,8 +275,9 @@ public final class ObservationProtocolValidator {
         require((fact.terminalFrameId() == null) == (fact.terminalFrameGeneration() == null),
                 "pathingFact terminal frame id/generation must be both present or both absent");
         if (fact.terminalFrameId() != null) {
-            require(fact.state() == ObservationPathingState.ARRIVED,
-                    "only ARRIVED pathingFact may carry terminal frame lineage");
+            require(fact.state() == ObservationPathingState.ARRIVED
+                            || fact.state() == ObservationPathingState.STABLE,
+                    "only ARRIVED or STABLE pathingFact may carry terminal frame lineage");
             require(fact.terminalFrameId() > 0L && fact.terminalFrameGeneration() > 0L,
                     "pathingFact terminal frame id/generation must be positive");
         }

@@ -210,6 +210,47 @@ class WindowObservationRunnerContractTest {
     }
 
     @Test
+    void slowCloudTransportDoesNotStopPhysicalObservationTicks() throws Exception {
+        WindowRuntimeContext context = new WindowRuntimeContext(WINDOW, new GameContext());
+        context.setNativeBinding(new WindowNativeBinding(HWND, "title", "class", 7L, 0, 0, 1024, 768));
+        AtomicInteger captures = new AtomicInteger();
+        CountDownLatch sendEntered = new CountDownLatch(1);
+        CountDownLatch releaseSend = new CountDownLatch(1);
+        ObservationClient delayedClient = request -> {
+            sendEntered.countDown();
+            try {
+                if (!releaseSend.await(3, TimeUnit.SECONDS)) {
+                    throw new AssertionError("test transport gate timed out");
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new ObservationTransportException(
+                        ObservationTransportException.Kind.INTERRUPTED,
+                        "test transport interrupted", interrupted);
+            }
+            return response(request, List.of(), 0L, List.of());
+        };
+        WindowObservationRunner runner = new WindowObservationRunner(
+                delayedClient, TENANT, DEVICE, WINDOW, HWND, TASK_CODE, TASK_RUN,
+                sampler(context, captures), 50L);
+        try {
+            runner.start();
+            assertTrue(sendEntered.await(2, TimeUnit.SECONDS));
+            long deadline = System.nanoTime() + Duration.ofSeconds(2).toNanos();
+            while (captures.get() < 3 && System.nanoTime() < deadline) {
+                Thread.sleep(20L);
+            }
+            assertTrue(captures.get() >= 3,
+                    "the bound HWND must keep being sampled while Cloud response is blocked");
+            assertEquals(1L, runner.observerSeq(),
+                    "only one transport request may remain in flight while local sampling advances");
+        } finally {
+            releaseSend.countDown();
+            stopAndAssertStopped(runner);
+        }
+    }
+
+    @Test
     void movingPathingFactStaysLocalUntilARealEdgeNeedsTransport() {
         ObservationPathingFact first = activePathingFact("intent-1", 1_100L, true, false);
         ObservationPathingFact moving = activePathingFact("intent-1", 1_400L, true, false);
@@ -771,6 +812,12 @@ class WindowObservationRunnerContractTest {
     }
 
     private static WindowObservationSampler sampler(WindowRuntimeContext context) {
+        return sampler(context, null);
+    }
+
+    private static WindowObservationSampler sampler(
+            WindowRuntimeContext context,
+            AtomicInteger captureCount) {
         WindowTaskContextHolder holder = new WindowTaskContextHolder(new WindowIsolationProperties());
         GameClientTracker tracker = new GameClientTracker(
                 null, null, null, null, null, null, null, null, null, null, null) {
@@ -791,6 +838,9 @@ class WindowObservationRunnerContractTest {
 
             @Override
             public BufferedImage captureToMemory(String elementName, int x1, int y1, int x2, int y2) {
+                if (captureCount != null) {
+                    captureCount.incrementAndGet();
+                }
                 return new BufferedImage(x2 - x1, y2 - y1, BufferedImage.TYPE_INT_RGB);
             }
         };

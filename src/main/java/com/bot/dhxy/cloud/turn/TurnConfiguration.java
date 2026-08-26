@@ -47,7 +47,12 @@ public class TurnConfiguration {
     TurnLoopFactory turnLoopFactory(TurnClient turnClient,
                                     LocalTurnActionExecutor actionExecutor,
                                     AutomationMetricsService metricsService) {
-        return new TurnLoopFactory(turnClient, actionExecutor, null, (windowId, event) -> metricsService.record(
+        return new TurnLoopFactory(turnClient, actionExecutor, null, (windowId, event) -> {
+            // UI"当前"列跟随云端队列推进（2026-08-23）：TASK_STARTED 宣布当前执行到哪个元素。
+            if (event.type() == com.bot.dhxy.cloud.turn.protocol.TurnTaskQueueEvent.Type.TASK_STARTED) {
+                RemoteRunningTaskDisplayStore.recordStarted(windowId, event.taskCode());
+            }
+            metricsService.record(
                 AutomationMetricEvent.builder()
                         .runId(event.startRequestId())
                         .taskCode(event.taskCode())
@@ -64,7 +69,8 @@ public class TurnConfiguration {
                                 "taskRunId", event.taskRunId(),
                                 "queueIndex", Integer.toString(event.queueIndex()),
                                 "type", event.type().name()))
-                        .build()));
+                        .build());
+        });
     }
 
     private static AutomationMetricStatus toMetricStatus(String result) {

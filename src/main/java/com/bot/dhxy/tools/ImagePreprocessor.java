@@ -185,41 +185,7 @@ public class ImagePreprocessor {
         return count;
     }
 
-    public static double getImageStandardDeviation(BufferedImage img, String debugOutputPath) {
-        if (img == null) return 100.0;
-
-        BufferedImage convertedImg = new BufferedImage(img.getWidth(), img.getHeight(), BufferedImage.TYPE_3BYTE_BGR);
-        Graphics2D graphics = convertedImg.createGraphics();
-        try {
-            graphics.drawImage(img, 0, 0, null);
-        } finally {
-            graphics.dispose();
-        }
-        byte[] data = ((java.awt.image.DataBufferByte) convertedImg.getRaster().getDataBuffer()).getData();
-        Mat src = new Mat(img.getHeight(), img.getWidth(), org.opencv.core.CvType.CV_8UC3);
-        src.put(0, 0, data);
-        convertedImg.flush();
-
-        Mat gray = new Mat();
-        Imgproc.cvtColor(src, gray, Imgproc.COLOR_BGR2GRAY);
-
-        if (debugOutputPath != null && !debugOutputPath.isBlank()) {
-            saveDebugImage(gray, debugOutputPath);
-        }
-
-        org.opencv.core.MatOfDouble mean = new org.opencv.core.MatOfDouble();
-        org.opencv.core.MatOfDouble stddev = new org.opencv.core.MatOfDouble();
-        Core.meanStdDev(gray, mean, stddev);
-
-        double dev = stddev.get(0, 0)[0];
-
-        src.release();
-        gray.release();
-        mean.release();
-        stddev.release();
-
-        return dev;
-    }
+    // G102 收口（2026-08-24）：Dialog 方差门唯一调用者已删，本方法一并移除；禁止重新引入。
 
     public static void saveDebugImage(Mat mat, String fileName) {
         if (!ENABLE_DEBUG_SAVE || mat == null || mat.empty()) return;

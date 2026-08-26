@@ -1,6 +1,523 @@
 # DHXY Package Architecture
 
+## G105 Codex 无边界递归扫描与本机状态膨胀治理（2026-08-25）
+
+- **状态：`GUARDS DELIVERED / BACKUP PASS / MONITOR RUNNING / EXIT MAINTENANCE ARMED`。** 本卡只治理 Codex 本机工具链和资源风险，不修改 DHXY 业务源码、任务阶段、视觉判断或输入行为；因此不建立业务 `rule-traceability` 文件。
+- **根因证据：** 现场捕获到 Codex 子 PowerShell 在仓库根运行 `Get-ChildItem -Recurse -File ... | Where-Object ...`，先遍历整个工作树再筛日志名。复现时 Codex 进程组磁盘吞吐约 156–171 MB/s 且内存继续增长；命令结束后 D 盘队列恢复。pagefile 位于 `H:\pagefile.sys`，排除“D 盘主要被换页写满”的解释。
+- **状态体积：** keep-codex-fast 只读报告显示 active sessions 55.350 GB、archived sessions 162.588 GB、71 个超过 10 天候选约 49.845 GB、日志约 1.355 GB、82 个 active threads、41 个 metadata repair 候选、1227 个扩展 cwd 路径。以上会放大 Codex 常驻内存、启动/检索成本，但不是这次 309 MB/s D 盘读的直接触发器。
+- **已落地保护：** 全局 `F:\CodexHome\.codex\AGENTS.md` 与项目 `AGENTS.md` 明令禁止宽目录无边界递归，搜索改用 `rg` / `rg --files` / `git ls-files`；新增 `scripts/watch-codex-health.ps1`，只读监控 Codex 私有内存、D 盘队列及危险递归子进程，只告警不杀进程，并带告警冷却和 1 MB 日志轮转。计划任务 `CodexHealthWatch-ReadOnly` 已注册并运行；烟测快照为 private 5.27 GB、D queue 0、危险递归子进程 0。
+- **备份与维护：** 完整备份已落到 `C:\CBK\kcf-20260825-1007`。一次性计划任务 `CodexMaintenanceAfterExit-20260825` 已处于运行/等待状态；Codex 退出后只会先备份再把超过 10 天的 active sessions 归档、轮转大日志、修复 metadata/path，不删除任务；输出写入 `C:\CBK\kcf-apply-20260825\`。第一次长路径失败留下的不完整备份目录已保留，不自动删除。
+- **验收门：** 新会话必须检查维护 stdout/stderr，再跑一次 report-only；确认 active sessions、日志、metadata/path 候选下降，并确认计划任务 `CodexHealthWatch-ReadOnly` 正在运行后，才能关闭 G105。
+
+## G104 修罗 Story 地图坐标识别暴力扫描与 64 秒阻塞（2026-08-25）
+
+- **状态：`SOURCE DELIVERED / CLOUD COMPILE PASS / REAL REPLAY 3/3 PASS / FRESH REQUIRED`。** Cloud 目标工作树为
+  `D:\mavenProject\dhxy-cloud-brain dev@ac398141`，与 `origin/dev@ac398141` 一致；治理工作树为
+  `D:\mavenProject\DHXY-cr271 dev@5e05a957`。保护两仓全部既有 dirty/untracked，不修改受保护基线
+  `D:\mavenProject\DHXY`。Cloud 目标类 `ObjectiveTextRecognizer.java` 开工前相对 pushed baseline 无差异。
+- **现场证据：** 修罗队长 `hwnd-AFA0B60` 第 22 轮于 `00:48:40.632` 开始解析错误 Story，至
+  `00:49:45.207` 才返回 miss，单次耗时 `64,575ms`。该 Story 原图全为白色说明文字；`WASH_GREEN`
+  后没有有效绿字前景。正常重试帧包含 `四圣庄(50,205)`，同一识别器仅耗时约 `128ms`。
+- **P1 根因：** 当前实现先尝试坐标投影；找不到坐标时，`orElseGet(findBestMapName(...))` 对完整
+  `529x143` Story 依次滑动 19 张地图模板。`bestBinaryTemplateMatch()` 在每一个候选位置再次逐像素调用
+  `BufferedImage.getRGB()`，累计约 `983,785,472` 次像素比较、约 `1.97` 十亿次像素读取。空前景的
+  `cropToForeground()` 又错误返回完整源图，且 `sourceWhite==0` 只在最内层模板扫描结束后判断。现有黑图
+  合同仅使用 `4x4` 图片，只验证 typed miss，不覆盖真实尺寸性能。
+- **用户批准合同：** 不能只增加空图门；必须删除 Objective 链路中的手写全图逐像素滑窗。保留修罗双路径：
+  Tracker title present 仍直接证明接取成功；Tracker absent 仍可解析 Story 的绿字地图与坐标。识别器只洗图一次，
+  先以投影/连通结构定位坐标行，再把地图名搜索限制在坐标左侧同一行；地图模板复用仓内 OpenCV 匹配能力，坐标按
+  分割后的 glyph 分类。没有绿色前景或没有坐标结构时立即 typed miss，不允许整图地图/数字 fallback。
+- **验收门：** 使用本次真实 `529x143` 失败图和正常图回放；失败图必须立即 miss，正常图仍识别
+  `四圣庄(50,205)`。性能合同在同一 JVM 预热后要求失败图 `<100ms`、正常图 `<250ms`，并设宽松 CI 硬上限
+  防止重新引入秒级扫描；Cloud production compile 与定向测试通过后才允许 fresh。
+- **2026-08-25 交付：** `ObjectiveTextRecognizer` 已删除完整 Story 上的地图模板手写逐像素滑窗、数字模板
+  全图 fallback 及其阈值/记录类型。`WASH_GREEN` 后零前景立即返回
+  `cloud-brain-objective-green-foreground-empty`；非空图先投影定位坐标结构，仅在坐标左侧同一行的小 ROI 内调用
+  仓内 `OpenCvTemplateMatcher` 匹配地图名，坐标只走分割 glyph 分类。Tracker title 成功路径及 Story 有效解析
+  路径均保留；没有绿色前景、没有坐标结构或局部地图名不成立时 fail-closed，不再进入秒级扫描。
+- **真实回放：** 同一 JVM 预热后的三路结果为：本次 `529x143` 无效现场图 `6ms` typed miss；本次有效现场图
+  `四圣庄(50,205)` 为 `59ms`；仓库既有有效 Story `龙窟七层(57,43)` 为 `51ms`。隔离
+  `junit-platform-console-standalone 1.10.2` 为 `1/1 PASS`，marked 输出为
+  `D:\mavenProject\dhxy-cloud-brain\images\test-cases\g104\round22-valid-sishengzhuang-50-205-marked.png`；
+  红框覆盖地图名、青框覆盖坐标带。Cloud `mvn -q -DskipTests compile` 为 exit 0，源码搜索确认旧全图 fallback
+  标识零残留，`git diff --check` 通过。
+- **已知集外门：** 普通 `mvn -q -Dtest=G104ObjectiveTextRecognizerPerformanceReplayTest test` 会在执行本卡前被
+  仓库既有全树 `testCompile` 漂移阻断，实锤包括 `TurnPendingRouteOutcome` 构造参数与
+  `TiantingPostCombatTrackerFreshnessContractTest` 调用签名不匹配；与本卡生产文件和隔离测试无关，未虚报全树绿灯。
+  下一步只需重启 Cloud 后 fresh 复现原修罗双路径，确认错误 Story 不再占用请求线程约 65 秒。
+
+## G103 战斗画面卡顿：观察 transport 回包唤醒整窗截图风暴（2026-08-25）
+
+- **状态：`CR REVIEW #7 P0x0 P1x0 P2x0 / SOURCE ACCEPTED / FRESH REQUIRED`。** 调查目标仅为
+  `D:\mavenProject\DHXY-cr271 dev@5e05a957`，与 `origin/dev@5e05a957` 一致；保护当前全部既有
+  dirty/untracked，不修改受保护基线 `D:\mavenProject\DHXY`。最初调查轮未改生产代码；随后工作树出现 G103
+  实现，本次独立 CR REVIEW 只读审查、未修改生产文件。
+- **现场量化：** 本次 Client/Cloud 于 `2026-08-24 23:35` 左右启动。队长 `hwnd-AFA0B60` 的
+  `hwndCapture` 从 `00:00:12.830` 的 `9243` 增至 `00:44:25` 左右的 `24359`，约 44.2 分钟新增
+  `15116` 次，即队长约 **5.7 次整窗截图/秒**；其余四个成员各约 0.6 次/秒，五窗合计约 8 次/秒。
+  `robotCapture=0`、`captureFailure=0`，不存在截图失败回退或 Robot 抢前台。活动 `javaw` 在调查时约
+  `3.0 GiB` 工作集、`4.9 GiB` 私有内存、123 线程，累计 CPU 约 `8764s`；日志没有 GC、OOM、heap 或
+  safepoint 报错，不能把本案解释为 GC 卡顿。
+- **P1 根因（G099 fresh 失败）：** G099 将 HTTPS transport 拆到独立线程后，
+  `WindowObservationRunner.startTransportCycle()` 的 `finally` 在每次 Cloud 快速回包时调用
+  `wakeForLocalStateChange()`；该方法设置 `wakePending=true`，使 `pace()` 直接返回。Runner 随即启动下一次
+  transport，`sendOnce()->sampler.collect()` 又调用 `refreshSharedFramesIfNeeded()`；队长路径每个 cycle 都执行
+  `refreshSharedCycleFrame()`，通过 `captureToMemory("observe:shared-cycle-frame", 0,0,1024,768)` 触发一次
+  `PrintWindow(PW_RENDERFULLCONTENT)` 整窗重绘。因而截图节奏被 HTTPS 回包速度驱动，绕过预期的战斗 1 秒、
+  寻路 300ms 等采样周期。源码注释已明确 Win32 区域截图仍会强制整窗 render，这与游戏战斗动画卡顿直接吻合。
+- **第二放大项：** `logs/frames/match-evidence` 在调查时持续维持 2000 文件上限，约 `67.7 MiB`；战斗期间常见
+  每分钟 126--200 张 PNG，即约 2--3.3 张/秒的压缩和磁盘写入。它会放大 CPU/磁盘压力，但无法解释队长
+  `hwndCapture` 的 5.7 次/秒，故列为次因。`automation-dashboard-data.json` 约 10.8 MiB 的周期写入只会造成
+  偶发 IO 峰值，也不是持续卡顿主因。
+- **批准后最小修法：** ① transport 完成只能通知“in-flight 已结束”，不得设置绕过 cadence 的通用
+  `wakePending`；保留真实本地状态变化的立即唤醒。②共享整窗帧必须按物理采样 deadline 限频并复用，Cloud
+  回包/上传 cycle 不能强制刷新；战斗默认最多 1Hz，活跃寻路最多约 3.3Hz，只有已有五倍进战 duty 保留 100ms
+  快车道。③正常运行关闭或显著收紧 match-evidence 热路径 PNG 落盘，仅 debug/状态变化时留证。不得改战斗模板、
+  阈值、业务 phase、点击坐标或 G099 的输入/HTTPS 三通道隔离。
+- **验收门：** 定向合同必须证明 Cloud 10ms 快速回包 10 秒时整窗 capture 仍受 cadence 上限约束，transport
+  慢 60 秒时本地战斗采样仍按期推进；五窗 fresh 中队长稳定战斗 `hwndCapture` 增量应约 1 次/秒而非 5--6 次/秒，
+  成员 quiet 维持低频，且无战斗事实延迟、无重复输入。match-evidence 正常模式不得再每分钟写入上百张。
+- **2026-08-25 独立 CR REVIEW：`P0=0 / P1=3 / P2=2`，当前禁止 fresh。** P1①删 transport completion
+  通用 wake 后，response 更新普通 `interests` 没有按 cadence 变快定点唤醒；空 interest 的 5 秒 heartbeat 切到
+  `combat-signal=1s` 最多仍会迟 5 秒。P1②当前 `pace()` 每 tick 后重新完整等待，Sampler 仅按帧龄复用；若
+  1 秒周期在 0.9 秒被真实状态 wake，会复用旧帧再完整等 1 秒，fresh frame 可推迟到约 1.9 秒，寻路 300ms
+  同理接近 600ms，未实现单调时钟绝对 deadline。P1③现场 `logs/frames/match-evidence` 热写入来自
+  `ImageFinder.saveMatchEvidence()` 的同步 PNG 编码、目录扫描和删除；当前收紧的是另一个写
+  `images/temp/match-evidence` 的 `MatchEvidenceStore`，没有修到量化到的次因。P2①合同未覆盖 10ms 快回包
+  cadence cap、empty→active interest 和周期末 wake；P2②卡片状态曾仍写“未改生产代码”，与工作树已有实现不符。
+- **必须返修：** 保留删除 completion 通用 wake，但以单调时钟维护独立的绝对物理采样 deadline；transport 可立即
+  继续而不得强制新截图。仅当新 interests 令 cadence 变快时定点唤醒并重算 deadline。直接治理
+  `ImageFinder.saveMatchEvidence()` 的 `logs/frames/match-evidence` 正常模式同步热写入。补齐上述三个缺失合同后
+  再申请复审；复审通过前不得启动 fresh。
+- **2026-08-25 返修交付（申请复审）：** P1①`shouldWakeForAppliedInterests(prevRev, rev, prevInterests,
+  interests)` 判真即定点 `wakeForLocalStateChange()`——兴趣修订/兴趣集任一变化立即唤醒（含 empty 5s
+  heartbeat→combat-signal 1s；变慢方向的多余一拍由共享帧周期门以复用吸收，零截图开销）。P1②绝对采样
+  deadline 落地且换**单调时钟**：`WindowObservationSampler.monotonicMillis()`（nanoTime 派生）作
+  `sharedCycleFrameCapturedAtMs` 唯一时基；`pace()` 等待时长=`paceWaitMs(period, capturedAt, monotonicNow)`
+  = min(period, 距捕获满周期的剩余量)，到期（<=0）立即进拍；无帧（清屏/失败/成员静默，capturedAt=0）回退
+  整周期防自旋。捕获间隔上界=一个周期（0.9s 处被真实 wake 吵醒的 1s 周期，下一拍只再等 ~0.1s）。
+  P1③`ImageFinder.saveMatchEvidence()` 滚动池默认关闭（`-Ddhxy.matchEvidence.rollingPool=true` 恢复调试）——
+  它此前每 250ms 在感知调用线程上同步做目录列举+旧档删除+两张 PNG 写盘；判定链主留痕通道
+  MatchEvidenceStore（翻转/决策点，异步低优先写）全保留。P2①三项合同已补：JUnit
+  `WindowObservationPaceContractTest` **7/7 PASS**（隔离编译运行，junit-platform-console-standalone；
+  Maven 全树 testCompile 仍被既有集外脏测试阻断）覆盖绝对 deadline 数学（含 0.9s wake→剩余 0.1s、到期即进、
+  无帧整周期、时钟异常上界）与 interest 加速/集变化唤醒；`scripts/g103-observation-pace-contract.js`
+  **6/6 PASS** 锁结构（transport finally 零 wake【剥注释后断言】、interests-applied 定点 wake、单调钟
+  deadline、共享帧周期门+条带跳刷、ImageFinder/MatchEvidenceStore 两条写盘禁令）。P2②本节状态行以本条为准：
+  工作树含 G103 实现+本返修，生产 javac 全绿（exit 0），未 fresh、未重启实例。改动文件：
+  WindowObservationRunner / WindowObservationSampler / ImageFinder / MatchEvidenceStore +
+  新增测试与合同脚本；未改战斗模板、阈值、业务 phase、点击坐标与 G099 三通道隔离。
+- **2026-08-25 二轮返修交付（二审 P2x2，申请终审）：** P2②唤醒收窄：①兴趣集只有【变快】才唤醒——
+  `shouldWakeForAppliedInterests(prev, applied)` 改为 `fastestInterestPeriodMs(applied) <
+  fastestInterestPeriodMs(prev)`（空集=MAX_VALUE=parked 慢档；变慢/等速/仅修订号变化不唤醒，日志照记）；
+  ②prepared demand 只有【新到/换代】才唤醒——`isNewPreparedFrameDemand(prev, next)`（demandId/generation
+  任一变化），同一 demand 随回包反复出现不再唤醒，重试按正常采样节奏走。两处合并后，云端即时回包在
+  无状态变化时连 transport/collect 热循环也不再形成。P2①动态合同已补：
+  `WindowObservationPaceContractTest.instantCloudResponsesDoNotDriveCaptureOrTransportRate` 用真实
+  Runner+即时回包 fake Cloud（复审"10ms 回包"场景按测试时长缩放为即时回包连续 ~1.5s、兴趣周期 250ms）
+  断言整窗捕获数与 transport 请求数都 ≤ 节奏预算×2+启动补贴（回包驱动 bug 会到数百），且两者均仍推进
+  （≥2）。合同全量复验：JUnit **9/9 PASS**（隔离运行，含动态合同+唤醒收窄合同）；
+  `scripts/g103-observation-pace-contract.js` 升级后 **7/7 PASS**（新增"仅加速唤醒"“仅新 demand 唤醒/
+  禁止 nextDemand!=null 即 wake"两条硬禁令）。回归：既有 `WindowObservationRunnerContractTest` 隔离
+  复跑 18 过/2 败，**两败在改动前基线（target/classes 旧产物）上同名同错复现**
+  （clickTimeCoordinateSeeds…=值判稳车道、exactFrameDemandDoesNotExpire…=prepared 保留车道的既有
+  测试-源码漂移），与本返修无关、零新增回归。生产 javac 全绿。终审通过前不 fresh。
+- **2026-08-25 独立 CR REVIEW #2：`P0=0 / P1=0 / P2=2`，核心返修成立但合同门未闭，仍禁止 fresh。**
+  上轮三项 P1 均关闭：interest 应用后有定点 wake；共享帧捕获与 `paceWaitMs()` 使用同源单调时钟绝对
+  deadline；真正写 `logs/frames/match-evidence` 的 `ImageFinder.saveMatchEvidence()` 已默认早退。原慢 HTTPS
+  期间 `collectPhysicalStateOnly()` 持续采样的 G099 保证仍保留。P2①当前 7 项 JUnit 只覆盖 helper 数学和
+  interest 返回值，Node `6/6` 只做源码结构扫描；仓内仍没有“Cloud 每 10ms 连续回包 10 秒后，整窗 capture
+  数受 1Hz/3.3Hz 上限”的 Runner 动态合同，故上一条“10ms 快回包合同已补”的表述不准确。P2②
+  `shouldWakeForAppliedInterests()` 对任何 revision/interest 变化（含 cadence 变慢）都 wake；同一个非空
+  prepared demand 即使 identity/generation 未变，也在每次 response 后 wake。共享帧周期门挡住了额外
+  `PrintWindow`，所以不是 P1，但稳定 demand/频繁 revision 仍可能形成额外 transport/collect 热循环。
+- **二审返修门：** wake 只允许 cadence 变快、prepared demand identity 首次出现/换 generation、或确有未交付
+  事件时触发；补真实 Runner 动态合同：①10ms 快回包 10 秒、稳定 revision/demand 下截图与 transport 均不热循环；
+  ②生产 5 秒 parked heartbeat 收到 combat 1 秒 interest 后，下一次有效战斗采样不迟于约 1 秒。两项通过并
+  再复审前不得 fresh。
+- **2026-08-25 独立 CR REVIEW #3：`P0=0 / P1=1 / P2=2`，仍禁止 fresh。** 安全定向复验：Node
+  `7/7 PASS`；`%TEMP%` 隔离生产编译及 `WindowObservationPaceContractTest` `9/9 PASS`；动态场景约 1.5 秒
+  实际 `observerSeq=6`，普通即时回包确实按约 250ms 推进。P1：新/换代 prepared demand 的
+  `wakeForLocalStateChange()` 仍在 response commit 内执行，此时 `transportCycleRunning=true`；worker 被叫醒后
+  可能只跑一次 `collectPhysicalStateOnly()` 并重新进入完整 cadence，随后 transport `finally` 清 running 却不再
+  wake，parked 状态最坏仍延迟 5 秒才启动下一次用于 capture/upload demand 的 transport。in-flight 期间新增未
+  交付 key event 存在同类风险。P2①动态合同虽真实启动 Runner，但 250ms/1.5s 的 bound=`预算×2+4` 可放行
+  18 次（约 12Hz），甚至现场 5.7Hz 也可能通过，不能证明 1Hz/3.3Hz 精确上限。P2② interest 加速仅比较 raw
+  interest period，没有纳入 parked heartbeat、100ms clamp、活跃寻路 300ms 和其他 `currentPeriodMs()` 特例；
+  例如寻路已是 300ms 时 empty→combat 1000ms 实际未加速却仍 wake。
+- **三审返修门：** response/event 只设置 `followupAfterTransport`；transport `finally` 必须先清
+  `transportCycleRunning=false`，再仅当该标志存在时 wake，稳定 demand/revision 不置标志。interest 应用前后比较
+  实际 effective/current cadence，仅 `newPeriod < oldPeriod` 才安排 follow-up。动态合同分别使用战斗 1000ms、
+  寻路 300ms，并把 capture/transport 上限收紧至 `ceil(elapsed/period)+明确启动补贴`；另加入 in-flight 新 demand/
+  key event 不丢 follow-up 的竞态合同。以上关闭并通过四审前不得 fresh。
+- **2026-08-25 三审返修交付（申请四审）：** P1（wake 竞态）按门修：`wakeForLocalStateChange()` 在
+  `transportCycleRunning` 期间置位 `followupAfterTransport`；transport `finally` 先清 running、再
+  `compareAndSet(true,false)` 有条件补一次唤醒（无状态变化的回包依然零唤醒）；全交错序收敛。动态竞态
+  合同 `newDemandArrivingWhileTransportRunsIsNotLostWhenTransportEnds` 用挂起 transport 的回包携带新
+  demand（审查原场景），断言携帧上传在 <2.5s 内发出（parked=真实 5s，无机制时拖满 ~5s）。
+  P2①动态合同收紧并按门用真实档位：战斗 1000ms（稳态窗 2.6s，capture/transport 上限=4=ceil+启动补贴，
+  5.7Hz≈15、2Hz≈5 都 FAIL）与寻路 300ms 档（上限=ceil(elapsed/300)+2，下限 budget-3 同证不拖慢）；
+  稳态计数（首兴趣应用后清零）；parked 用真实 5000ms。P2②加速判定改用真实有效节奏：
+  `effectiveCadenceMs(interests, parked, 本地车道)` 与 `currentPeriodMs()` 同一套规则（parked/寻路
+  300ms 车道/MIN 钳制），合同覆盖"寻路已 300ms 时 empty→combat 1s 不加速不唤醒"。
+  **返修中另挖出并修复一个双锚缺陷：** 捕获锚起搏的 tick 恒早于"上次成功发送"锚的心跳判据几十毫秒，
+  被 skip-send 守卫拦下后 parked 心跳被系统性拖向 2×周期；pace 等待现取"捕获 deadline"与
+  `heartbeatWaitMs(parked, lastSuccessfulSendAtMs, wallNow)` 较早者（心跳唤起的 tick 共享帧门复用现帧，
+  零额外 PrintWindow）。验证：JUnit **12/12 PASS**（隔离运行；含两档动态合同、竞态合同、双锚合同）；
+  node 合同升级后 **9/9 PASS**（新增 followup 竞态、双锚两条硬禁令）；回归
+  `WindowObservationRunnerContractTest` 18 过/2 败与改动前基线同名同错（既有漂移，非本单）。
+  生产 javac 全绿。四审通过前不 fresh。
+- **2026-08-25 独立 CR REVIEW #4：`P0=0 / P1=1 / P2=2`，仍禁止 fresh。** 安全定向结果：Node
+  `9/9 PASS`，`%TEMP%` 隔离编译与 JUnit `12/12 PASS`；1Hz/300ms 动态上限已可拒绝现场 5.7Hz，prepared
+  demand follow-up 主竞态也已关闭。P1：`pace()` 无条件取物理 deadline 与
+  `heartbeatWaitMs(parked,lastSuccessfulSendAtMs,now)` 的较早者；一旦成功锚已逾 5 秒且本次 heartbeat HTTP
+  失败/拒收，`lastSuccessfulSendAtMs` 不前移，heartbeat wait 将永久 `<=0`。Runner 会立即反复启动 transport，
+  transport in-flight 时也高速执行 physical-only，形成 HTTP/CPU/collect/log 热重试；共享帧门只能挡截图，挡不住
+  该风暴。P2① WUBEI 100ms 仍在 `currentPeriodMs()` 单独 early-return，未进入与 interest 加速共用的
+  `effectiveCadenceMs()`；P2② wake 读到 running=true 后，若旧 transport 恰好已清 running 并消费过 false 标志，
+  再 set followup 会把标志遗留给下一次 transport，造成一次额外 wake（不丢事件、不稳定循环）。
+- **四审返修门：** 增加 last transport attempt/completion 或明确失败 backoff deadline；逾期 heartbeat 一次失败后，
+  下一次 transport 至少等待正常 cadence/backoff，不得继续使用已过期成功锚立即重试。把本地 lane 统一为
+  `min(pathing 300ms, WUBEI 100ms)` 并让 current cadence 与 interest acceleration 走同一入口。用同一同步边界或
+  transport generation 原子处理 running 检查/followup 设置及 clear/consume。新增 Cloud 连续失败动态合同，证明
+  HTTP、collect、日志均不热循环；修后再申请五审，未通过前不得 fresh。
+- **2026-08-25 独立 CR REVIEW #5：`P0=0 / P1=1 / P2=3`，四审三项退修均未落地，仍禁止 fresh。**
+  当前生产/测试文件最后修改仍停在四审版本。P1：heartbeat send-due 与 `pace()` 继续只锚
+  `lastSuccessfulSendAtMs`，`lastTransportFailureAtMs` 虽更新却不参与 deadline；心跳逾期后，无论 HTTP 慢
+  in-flight、连续 transport failure，还是 response 未覆盖当前 observerSeq，Runner 都可能持续
+  physical-only/collect/HTTP 热循环。仅新增 last-attempt 仍不足：transport in-flight 时 heartbeat deadline 必须
+  完全退出 `pace()`，只保留物理采样 deadline；完成后用 `max(lastSuccessful,lastFailure)` 或明确 completion/backoff
+  deadline，并在 rebind/reset 清理且用 binding revision 隔离旧完成。P2①WUBEI 100ms 仍是
+  `currentPeriodMs()` early-return，未进 `localLanePeriodMs/effectiveCadenceMs`。P2②AtomicBoolean followup 的
+  running check/set 与 finally clear/consume 仍非同一同步边界，可遗留一次 stale flag 到下一 transport。P2③
+  验收仍 false-green：没有连续 failure/低 acceptedSeq 动态合同；Node 仍锁旧的非原子写法；demand 动态合同不
+  断言 transport 精确两轮；冷 `%TEMP%` 结果 Node `9/9 PASS`、JUnit **`11/12 PASS`**，失败项首轮 OpenCV 初始化
+  约 3.6 秒超过 2 秒 latch，合同本身不稳定。
+- **五审返修门：** ①首轮成功后分别连续 transport exception、连续低 acceptedSeq，request/capture 不超过
+  `ceil(elapsed/effectivePeriod)+启动补贴`；②heartbeat 已逾期且 HTTP 阻塞时，本地 1s/300ms/100ms 采样继续但
+  physical-only/collect 不自旋；③WUBEI/pathing 统一 effective cadence；④followup 同步边界/代际合同要求新 demand
+  精确两轮，稳定 demand/revision 无第三轮；⑤冷 `%TEMP%` Node+完整 JUnit 全绿并复跑 G099 慢 HTTPS 合同。以上
+  关闭前不得 fresh。
+- **2026-08-25 五审返修交付（申请六审）：** P1 三件套落盘：①pace 心跳 deadline 在 transport
+  in-flight 时**完全退出**（`!transportCycleRunning.get()` 守卫，只剩物理采样 deadline，physical-only 不自旋）；
+  完成后锚取 `max(lastSuccessfulSendAtMs, lastTransportFailureAtMs)`——心跳逾期后每次失败/拒收都把下一次
+  尝试推到至少一个 parked 周期之后（失败即 backoff），过期成功锚不再放行立即重试；两锚在两条 reset 链
+  清零，失败记录本身已被 taskBindingRevision 守卫（rebind 后旧回包在记录前早退）。附带摘除低
+  acceptedObserverSeq 分支的 `wakeForLocalStateChange()` 即时重试（连续低回包曾可绕过全部 deadline 形成
+  唤醒热循环），重试归节奏/失败锚 deadline，保留 payload 原样重传。②WUBEI 100ms 车道并入
+  `localLanePeriodMs()`（=min(WUBEI 100, pathing 300)），`currentPeriodMs()` 删 early-return，current
+  cadence 与 interest 加速判定共用同一 `effectiveCadenceMs` 入口。③followup 原子化：check/set 与
+  clear/consume 共用 **pacer 同一同步边界**（wake 在 pacer 内检查 running 并置标志；finally 在 pacer 内先清
+  running 再 CAS 消费补唤醒），stale flag 交错不存在。P2③合同补齐：动态合同新增
+  `consecutiveTransportExceptionsStayOnCadence_noHotLoop` 与
+  `consecutiveLowAcceptedSeqResponsesStayOnCadence_noHotLoop`（首轮成功后连续异常/连续低 acceptedSeq，
+  parked=800ms 档稳态窗 2.5s，request/capture ≤ ceil(elapsed/parked)+2，≥1 证明重试仍推进）；demand 竞态
+  合同加"**精确两轮**"断言（交付+清除后再等 800ms，requests 必须==2，无第三轮）；`@BeforeAll` 预热
+  OpenCV 本地库初始化（实测 ~3.6s），时间门合同不再被首轮初始化打穿。node 合同升级 **11/11 PASS**
+  （新增：in-flight 心跳退出+max 双锚、低 acceptedSeq 禁即时唤醒、WUBEI 统一入口、pacer 原子边界四条
+  硬禁令，替换旧的非原子写法锁定）。验证：JUnit **14/14 PASS**（隔离新 JVM 冷跑复跑均绿）；G099 慢
+  HTTPS 合同 `slowCloudTransportDoesNotStopPhysicalObservationTicks` 单独复跑 **1/1 PASS**；回归
+  `WindowObservationRunnerContractTest` 18 过/2 败与基线同名同错（值判稳/prepared 保留两条既有漂移，
+  非本单）。生产 javac 全绿。六审通过前不 fresh。
+- **2026-08-25 独立 CR REVIEW #6：`P0=0 / P1=1 / P2=1`，仍禁止 fresh。** 四审/五审原文先行
+  对齐后只读复核，未修改生产/测试源码。P1：失败 completion anchor 仍未约束下一次实际 HTTP。Runner
+  在 `runLoop()` 中固定先 `startTransportCycle()/sendOnce()`、后 `pace()`；`sendOnce()` 的
+  `heartbeatDue` 仍只锚 `lastSuccessfulSendAtMs`，而 `lastTransportFailureAtMs` 直到随后 `pace()` 才参与
+  deadline。因此慢失败/慢低 accepted 若恰在当前物理等待末端完成，下一拍会在失败锚生效前先发出 HTTP。
+  独立真实 Runner 复现（parked=`800ms`、后续 502 各阻塞 `790ms`）：request start offset
+  `[0,801,1608,2420,3230]ms`，failure offset `[1593,2403,3213]ms`，三次
+  `failure->next send` 仅 `[15,17,17]ms`；默认 parked=`5s`、慢失败=`4.8s` 复现同因间隔约
+  `204ms`，均违反“失败后至少一个 cadence/backoff”。慢低 accepted 同样复现约 `17ms`。
+- **六审 P2/false-green：** Node `11/11` 只锁定 `pace()` 的双锚，未锁 `sendOnce()` 的实际 send-due；现有
+  快失败动态合同也因失败较早、剩余 physical wait 偶然代偿而绿。并且测试以同一个 `requests` 既决定
+  “第 1 次成功”又在计时前 `set(0)`，重置后下一次请求再次走成功分支；本轮隔离日志实际显示
+  `successfulSends=2`，并非合同声称的“首轮成功后连续异常/连续低 accepted”。因此当前 JUnit `14/14`
+  与 G099 慢 HTTPS `1/1` 虽真实通过，不能覆盖上述慢完成缺口。
+- **六审已通过项与返修门：** in-flight pace 排除 heartbeat、低 accepted 即时 wake 删除、WUBEI 100ms/
+  pathing 300ms 统一 effective cadence、followup 同 `pacer` 原子边界、两条 reset 的成功/失败锚清零、
+  OpenCV 预热、prepared demand 精确两轮均成立。返修必须在启动 transport/调用 `client.send` **之前**执行
+  与 completion/failure 同源的 next-eligible gate，使失败/拒收完成到下一次实际 HTTP 满足 cadence/backoff；
+  同时用独立 lifetime ordinal 与测量计数修正现有合同，并新增“慢异常/慢低 accepted 在 physical deadline
+  末端完成”的真实 Runner 合同，直接断言 completion-to-next-send 下界。修后申请七审，未通过前不得 fresh。
+- **2026-08-25 六审返修交付（申请七审）：** P1：backoff 门移到实际发送之前——`sendOnce()` 的
+  `heartbeatDue` 改锚 `sendCompletionAnchorMs = max(lastSuccessfulSendAtMs, lastTransportFailureAtMs)`，
+  无论 tick 以何时序到达（含"慢失败在 pace 计算之后才完成"的竞态窗），无载荷 HTTP 距上一次完成
+  （成功或失败/拒收）必须满一个 parked 周期才发出；有载荷发送仍按采样节奏（capture 门已限频）。
+  P2：失败合同的分支判定改用独立 lifetime 计数 `totalCalls`（不再复用可被稳态清零的测量计数
+  `requests`——旧写法清零后下一请求被再次当成"首轮成功"刷新成功锚，`successfulSends=2` false-green
+  已消除，现在整个失败段 `successfulSends=1`）。新增两条真实 Runner 下界合同：
+  `slowTransportExceptionCompletionToNextSendHasBackoffLowerBound` 与
+  `slowLowAcceptedSeqCompletionToNextSendHasBackoffLowerBound`——慢失败（sleep 250ms 后 throw/低
+  accepted，完成时刻晚于 pace 计算时刻）连续 3.2s，直接断言【完成时刻→下一次 send 进入时刻】的
+  最小间隔 ≥600ms（parked 800ms 档；修前实测 15-17ms 连发）。验证：node 合同新增⑤b"send 门锚
+  max(成功,失败)+禁旧成功锚写法"后 **12/12 PASS**；JUnit **16/16 PASS**（新 JVM，含两条下界合同）；
+  回归 `WindowObservationRunnerContractTest` 18 过/2 败与基线同名同错（既有漂移）。生产 javac 全绿。
+  七审通过前不 fresh。
+- **2026-08-25 独立 CR REVIEW #7：`P0=0 / P1=0 / P2=0`，源码验收通过，进入 fresh 门。** 本轮先读
+  六审结论与返修交付，再只读检查/隔离复验，未修改生产或测试源码。`sendOnce()` 的实际 heartbeat 发送门已在
+  调用 `client.send` 前使用 `max(lastSuccessfulSendAtMs,lastTransportFailureAtMs)`；异常与低
+  `acceptedObserverSeq` 都在 binding/stop 守卫后写失败锚。按本轮批准口径，无载荷 heartbeat 受 parked
+  completion backoff 约束；真实新 payload 仍可绕过 heartbeat 门，但其产生与捕获受现有 effective cadence
+  限频，不改 demand/key event 的及时交付语义。失败合同已用独立 `totalCalls` 控制首轮成功、`requests` 只做
+  稳态测量；隔离日志确认失败段 `successfulSends=1`，六审的二次首轮成功污染已消失。
+- **七审验证证据：** production `mvn -q -DskipTests compile` PASS；Node **`12/12 PASS`**；隔离
+  `WindowObservationPaceContractTest` **`16/16 PASS`**；`WindowObservationRunnerContractTest`
+  **`18/20`**，两条失败与六审/基线同名同错（点击时坐标判稳、persistent prepared-frame 既有漂移），G099
+  `slowCloudTransportDoesNotStopPhysicalObservationTicks` 在通过项内。为验证新合同不是 false-green，本轮在
+  `%TEMP%` 内存编译副本中仅恢复旧 `heartbeatDue=lastSuccessfulSendAtMs`，两条慢完成合同立即
+  **`0/2`**：exception `minGap=547ms`、low accepted `minGap=543ms`，均被 `>=600ms` 下界准确拒绝；当前
+  实现同合同全绿。未启动 Client/Cloud、未发送输入。
+- **fresh 验收门：** 重启 Client 后做真实五窗运行；战斗共享整窗捕获应回落到约 1Hz，寻路约 300ms、WUBEI
+  准备约 100ms，安静成员保持 parked；快速回包、慢 HTTPS、失败/低 accepted 均不得再驱动 HTTP/collect/
+  PrintWindow 热循环，战斗事实与 prepared demand 仍须及时上报。默认模式不得恢复
+  `logs/frames/match-evidence` 同步滚动池高频写盘。fresh 通过后再关闭 G103，并回收 G099 的 fresh blocker。
+
+## G102 五环 NPC Dialog 交接断链与给鞋终态清屏（2026-08-24）
+
+- **状态：`SOURCE DELIVERED / COMPILE PASS / CONTRACT 8/8 / P90 ISOLATED REPLAY PASS / FRESH REQUIRED`
+  （2026-08-24 复查项已清，真实五窗 fresh 未验收，不关卡）。** 此前"3465 缺第二种接任务选项模板"的记录是
+  **错误根因、已撤回**：第一次点击后的原图证明正常接任务页上既有"我是大…"模板得分约 1.0，后面的"恢复
+  抽取"页面是 FIFO 验证误判 `VERIFICATION_FAILED` 后**重复点击 NPC** 造成的。真正病根 = FIFO 主点击路径
+  曾把 `verifyNpcArrivalExpectedDialog` 的 defer 参数硬编码为 `false`（修鬼王/天庭空点时误改），把五环踹回
+  旧的方差门截图判定；接任务框六行绿字必爆方差 → 判"无框" → 重复点 NPC。收口内容：defer 传参恢复
+  `spec.deferDialogVerificationToTask()`；旧第二套 presence 判定（`isOptionDialog`/两个
+  `probeOptionDialogPresent`/`getImageStandardDeviation` 两仓/`maintainScenePresenceCache` 死链）全部物理
+  删除；presence 全站唯一 = `DialogFramePresenceMechanics` 结构化边框检测（五倍前置判定同步切换）；G102
+  合同新增三条硬禁令（禁 defer=false 硬编码、禁方差门重现、强制 presence 走唯一机制）7/7 PASS；3465 原图
+  `P90_g102_3465_accept_dialog_20260824.png` 进回放 corpus（结构检测判 present=true 通过）。治理/Client 工作树
+  `D:\mavenProject\DHXY-cr271 dev@5e05a957`；Cloud 工作树
+  `D:\mavenProject\dhxy-cloud-brain dev@ac398141`；两仓均与各自 `origin/dev` 对齐，保护现有 dirty，
+  `D:\mavenProject\DHXY` 基线未修改。
+- **3465（`hwnd-B950F7E`）根因：** Client 在 `10:58:06.918`、`10:59:02.056` 均明确上报
+  `WUHUAN_DIALOG_PRESENCE present=true`，Cloud G017 也两次裁决为 `DELEGATED_WUHUAN_DIALOG`；但该枚举除
+  产生/打印位置外全仓无消费者，不能把任务交给 `ACCEPT_TASK` 的 option 分类。NPC FIFO 随后把已经弹框的
+  `DIALOG_OPEN_UNVERIFIED` 当作 `verified=false`，继续点击云游大师，最终 fresh run 还因 replacement 后
+  exact arrival binding 消失抛 `TaskFatalException`。这是“事实已产生、业务 phase 不消费”的接力断链，
+  不是 NPC 点位或接任务 option 模板错。
+- **其余四窗给鞋根因：** Client `WindowObservationSampler.ensureCleanSceneBeforeTerminalFrame()` 在五环寻路
+  停稳候选上看到 `dialogPresent=true` 后打印 `cleanup=true`，随即调用 `UICleanerService.cleanUpAll()`；这会在
+  `WAIT_PATHING -> HANDLE_DIALOG` 消费前主动关闭给鞋业务 Dialog。现场 27723DA/49F192A/D420674 均有
+  `Terminal frame scene probe ... dialogPresent=true ... cleanup=true`，随后 terminal/dialog edge 到达但业务框已
+  被本地清场，任务只能回 `SYNC_TASK_PANEL` 再点绿色链接。业务规则 `BR-WUHAN-002` 明确要求给鞋 Dialog 可见时
+  不得再点 Tracker 绿链，且给鞋 terminal 必须保留到 `HANDLE_DIALOG` 正常结算。
+- **批准的最小修法：** ①删除 G017 三个无消费者的 `DELEGATED_WUHUAN_*`，G017 对五环只做 startup ACK；
+  `ACCEPT_TASK` 直接读取同 lineage 的 fresh Dialog present，跳过 NPC 点击并布防 demanded-frame 分类，交给五环
+  已有 option/Story consumer；NPC click 返回 `DIALOG_OPEN_UNVERIFIED` 时结束点击腿并进入同一分类链。②移除五环 terminal-frame 的本地
+  `cleanUpAll()` 业务副作用；Runner 只上报 terminal + dialog presence，给鞋框由 Cloud `HANDLE_DIALOG` 独占。
+  不改 NPC 坐标、option 点击坐标、模板或阈值。
+- **【历史】原 fresh 验收门（已被下方 2026-08-24 收口版替代）：** 3465 第一次出现 `DIALOG_OPEN_UNVERIFIED`
+  后下一项必须是 demanded Dialog 分类/接任务 option，不能再创建 NPC FIFO；给鞋四窗出现
+  `dialogPresent=true + terminal` 后不得出现 Client terminal cleanup，Cloud 必须进入 `HANDLE_DIALOG` 并执行
+  给鞋。**收口后 defer 点击不再产生 `DIALOG_OPEN_UNVERIFIED`（直接 `DEFERRED_TO_TASK` 结束会话）**，新 fresh
+  门=接任务一次点击不重复点 NPC + 给鞋进 `HANDLE_DIALOG`。
+- **实现与静态验证：** G017 三个假 delegation 已删除并收敛为 startup ACK；`ACCEPT_TASK` 的 fresh Dialog
+  level fact 与 FIFO `DIALOG_OPEN_UNVERIFIED` 均直达既有 demanded-frame consumer；Client terminal-frame 自动清屏
+  方法及两处调用已删除。Client/Cloud `mvn -q -DskipTests compile` PASS，
+  `node scripts/g102-wuhuan-dialog-handoff-contract.js` 当时 `4/4 PASS`（该合同已在 2026-08-24 收口扩至
+  **8/8**，见下），双仓 `git diff --check` PASS（仅 CRLF warning）。
+- **【已撤回的错误结论】”另一种合法恢复选项缺模板”与配套”第二条模板窄修/验收门”整段作废：** 第一次
+  NPC 点击后的原图（`P90_g102_3465_accept_dialog_20260824.png`）证明现场是**标准接任务页**、既有
+  “我是大…”模板得分约 1.0；”恢复抽取”页面是 FIFO 验证误判 `VERIFICATION_FAILED` 后**第二次重复点击
+  NPC** 打开的衍生页面，不是接任务框的合法变体。禁止按旧结论新增第二条 accept 模板。
+- **2026-08-24 全量收口（本卡最终实现）：** ①FIFO 主点击路径 defer 参数恢复
+  `spec.deferDialogVerificationToTask()`（曾被硬编码 `false`，把五环踹回旧方差门截图判定=本案病根）；
+  ②旧第二套 Dialog presence 判定物理删除（`isOptionDialog`、两个 `probeOptionDialogPresent`、两仓
+  `getImageStandardDeviation`、`maintainScenePresenceCache` 死链）；③presence 全站唯一 =
+  `DialogFramePresenceMechanics` 结构化边框检测（非 defer FIFO 验证与五倍前置同步切换）；④窄 ROI
+  (250,312,529,208) 与最大 ROI (200,250,640,300) 在全 corpus 正负样本回放判定一致（回放测试
+  `narrowServiceRoiMatchesWideRunnerRoiVerdicts` 固化）；⑤P90 原图入回放 corpus，标记图
+  `dialog-frame-classification/marked/P90_g102_3465_accept_dialog_20260824_marked.png`（上边框
+  (51,509,y=69)、下边框 (40,585,y=265)、panel 高 196）。
+- **静态验证：** `node scripts/g102-wuhuan-dialog-handoff-contract.js` **8/8 PASS**（含三条硬禁令：禁
+  defer=false 硬编码、禁方差门重现、presence 强制唯一机制；defer 交接项已按真实控制流改写——defer 点击
+  以 `DEFERRED_TO_TASK`/`VERIFIED` 结束会话不取第二候选，任务侧武装统一 structural presence）；
+  FIFO 合同 JUnit 5/5；P90 隔离回放 PASS；双仓 `mvn -q compile` PASS。
+- **状态（截至 2026-08-24 收口交付）：** `SOURCE DELIVERED / COMPILE PASS / CONTRACT 8/8 /
+  P90 ISOLATED REPLAY PASS / FRESH REQUIRED`——修复后的真实五窗运行尚未验收，本卡不关闭。
+
+## G101 五环接任务单次联合判定与后台放权（2026-08-24）
+
+- **状态：fresh 已验证联合判定与后台放权生效；后续被 G102 两处既有交接缺陷阻断。** Client/治理工作树 `D:\mavenProject\DHXY-cr271 dev@5e05a957`；Cloud
+  工作树 `D:\mavenProject\dhxy-cloud-brain dev@ac398141`；两仓均与各自 `origin/dev` 一致并保留全部
+  既有 dirty，保护基线 `D:\mavenProject\DHXY` 不修改。
+- **P1 证据：** `FiveRingTaskV3` 在接任务 option 点击后先用 `awaitAcceptTitleConfirmed()` 完整轮询 Title，
+  随后 `inspectDialogAfterAcceptClick()` 又以 `while (prepared == null)` 反复允许 Title 抢占；通用 Dialog
+  wait 还同时布防 Title/Dialog。该顺序让已经明确的“现在暂时没有…”白字动作不能立即推进，并延长
+  `wuhuan-title-rearm` 生命周期。视觉 park 本应完全后台、零 turn；只有实际点击需要公平 turn。
+- **批准的业务顺序：** 一次点击对应一次后台联合判定：只发一个 exact Title snapshot，同时用当前鲜帧做
+  一次 Dialog 目录分类。Title present 立即成功；`TEMPORARILY_UNAVAILABLE` 明确命中立即点 Story 并重放，
+  且模板动作优先结束该轮等待。两者均不明确才允许一次 fresh 联合复判；第二次仍 UNKNOWN 时不得继续
+  Title 追查，应清理/退出本轮并重新建立接任务现场。视觉识别和等待不占 turn，真实输入前才获取、完成即释放。
+- **预期改动：** 把 post-accept 的 Title 与 Dialog 从串行轮询改为单次联合等待，拆出 Dialog-only interest，
+  删除同轮 `while` 追查和明确模板后的 Title 抢占；收尾精确撤销本轮 Title interest/rearm。保持模板、阈值、
+  点击坐标、最多五次保留点重放和其他 Story 语义不变。`accept-smart-click` 删除包住整段 Cloud 识别/FIFO
+  等待的外层 task turn；其内部 `ALT+4+capture` 与候选点击继续由 exact Client turn/全局输入队列原子串行。
+- **验证门：** G101 定向合同覆盖单代 snapshot、模板优先短路、UNKNOWN 仅一次复判、视觉 park 先放 turn；
+  Cloud production compile、business-rule gate 与 `git diff --check` 必须通过。Fresh 必须证明五窗中一个窗口
+  等视觉时不会持有全局 turn，且 TEMP 模板命中后的下一项业务是 Story dismiss 而不是新 Title generation。
+- **验证结果：** Cloud `mvn -q -DskipTests compile` PASS；
+  `node scripts/g101-wuhuan-accept-joint-decision-contract.js` 静态合同 `3/3 PASS`；双仓
+  `git diff --check` PASS。标准 Maven test-compile 在执行定向测试前被仓内既有旧测试源码漂移阻断，
+  首批包括 `DialogService` 构造器参数、`TurnPendingRouteOutcome` 记录字段和已删除协议枚举，未扩大本卡写集修复。
+  本卡未改变模板、阈值、ROI 或点击坐标，不需要新增视觉点位回放；真实五窗行为仍以 fresh 门为准。
+- **2026-08-24 fresh：** 多窗已实际进入单代 Title/Dialog 联合判定，TEMP Story dismiss 与其他窗口 turn
+  交替均可见；本轮未复现 G101 的长时间 Title 追查或 54 秒 `accept-smart-click` 外层持 turn。运行随后被
+  G102 的两个独立接缝阻断：3465 的 startup Dialog delegate 无消费者，以及给鞋 terminal-frame 本地清业务框。
+
+## G100 修罗 watchdog 超时误记完成与陈旧位置直点 NPC（2026-08-17）
+
+- **状态：** `POSITION FIX SOURCE DELIVERED / ISOLATED COMPILE PASS / TARGETED CONTRACTS PASS / FRESH REQUIRED / WATCHDOG STILL OPEN`。治理与 Client
+  证据位于 `D:\mavenProject\DHXY-cr271 dev@5e05a957`；实际 Cloud runtime 从
+  `D:\mavenProject\dhxy-cloud-brain dev@b0387a5` 的 `target/classes` 启动。保护两仓全部既有 dirty，
+  不修改受保护基线 `D:\mavenProject\DHXY`。
+- **现场结论：** 第 18 轮 `10:07:01.179` 的 park 等待超时，`10:07:01.183` watchdog 产生
+  `FAILED`；但该失败是在 `PATHING_STARTED -> yieldAfterMustYield(...)` 返回后产生，外层分支没有重新执行
+  `FAILED` gate，直接把 phase 写成终态 `FAILED`。`runRoundPhases()` 末尾又把除 `STOPPED` 外的终态兜底返回
+  `SUCCESS`，因此 `10:07:01` 错误记录 `round 18 skeleton finished, completed=18`，并启动第 19 轮。
+- **位置事实与两跳缺口：** `10:04:08` 的 pathing 位置通过 `observerSeq=2391` 把 Cloud 更新为
+  `灵兽村 (101,85)`。点击看打前，Runner 又截取了洛阳坐标条；但当前协议先把 ROI 上传给 Cloud，Cloud OCR 后只把
+  `PRE_COMBAT_COORDINATE_RESOLVED` 放进 HTTP response。Client 到 `10:06:40.348` 才把结果写入
+  exact-window runtime 并排队为新的 `POSITION_SAMPLE`，必须再等下一次 observation 才能回到 Cloud。
+  `observerSeq=2412` 到日志行 15708 才真正把 Cloud 更新为 `洛阳城 (189,164)`。第 19 次接任务决策已在日志行
+  15679 使用旧灵兽村位置进入“NPC nearby”，所以 Runner 的“进战前上报位置”实际上被错误实现成两次网络往返。
+- **接任务入口缺口：** `navigateToTaskNpc()` 的普通 `normal-start` 分支不调用 `syncMyPosition()`，直接相信没有
+  时间戳的新鲜度未知 `gameContext.getMe()`；只有 `clean-transition-force-accept-npc-navigation` 这一种恢复 source
+  才同步位置并禁用附近直点。本次 watchdog 被误报为正常成功，故第 19 次尝试走 `normal-start`，完全跳过同步。
+- **历史代码来源：** 2026-07-25 CR271 最初让 Cloud 把 pathing 坐标识别结果回给 Client，是因为本地 Runner
+  必须结合 intent/generation/stable time 判定 `ARRIVED/STOPPED_AWAY`，并更新 exact-window pathing snapshot。
+  2026-08-07 Client `49cc45ce` / Cloud `3b00408` 又增加 `pendingPositionFact -> POSITION_SAMPLE ->
+  CloudTaskPositionObservationBridge`，用来把 Client 兼容位置缓存桥接到 Cloud task state。实现错误在于
+  pre-combat 坐标也复用了同一个 `updateWindowPlayerLocation()`：它不需要 Client 作任何终态判断，却被迫绕 Client
+  一圈后才回到 Cloud。Client 的位置缓存仍可服务本地 pathing mechanics/诊断，但不得成为 Cloud 业务位置生效的
+  owner 或前置条件。
+- **用户批准的本轮修复：** 保留缓存以维持接任务速度，不增加接任务前现场 OCR、freshness 门、时间戳或等待协议。
+  Cloud 对当前 observation 请求里的 pathing/pre-combat 坐标图识别成功后，必须在返回响应前按 exact
+  tenant/device/window/run/observerSeq 围栏直接更新当前 task position；Client 仍消费分析结果更新本地 Runner
+  镜像和完成 pathing 机械判定，但不再为 Cloud 已识别的结果生成回声 `POSITION_SAMPLE`。正常接任务继续读取已经被
+  Cloud 当场写准的 `gameContext.me` 缓存。本轮不改地图/OCR 识别算法、接任务分支与 watchdog 完成计数控制流。
+- **位置修复交付：** Cloud `CloudObservationHttpHandler` 在形成 pathing/pre-combat 坐标分析结果后、返回 HTTP
+  response 前，调用同一个 `CloudTaskPositionObservationBridge` 直接提交 exact task position；server 将该 owner 同时
+  接到兼容 fact listener 与 handler。`CloudTurnTaskRegistry` 新增同 `observerSeq` 来源优先级，Cloud OCR 必须覆盖同批
+  旧 Client `POSITION_SAMPLE`，重复/旧序列仍拒绝。Client `WindowObservationSampler` 删除 `pendingPositionFact` 的生成、
+  收集、ACK 与 reset 链路，分析结果仍更新本地窗口镜像及原 pathing 判定。协议枚举和 Cloud 兼容接收暂留给旧 Client，
+  当前 Client 已不再产生位置回声。
+- **验证：** 双仓当前生产源码在 `%TEMP%` 隔离副本 compile PASS，未改写活动 `target/classes`；Client 定向方法
+  `resolvedBoundWindowPositionUpdatesLocalMemoryWithoutEchoingPositionFact` PASS；Cloud
+  `CloudTaskPositionObservationBridgeContractTest` PASS，日志实际证明同 seq 先写“旧客户端回声 `(10,20)`”后被 Cloud
+  OCR 的“长安 `(88,176)`”覆盖。双仓普通 testCompile 仍分别被既有缺失
+  `LocalPathingStartProofMechanics` 与大量旧 test/source 构造器漂移阻断；Client 整个 terminal-frame 旧类另有当前
+  G099 现场帧 fixture 失败，本卡目标方法单独通过。
+- **fresh 门：** 完整重启 Client/Cloud 后，Cloud 日志必须在收到坐标图的同一 observation sequence 写出
+  `source=cloud-coordinate-ocr:*` 和正确地图坐标；后续接任务直接命中该缓存，不得等下一条 `POSITION_SAMPLE`。
+  watchdog 超时误增 completed 仍是 G100 未交付的独立控制流问题，不得因本次位置修复标记关闭。
+- **验收门：** 合同覆盖“第 18 次 watchdog FAILED 不增加 completed、下一次 attempt 为 19”、
+  “pre-combat ROI 在 Cloud 第一次 OCR 成功时即更新 exact task state”、“接任务只用当次 sync 返回值直点”、
+  “fresh 洛阳位置走跨图导航”。fresh runtime 必须看到第 19 次接任务决策前已经确认洛阳，且无错误灵兽村使者点击。
+
+## G099 观察 Runner 与输入、HTTPS 等待彻底解耦（2026-08-17）
+
+- **状态：** `FRESH FAILED BY G103 / SOURCE DELIVERED / CLIENT CONTRACT 37/37 PASS / ISOLATED COMPILE PASS`。Client 目标为
+  `D:\mavenProject\DHXY-cr271 dev@5e05a957`，与 `origin/dev` 一致；保护全部既有 dirty/untracked，特别是
+  `WindowObservationSampler` 中并行 G098 的双缺帧确认，不修改受保护基线 `D:\mavenProject\DHXY`。
+- **2026-08-25 fresh 失败：** 三通道解耦确实避免了慢输入/慢 HTTPS 阻塞本地观察，但 transport 完成回调错误地
+  复用了 `wakeForLocalStateChange()`；快速回包持续绕过 `pace()`，把队长共享整窗 `PrintWindow` 拉到约
+  5.7 次/秒并造成战斗画面卡顿。完整量化、批准后最小修法和 fresh 验收门见 G103；G099 在 G103 修复并重新
+  fresh 前不得关闭。
+- **P1 现场证据：** `10:05:36.260` Runner 本地看打命中；观察线程在 `sampler.collect()` 内调用同步
+  `moveAndClickLeft(...)`，输入队列请求耗时 `12623ms`，实际物理动作不足 1 秒。点击后同一线程又通过
+  `HttpsObservationClient.sendAsync(...).get()` 同步等待 Cloud，到 `10:06:40.348` 才接收分析结果。唯一
+  observation loop 在这两段期间不能采样，真实进战事实直到 watchdog 抢跑后才发布。
+- **批准架构：** 分成三个独立执行通道：observation Runner 只采样、识别并发布事实/动作意图；现有全局
+  `InputActionWorker` 只串行执行真实输入并异步回写结果；独立 observation transport 只负责发送、等待响应和
+  精确 ACK。任一输入排队或 Cloud 延迟不得阻塞 exact-window 采样。
+- **必须保留：** 本地看打模板、坐标、同一次原子移动点击、full-identity fence、attempt 一次性 claim、最多三次
+  点击、expected-combat 分类、失败重试和 Cloud fallback 全部保持；不得用 fire-and-forget 丢失结果，不得因每帧
+  重复入队，不新增截图，不改变修罗 phase 或战斗判据。
+- **验收门：** 阻塞输入 worker 至少 15 秒时 observation sequence/战斗采样仍推进；Cloud response 延迟至少
+  60 秒时本地进战/脱战事实仍产生并进入待发送 mailbox；同 attempt 同时最多一个动作，成功/失败恰好回写一次，
+  旧 run/round/attempt 的完成不得污染新任务。Client production compile、定向并发合同、business-rule gate、
+  `git diff --check` 和 dashboard 同步通过后才可标记 SOURCE DELIVERED；fresh 仍需重启 Client/Cloud。
+- **源码交付：** `InputActionQueue/InputSequences` 新增保留 exact window 与 pause/stop token 的非阻塞提交；本地看打、
+  天庭/鬼王 Dialog、鬼王长寿村飞行辅助和 Runner Auto+8 均只提交异步动作，结果通过 retained mailbox 回写。Runner
+  现由常驻观察线程持续采样，独立 `dhxy-observe-transport-*` 线程保持单一 HTTP in-flight 并负责响应/ACK；输入仍仅由
+  全局 `InputActionWorker` 串行执行。停止、child rebind 和 taskRun replacement 均拒绝旧完成写入新 run。
+- **离线验收：** 六个生产类 Java 21 隔离编译通过，未覆盖活动 `target/classes`。慢 Cloud + Auto+8 并发/代际 +
+  passive source + 鬼王飞行辅助合同 `14/14 PASS`，天庭全部本地 Dialog probe 合同 `23/23 PASS`；静态扫描确认观察
+  路径没有 `submitAndWait/submitExclusiveAndWait/moveAndClickLeft`，`client.send` 只从 transport cycle 可达。
+  完整 Runner 合同为 `18/20`：余下两项分别命中 G098 共享帧夹具与 G094 已成功投递后不再重传的旧断言，不属于
+  G099 回归。business-rule gate、最终 diff check 和 dashboard 已同步；活动 JVM 未重启，fresh 仍待实机。
+
+## G098 修罗 Runner 纠错强制覆盖与战斗输入硬闸（2026-08-17）
+
+- **状态：** `SOURCE DELIVERED / CLIENT CONTRACT 4/4 PASS / DUAL COMPILE PASS / FRESH REQUIRED`。Client 目标为
+  `D:\mavenProject\DHXY-cr271 dev@5e05a957`；Cloud 目标为
+  `D:\mavenProject\dhxy-cloud-brain-cr271 codex/g008-hot-screen@363d0e3f`；保护两仓既有 dirty，
+  不修改受保护基线 `D:\mavenProject\DHXY`。
+- **P1 根因证据：** `10:01:28.500` exact 后台帧短暂缺失整块 HUD，使小地图与全部战斗模板同帧
+  `ABSENT`，Client 单帧确认假脱战；更新的 Runner `IN_COMBAT readySeq=222` 随后被 Cloud 精确消费并完成
+  cleanup，但 `XiuluoTaskV2` 用旧 `enteredBattleByXiuluo=true` 阻止 phase 回退，第二次
+  `BAG_RETURN_ITEM` 因本地 bag 宏没有战斗门而再次打开包裹。
+- **批准的修复方向：** 修罗消费到同窗口、同任务、更新序列的 Runner 战斗纠错时，无条件把当前上下文 override 为
+  `WAIT_COMBAT / TRACKER_CONFIRM`，不再读取旧 `enteredBattleByXiuluo`。Client 对
+  `BAG_RETURN_ITEM` 在物理输入前读取 exact runtime `localCombatVisible` 并 fail-closed；双 `ABSENT` 脱战改为
+  连续帧确认，小地图正命中仍可立即确认退出。
+- **边界：** 不改战斗模板、阈值、OCR、坐标、点击目标、修罗正常 phase 顺序或 Runner exact identity/sequence
+  栅栏；只修纠错的覆盖语义、包裹最终硬闸和不完整帧抗抖。
+- **验收门：** 合同必须覆盖“旧上下文已标记进过战斗仍被更新纠错强制覆盖”、单个双 `ABSENT` 不脱战、连续双
+  `ABSENT` 才脱战、战斗中 return-item 不调用 bag 宏。fresh 重启后不得再出现 Runner 已恢复 `IN_COMBAT`
+  而修罗仍打开第二次包裹。
+- **交付与验证：** Cloud 已删除 correction block 的 `enteredBattleByXiuluo` 判断，更新 exact Runner entry
+  无条件覆盖为 `WAIT_COMBAT / TRACKER_CONFIRM`，并记录原 phase；Client 已加入双 `ABSENT` 两帧确认与
+  return-item 最终战斗闸。真实 `10:01:28.500/.632` testcase 经 production matcher 回放依次得到
+  `ABSENT:none + ABSENT:minimap-visible` 与 `VISIBLE:combat-flag`；标记图为
+  `images/test-cases/g098/partial-vs-recovered-marked.png`。Client 精确合同 `4/4 PASS`、Cloud 精确静态合同 PASS、
+  双仓 production compile 与 `git diff --check` PASS。Client 全测试编译另被既有缺失
+  `LocalPathingStartProofMechanics` 阻断，不属于本卡。隔离 build-directory 参数未被 POM 采用，compile 实际触碰
+  默认 `target/classes`，故当前运行实例不得作为验收，必须完整重启双端后 fresh。
+
+## G097 NPC 成功坐标永久栈与单次启动工作副本（2026-08-17）
+
+- **状态：** `SOURCE DELIVERED / RULE GATE PASS / ISOLATED COMPILE PASS / FRESH REQUIRED`。Client 治理工作树为
+  `D:\mavenProject\DHXY-cr271 dev@5e05a957`，Cloud 生产目标为
+  `D:\mavenProject\DHXY-cloud-brain dev@b0387a5`，两者均与 `origin/dev` 一致且开工前 clean；
+  受保护的 `D:\mavenProject\DHXY` 不修改。
+- **现场根因：** 2026-08-17 09:55 修罗队长位于灵兽村 `(101,83)`，内置成功记忆明确保存
+  `灵兽村使者 (112,93) -> window-relative (691,189)`，并有 6 条强验证成功样本；运行镜像同键却因
+  `failureStreak=55 / stale=true / lastOutcome=VERIFICATION_FAILED` 被 `isUsableClickPolicy()` 拒绝，Cloud
+  连续返回 `cloud-brain-npc-memory-miss`，随后才走 tooltip/黄字/紫名/Ctrl。问题不是记忆点不存在，而是失败
+  outcome 有权破坏已验证成功坐标。
+- **用户批准的业务模型：** exact 场景的永久数据只保存验证成功坐标，整栈按坐标去重、只增不减；已有坐标成功
+  不重排，新坐标成功追加为最新栈顶。失败、超时、取消和未知不得删除、降权、过期或重排永久栈。每个新的
+  `taskRunId` 首次使用时从永久数据生成内存工作副本；本次启动按 LIFO pop，失败只消耗副本，下一次启动重新复制
+  完整永久栈。只要副本非空就继续产生 `MEMORY` 候选，耗尽后才进入既有视觉策略。
+- **实现边界：** Cloud `NpcClickMemoryStore` 独占持久化和 per-run 工作副本；Client 继续只执行 FIFO 候选及报告
+  verifier outcome，不新增本地记忆写入。保留旧 JSON 兼容读取，但旧 `failureStreak/stale/lastOutcome` 不再拥有
+  成功坐标可用性；不改变 exact scene key、窗口相对坐标、FIFO producer 栅栏、后续视觉顺序、verifier 或任务 phase。
+- **验证门：** 先通过 `node scripts/check-business-rule-gate.js --card G097`；静态审查必须证明失败 outcome 不写
+  永久成功点、同 run 不重建副本、换 run 恢复完整副本、全栈去重和 LIFO 顺序。当前 Cloud JVM 正在运行，遵守
+  E28 不覆盖活动 `target/classes`；普通 Maven compile 等用户停止/重启前不执行，必要时只使用隔离输出验证。
+- **交付：** `NpcClickMemoryStore` 已将 exact scene 的永久层改为 `successfulPoints`（旧到新），只接受 strong
+  `VERIFIED` outcome，按 `(x,y)` 全栈去重；失败 outcome 只留诊断/idempotency，不调用永久 policy 写入。
+  新 `taskRunId` 第一次读取会复制所有永久场景为独立工作栈并 `pollLast()`；同 run 的后续 session 沿用剩余副本。
+  `SmartClickRecognizer` 在 MEMORY 阶段循环取点，真实候选仍由既有 producer barrier 等待 Client verifier 失败后才
+  放出下一点，耗尽后才进入既有视觉顺序。任务终态注销先取消 NPC arrival producer，再按 exact taskRun 回收临时
+  副本；永久栈不参与清理。
+- **静态验证：** G097 business-rule gate PASS；四个改动生产类使用 Java 21 和现有 production dependency
+  classpath 编译到 `%TEMP%/dhxy-cloud-g097-classes-final` PASS；Cloud/Client 治理写集 `git diff --check` PASS。
+  两轮静态复核覆盖永久/临时生命周期、LIFO/FIFO 栅栏、旧 JSON 强成功样本迁移和终态回收，未发现剩余
+  P0/P1/P2。仓库 no-test override 下未创建或运行测试，活动 Cloud JVM 的 `target/classes` 未被改写。
+- **fresh gate：** 停止并重启 Cloud 后，首次修罗 `(101,83)` 必须记录工作副本创建并弹出 `(691,189)`，不再因
+  旧 `failureStreak=55/stale=true` 返回 memory miss；同 run 失败后应取下一历史点或进入视觉策略，停止后新 run
+  又必须恢复完整历史。新验证成功且不同坐标时 `appended=true`，重复坐标时 `appended=false` 且栈顺序不变。
+
 ## G096 恢复 Runner 通用自动战斗唯一所有权（2026-08-17）
+
+> **⚠️ 已被用户 2026-08-17 下午定稿的双向契约取代（Claude 实施，详见 ACTIVE_WORK.md 同日
+> "自动战斗面板维护终局"节）：** 面板**可见性**归本地 Runner（战斗全程共享帧匹配，丢失即自主 Alt+8
+> 并以 `AUTO_PANEL_MAINTAINED` key event 上报），回合**账本**归 Cloud（重置 25/脱战 -3/阈值 10；
+> 进战账面低或同场超 5 分钟时下发 `MAINTAIN_AUTO_PANEL` 命令）。本卡交付的
+> `XinshouRunnerAutoCombatState`（每代封印式本地决策）已整删；`71978ec` 的云端 15s 截图轮询也已拆。
+> 下述原文仅作历史记录。
 
 - **状态：** `SOURCE DELIVERED / ISOLATED COMPILE PASS / CONTRACT 7/7 PASS / FRESH REQUIRED`。Client 目标工作树为
   `D:\mavenProject\DHXY-cr271 dev@bb410524`，Cloud 目标工作树为
@@ -10053,6 +10570,15 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 
 | Card | Owner | Status | Files | Goal |
 | --- | --- | --- | --- | --- |
+| G105 | Codex | 防护已交付、完整备份通过、只读监控运行中、退出后维护已挂起 | Codex 全局/项目规则、健康监控、状态归档维护、会话交接 | 禁止宽目录递归刷盘；资源异常只告警不杀进程；退出后先备份再归档旧会话并轮转日志。 |
+| G104 | Codex | 源码交付、Cloud 编译与真实回放 3/3 通过，待重启 fresh | Cloud 修罗 Story 地图坐标识别、真实尺寸性能回放 | 已删除近十亿次手写全图滑窗；无效现场图 6ms 拒绝，有效四圣庄 59ms、龙窟七层 51ms。 |
+| G103 | Codex | 七审 P0×0/P1×0/P2×0；源码验收通过，待五窗 fresh | Runner cadence、transport follow-up/backoff、共享整窗截图、match-evidence | 发送门双锚与慢完成合同已闭环；fresh 验证战斗约 1Hz、失败链路不热循环且事件不延迟。 |
+| G102 | Codex | SOURCE DELIVERED / COMPILE PASS / CONTRACT 8/8 / P90 REPLAY PASS / FRESH REQUIRED | 五环 NPC Dialog 交接、FIFO defer 验证、presence 全站唯一、给鞋 terminal 清屏 | "缺第二种接任务模板"结论已被 P90 原图推翻撤回；真因=FIFO defer 被硬编码 false 走旧方差门误判后重复点 NPC。收口=恢复 defer 传参+旧方差门 presence 全删+统一 DialogFramePresenceMechanics；待真实五窗 fresh 验收。 |
+| G101 | Codex | fresh 已验证联合判定与后台放权生效；后续被 G102 两处既有交接缺陷阻断 | 五环接任务 Title/Dialog 联合判定、后台放权 | 每次点击只做一代联合判定；暂不可用模板立即推进，UNKNOWN 最多一次复判，视觉等待不占 turn。 |
+| G100 | Codex | 位置源码交付、隔离编译与定向合同通过，待 fresh；watchdog 仍开放 | Cloud 坐标 OCR 同请求提交、Client 删除位置回声 | Cloud 识别地图坐标后立即更新 exact task 缓存；接任务继续快速读缓存，不增加现场 OCR。 |
+| G099 | Codex | fresh 失败：G103 发现 transport 回包唤醒导致截图风暴，待返修 | Runner 观察采样、输入执行、HTTPS transport | 三通道解耦保留；transport 完成不得绕过 cadence 并驱动新整窗截图。 |
+| G098 | Codex | 源码交付、Client 合同 4/4 与双仓编译通过，待重启 fresh | 修罗 Runner 纠错覆盖、战斗帧抗抖、包裹输入硬闸 | 更新的 exact `IN_COMBAT` 无条件覆盖回 `WAIT_COMBAT`；单帧坏图不脱战，战斗中禁止 return-item 物理输入。 |
+| G097 | Codex | 源码、规则门与隔离编译通过，待重启 fresh | Cloud NPC 成功坐标持久化、per-taskRun 工作副本、FIFO MEMORY 候选 | 永久栈只增不减且全栈去重；失败只消耗本次启动副本，换 taskRun 恢复完整历史。 |
 | G096 | Codex | 源码交付、双仓隔离编译与合同 7/7 通过，待重启 fresh | Client Runner 战斗观察/Auto+8 本地维护；Cloud 业务 Task 战斗输入 | 所有任务与 phase 进战均由 exact-window Runner 自动维护 Auto+8；Task 只消费战斗事实和处理战后业务。 |
 | G095 | Codex | P1 根因确认，待停止 Client 后完整重建并重启 | Client 活动 `target/classes`、修罗 Turn Loop、`UiLocalOperationExecutor$1` | 修罗角色与 ACK 正常；运行实例撞上并发重建的半成品 classpath，队长 Turn 线程被 `NoClassDefFoundError` 杀死。 |
 | G094 | Codex + workers | 源码完成、双仓编译与两轮交叉 review 通过，待 fresh | 五环 prepared-frame 幂等交付、Cloud ACK/cache、focus 后停顿 | 同代 PNG 成功交付后不再重传；Cloud 留存 exact frame 等槽，HTTP 可取消且响应有 16MiB 硬上限。两轮 review 最终 `0/0/0/0`。 |
@@ -50711,6 +51237,21 @@ Status: `IMPLEMENTED / SOURCE REVIEW PASS / FRESH RUNTIME REQUIRED`
   直接执行可中断 `5_000ms` 等待，再按原样返回 `ACCEPT_TASK_CLICK_NPC`。未新增方法、截图、OCR、模板、
   状态或匹配，普通修罗分支不受影响。Cloud `mvn -q compile` 与精确 diff check PASS，未运行测试；fresh 只验证
   Boss 关闭后日志先出现 `delayMs=5000`，再重新接任务，且不再出现本次服务端过快拒绝。
+- **2026-08-25 13:28 fresh P1：普通任务被世界画面红字误判 Boss。** 队长 `hwnd-710DE6` round 12
+  第一次真实 Boss 帧 `13:28:10.925` 为 `red1316_BOSS`。重接后的 `0.923` gate 只命中固定黄色标题
+  “修罗任务”，没有验证下方目标内容刷新；
+  `20260825_132824_463_hwnd-710DE6_round12_red949_BOSS_anchortrue_full.png` 对应的 `13:28:24.293`
+  整窗仍显示上一任务“前往瑶池消灭修罗”，且普通 STORY 尚未渲染；`scheduleAcceptObjectiveBackgroundParse(...)` 已无条件调用
+  `cropStoryObjectiveFromWindowSnapshotNoDetect(...)`，固定 ROI 实际裁到世界画面，红色玩家/NPC 标签被计为
+  `949`，超过阈值 `600`，遂提前错误判 Boss。约 `0.3s` 后的 fresh dialog capture 已洗出真实普通 STORY：
+  `dialog_detect_story-click_xiuluo-v2_skip-boss_12_story_upper_white.png` 为“请速去……消灭修罗……”，
+  green 图为“四圣庄(72,39)”；错误分支随后于 `13:28:25.521` 将其点击关闭，5 秒后
+  `13:28:33.620` 再点 NPC。STORY 未自行消失，而是“首帧截早误判、后帧到达后被误点”。
+- **P1 返修门（待用户批准行为修改）：** Boss 判定不能再用固定“修罗任务”标题命中作为 STORY 或 Tracker
+  内容已经刷新的证明；红字计数与关闭
+  必须消费同一代真实 `DialogType.STORY` 帧。首帧无 STORY 时应等待 STORY 到达，不得在固定 ROI 世界画面上
+  下 Boss 结论，也不得把玩家/NPC 名计入。fresh 必须覆盖本次“真 Boss 后重接、Tracker 先到、普通 STORY
+  后到”的现场时序，证明普通 STORY 不会被第二次重接。
 
 ## G087 修罗启动前置检查与召唤兽法开关未进入运行请求（2026-08-16）
 

@@ -14,5 +14,7 @@ public enum TurnTaskCode {
     WILD_BATTLE,
     TIANTING,
     AUTO_BATTLE,
-    SLEEP_COMPUTER
+    SLEEP_COMPUTER,
+    PATHING_TEST,
+    DALISI_QUIZ
 }

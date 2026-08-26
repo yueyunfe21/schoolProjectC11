@@ -31,6 +31,12 @@ final class ExactWindowPreparedFrameCapture implements PreparedFrameCapture {
     public ObservationPreparedFrame capture(ObservationPreparedFrameDemand demand) {
         Objects.requireNonNull(demand, "demand");
         BufferedImage image = contextHolder.callWith(context, () -> {
+            // Tracker state is thread-scoped and this runs on the observation transport thread,
+            // whose fresh state still carries the -1 defaults. Refresh first — exactly like the
+            // shared-cycle-frame path via getScaledRect — or the capture rect starts at (-1,-1).
+            if (!tracker.refreshWindowState()) {
+                return null;
+            }
             int baseX = tracker.getWindowBaseX();
             int baseY = tracker.getWindowBaseY();
             return tracker.captureToMemory(

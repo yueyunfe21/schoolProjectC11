@@ -2,6 +2,7 @@ package com.bot.dhxy.window.observation;
 
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
@@ -143,6 +144,9 @@ public class OpenCvLocalMaintenanceBroadcastHandler implements LocalMaintenanceB
         }
         for (LoadedTemplate template : templates) {
             double[] match = ImageFinder.find(roi, template.image(), MATCH_THRESHOLD);
+            // 用户铁律（2026-08-18 全量清扫）：模板匹配点落盘判定原图。
+            MatchEvidenceStore.saveOnChange(
+                    "maintenance-broadcast-" + template.actionKey(), null, roi, template.image(), match);
             if (match != null && match.length >= 3) {
                 return new LocalMatch(template.actionKey(), match[0], match[1], match[2]);
             }

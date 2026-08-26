@@ -74,7 +74,7 @@ class G041FakerInputRoutingContractTest {
     @Test
     void leaderSinglePlayerAndMemberTeamTaskKeepAltFiveAndSixOnExactHwnd() throws Exception {
         Harness harness = new Harness();
-        harness.asLeader(TaskType.WUHuan_V2);
+        harness.asLeader(TaskType.WUHUAN_V3);
         assertTrue(harness.canUseBackground(InputAction.pressAlt5()));
         assertTrue(harness.canUseBackground(InputAction.pressAlt6()));
 

@@ -480,7 +480,7 @@ public final class TurnProtocolValidator {
                 yield 0;
             }
             case BAG_USE_INCENSE, UI_CLEAN_ALL, UI_CLOSE_GENERIC_WINDOWS, UI_PROBE_GENERIC_CLOSE,
-                 HOST_SLEEP_COMPUTER,
+                 HOST_SLEEP_COMPUTER, QUEST_REFRESH_CURRENT_TAB,
                     MAP_SURVEY_POINTER_SAMPLE, LEFT_TOP_STATUS_OBSERVE -> {
                 require(call.bag() == null && call.ui() == null && call.giveItem() == null
                                 && call.quest() == null && call.wholeTaskRuntime() == null
@@ -488,7 +488,7 @@ public final class TurnProtocolValidator {
                         call.operation() + " must not contain arguments");
                 yield 0;
             }
-            case UI_CLEAN_LIGHTWEIGHT, UI_CLOSE_MAP_SEARCH_INPUT_BY_X2 -> {
+            case UI_CLEAN_LIGHTWEIGHT, UI_CLOSE_MAP_SEARCH_INPUT_BY_X2, UI_TAP_CENTER_DISMISS_OVERLAY -> {
                 require(call.bag() == null && call.ui() != null && call.giveItem() == null && call.quest() == null,
                         call.operation() + " requires only UI arguments");
                 requireText(call.ui().source(), "localService.ui.source");
@@ -742,7 +742,8 @@ public final class TurnProtocolValidator {
                  USE_LUNHUI_ITEM_AND_START,
                  PRESS_ESCAPE,
                  PRESS_ORDINARY_AUTO_COMBAT,
-                 RESTORE_AUTO_COMBAT -> {
+                 RESTORE_AUTO_COMBAT,
+                 MAINTAIN_AUTO_PANEL -> {
                 require(arguments.recoveryTemplateName() == null,
                         arguments.action() + " must not contain action-specific arguments");
                 requireNoPreparedPoint(arguments, arguments.action().name());
@@ -1324,7 +1325,8 @@ public final class TurnProtocolValidator {
                         "taskStartRequest.taskMaxRuns[" + index + "] must be >= 0 for " + taskCode);
                 case WUHUAN_V2, WUHUAN_V3 -> require(maxRuns == 1 || maxRuns == 2,
                         "taskStartRequest.taskMaxRuns[" + index + "] must be 1 or 2 for " + taskCode);
-                case XINSHOU, SLEEP_COMPUTER, YIPIN_GUARD_TEST, G056_DOUBLE_EXPERIENCE_ACCEPTANCE -> require(maxRuns == 1,
+                case XINSHOU, SLEEP_COMPUTER, YIPIN_GUARD_TEST, G056_DOUBLE_EXPERIENCE_ACCEPTANCE,
+                        PATHING_TEST, DALISI_QUIZ -> require(maxRuns == 1,
                         "taskStartRequest.taskMaxRuns[" + index + "] must be 1 for " + taskCode);
             }
         }
@@ -1351,6 +1353,11 @@ public final class TurnProtocolValidator {
         requireSupplyThreshold(settings.playerMpSupplyThreshold(), "playerMpSupplyThreshold");
         requireSupplyThreshold(settings.petHpSupplyThreshold(), "petHpSupplyThreshold");
         requireSupplyThreshold(settings.petMpSupplyThreshold(), "petMpSupplyThreshold");
+        require(TurnTaskRuntimeSettings.LEADER_DEATH_RECOVERY_CONTINUE_TASK.equals(
+                        settings.leaderDeathRecoveryMode())
+                        || TurnTaskRuntimeSettings.LEADER_DEATH_RECOVERY_REACCEPT_TASK.equals(
+                        settings.leaderDeathRecoveryMode()),
+                "taskStartRequest.runtimeSettings.leaderDeathRecoveryMode must be CONTINUE_TASK or REACCEPT_TASK");
     }
 
     private static void requireSupplyThreshold(int threshold, String field) {

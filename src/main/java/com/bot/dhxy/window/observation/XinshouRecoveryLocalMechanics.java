@@ -2,6 +2,7 @@ package com.bot.dhxy.window.observation;
 
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.tools.CoordinateHelper;
@@ -162,6 +163,8 @@ public final class XinshouRecoveryLocalMechanics {
                     currentWindowRoi,
                     template,
                     XinshouAnchorLocalMechanics.recoveryMatchThreshold());
+            // 用户铁律（2026-08-18 全量清扫）：模板匹配点落盘判定原图。
+            MatchEvidenceStore.save("xinshou-recovery-template", null, currentWindowRoi, template, match);
             Point absolutePoint = coordinates.resolveMatchedPointInRect(rect, match);
             return absolutePoint == null
                     ? TargetResolution.of(ResolutionStatus.TEMPLATE_NOT_MATCHED)

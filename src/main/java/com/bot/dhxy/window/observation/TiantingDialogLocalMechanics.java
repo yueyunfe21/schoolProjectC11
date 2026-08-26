@@ -1,6 +1,7 @@
 package com.bot.dhxy.window.observation;
 
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.tools.ImagePreprocessor;
 
 import java.awt.image.BufferedImage;
@@ -217,7 +218,11 @@ final class TiantingDialogLocalMechanics {
                 continue;
             }
             try {
+                String evidenceSite = "tianting-dialog-"
+                        + templatePath.substring(templatePath.lastIndexOf('/') + 1).replace(".png", "");
                 double[] result = ImageFinder.find(roi, template, MATCH_RATE);
+                // 用户铁律（2026-08-18 全量清扫）：模板匹配点落盘判定原图。
+                MatchEvidenceStore.saveOnChange(evidenceSite, null, roi, template, result);
                 if (result != null && result.length >= 3) {
                     String actionKey = ACTION_KEYS_BY_TEMPLATE.get(templatePath);
                     if (actionKey == null) {
@@ -232,6 +237,7 @@ final class TiantingDialogLocalMechanics {
                 }
                 // Threshold 0 so a miss is a number rather than a null; only the best one is kept.
                 double[] best = ImageFinder.find(roi, template, 0.0d);
+                MatchEvidenceStore.saveOnChange(evidenceSite + "-score", null, roi, template, best);
                 double score = best != null && best.length >= 3 ? best[2] : 0.0d;
                 if (score > bestScore) {
                     bestScore = score;

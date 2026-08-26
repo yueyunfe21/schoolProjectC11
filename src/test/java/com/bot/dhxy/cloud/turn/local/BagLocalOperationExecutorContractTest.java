@@ -24,4 +24,16 @@ class BagLocalOperationExecutorContractTest {
         assertFalse(source.contains("PlayerStateService"));
         assertFalse(source.contains("submitAndWait("));
     }
+
+    @Test
+    void returnItemChecksExactRunnerCombatStateBeforeCallingBagMacro() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/bot/dhxy/cloud/turn/local/BagLocalOperationExecutor.java"));
+        int method = source.indexOf("private LocalServiceExecution executeReturnItem(");
+        int combatGuard = source.indexOf("context.isLocalCombatVisible()", method);
+        int rejection = source.indexOf("\"LOCAL_COMBAT_ACTIVE\"", combatGuard);
+        int macro = source.indexOf("bagService.runReturnItemMacroDirectForExclusive(", method);
+
+        assertTrue(method >= 0 && method < combatGuard && combatGuard < rejection && rejection < macro);
+    }
 }

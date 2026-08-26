@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
@@ -289,6 +291,35 @@ public class InputActionQueue {
         queue.offer(new InputActionRequest(context, description, actions,
                 taskTokens.pauseToken(), taskTokens.stopToken()));
         return true;
+    }
+
+    /**
+     * Submits one atomic physical-input bundle without blocking the observing caller.
+     *
+     * <p>The request captures the same exact window binding and task pause/stop tokens as
+     * {@link #submitAndWait(String, List)}. Only the waiting policy differs: the global
+     * {@link InputActionWorker} still owns every physical step, while the returned stage completes
+     * with that worker's terminal result.</p>
+     *
+     * @param description diagnostic label for logs and dead-letter records
+     * @param actions ordered screen-absolute actions retained as one input transaction
+     * @return completion stage; false means the request was rejected or did not complete
+     */
+    public CompletionStage<Boolean> submitAsync(String description, List<InputAction> actions) {
+        Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
+        if (current.isEmpty()) {
+            log.warn("Async input action rejected because no window context exists: {}", description);
+            return CompletableFuture.completedFuture(false);
+        }
+        WindowRuntimeContext context = current.get();
+        if (!refreshAndValidateNativeBinding(context, description, true)) {
+            return CompletableFuture.completedFuture(false);
+        }
+        CapturedTaskTokens taskTokens = captureTaskTokens();
+        InputActionRequest request = new InputActionRequest(
+                context, description, actions, taskTokens.pauseToken(), taskTokens.stopToken());
+        queue.offer(request);
+        return request.getResult().thenApply(InputActionExecutionResult::isCompleted);
     }
 
     /**

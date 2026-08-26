@@ -2,6 +2,7 @@ package com.bot.dhxy.service;
 
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
@@ -16,6 +17,7 @@ import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.runner.stop.TaskStopToken;
 import com.bot.dhxy.tools.CoordinateHelper;
+import com.bot.dhxy.tools.ImagePreprocessor;
 import com.bot.dhxy.tools.LatencyMetrics;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
@@ -60,7 +62,13 @@ public class BagService {
     private static final String TASK_TAB_FALLBACK_A_TEMPLATE = "images/template/bag/task_tab_fallback_a.png";
     private static final String TASK_TAB_FALLBACK_B_TEMPLATE = "images/template/bag/task_tab_fallback_b.png";
     private static final double TASK_TAB_MATCH_RATE = 0.80;
-    private static final int MAIN_BAG_MOUSE_SAFE_OFFSET_X = 60;
+    /*
+     * 锚点(存款按钮)位于包裹面板左半边:实测同窗页签在锚点右侧 152px,故 60px 的旧安全距离
+     * 允许随机落点仍停在面板自己身上,悬停物品即弹说明框盖住锚点 -> 判定"包裹没开" -> 再按
+     * 一次 Alt+E 把已开的包裹关掉(2026-08-25 18:59 hwnd-710DE6 实例:落点仅在锚点右 177px)。
+     * 用户 2026-08-25 拍板改为 200px,确保随机落点越过整个面板宽度。
+     */
+    private static final int MAIN_BAG_MOUSE_SAFE_OFFSET_X = 200;
     private static final int GAME_CLIENT_WIDTH = 1024;
     private static final int GAME_CLIENT_HEIGHT = 768;
     private static final int FIRST_SEARCHABLE_PAGE_INDEX = 0;
@@ -459,6 +467,30 @@ public class BagService {
                     layout.anchorTemplate);
         }
         return null;
+    }
+
+    /**
+     * 2026-08-23 用户契约（停止=彻底清空）：清该窗口的包裹缓存（锚点绝对坐标/可见页/物品页）。
+     * 3519 案根因即"18:23 学的绝对锚点 + 窗口挪动 + 缓存永生"；新一轮非续跑启动前必清。
+     */
+    public void forgetWindowRealityMemory(String windowId) {
+        if (windowId == null || windowId.isBlank()) {
+            return;
+        }
+        // 审查修正：无上下文线程写入的 "global|" 键对所有窗口都是潜在毒缓存，任一窗口
+        // fresh-start 时一并清除（3519 同族风险）。
+        String prefix = windowId + "|";
+        java.util.function.Predicate<String> stale = key ->
+                key.startsWith(prefix) || key.startsWith("global|");
+        lastMainBagAnchorCache.keySet().removeIf(stale);
+        visiblePageCache.keySet().removeIf(stale);
+        itemPageCache.keySet().removeIf(stale);
+        log.info("[bag] window reality caches cleared: windowId={}", windowId);
+    }
+
+    /** 全进程只校准一次的主包任务页签行号：fresh-start 时清掉，下次用到重新校准。 */
+    public void forgetMainBagTaskTabCalibration() {
+        calibratedMainBagTaskTabIndex.set(null);
     }
 
     private void rememberMainBagAnchor(BagLayout layout, Point anchor, String stage) {
@@ -974,9 +1006,30 @@ public class BagService {
             if (roi != null) {
                 try {
                     BufferedImage template = ImageIO.read(Path.of(layout.anchorTemplate).toFile());
-                    double[] match = template == null
+                    /*
+                     * 2026-08-23 用户批准（3519 案）：请求 90x70 的检查框若被窗口边缘削小到
+                     * 比模板还小（当晚实截 17x70 < 模板 25x12），说明缓存锚点已随窗口位置失效。
+                     * 这种"假成功"截图必须按截图失败处理，走下面既有的全窗搜索兜底，
+                     * 严禁喂给 matchTemplate（会抛 cv 异常炸掉整个输入事务）。
+                     */
+                    boolean roiClipped = template != null
+                            && (roi.getWidth() < template.getWidth()
+                            || roi.getHeight() < template.getHeight());
+                    if (roiClipped) {
+                        log.warn("[bag] cached open-check capture clipped smaller than template; treat as "
+                                        + "capture failure and fall back to full window: stage={} roi={}x{} "
+                                        + "template={}x{} cachedAnchor=({}, {})",
+                                stage, roi.getWidth(), roi.getHeight(),
+                                template.getWidth(), template.getHeight(),
+                                cachedAnchor.x, cachedAnchor.y);
+                    }
+                    double[] match = template == null || roiClipped
                             ? null
                             : ImageFinder.find(roi, template, MAIN_BAG_ANCHOR_MATCH_RATE);
+                    // 用户铁律（2026-08-18 全量清扫）：模板匹配点落盘判定原图。
+                    if (template != null) {
+                        MatchEvidenceStore.save("bag-open-anchor", null, roi, template, match);
+                    }
                     LatencyMetrics.info(log, "bag.openCheck", captureStartedAt,
                             "stage=" + stage + " provider=HWND_BITBLT_REGION source=cached-anchor matched="
                                     + (match != null));
@@ -1105,6 +1158,16 @@ public class BagService {
         throwIfStopRequested(context);
 
         double[] res = ImageFinder.find(path, "images/template/" + targetItemTemplate, BAG_ITEM_MATCH_RATE);
+        BufferedImage evidenceFrame = ImagePreprocessor.pathToBufferedImage(path);
+        BufferedImage evidenceTemplate =
+                ImagePreprocessor.pathToBufferedImage("images/template/" + targetItemTemplate);
+        MatchEvidenceStore.save("bag-item-current-page", null, evidenceFrame, evidenceTemplate, res);
+        if (evidenceFrame != null) {
+            evidenceFrame.flush();
+        }
+        if (evidenceTemplate != null) {
+            evidenceTemplate.flush();
+        }
         throwIfStopRequested(context);
         if (res == null || res.length < 2) {
             log.info("[bag] current visible page no match: template={}", targetItemTemplate);

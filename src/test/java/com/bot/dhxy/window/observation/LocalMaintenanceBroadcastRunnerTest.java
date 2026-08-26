@@ -120,7 +120,7 @@ class LocalMaintenanceBroadcastRunnerTest {
         org.junit.jupiter.api.Assertions.assertFalse(
                 SpringObservationRunnerFactory.isAutoBattleOnly("XIULUO_V2"));
         org.junit.jupiter.api.Assertions.assertFalse(
-                SpringObservationRunnerFactory.isAutoBattleOnly("AUTO_BATTLE,WUHuan_V2"));
+                SpringObservationRunnerFactory.isAutoBattleOnly("AUTO_BATTLE,WUHUAN_V3"));
         org.junit.jupiter.api.Assertions.assertFalse(
                 SpringObservationRunnerFactory.isAutoBattleOnly(""));
     }

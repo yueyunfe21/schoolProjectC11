@@ -30,10 +30,16 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public final class TeamReturnPanelLocalOperation {
 
+    /*
+     * 2026-08-17 现场证据（images/temp/hwnd-E11FDA、hwnd-C721C7E 判定图 + 同分钟双窗对比测量）：
+     * 同尺寸无边框窗口里，不同角色客户端把 Alt+T 队伍面板画在相差约 27px 的高度上——旧 ROI
+     * (y=279,h=40) 按 C721C7E 标定，换 E11FDA 当队长时"召回"落在 ROI 上沿之外（y≈255-268），
+     * 探测把 miss 判成全员归队导致队长提前开下一轮。顶边上移 50px、底边不变，罩住两种面板位置。
+     */
     private static final int ROI_X = 314;
-    private static final int ROI_Y = 279;
+    private static final int ROI_Y = 229;
     private static final int ROI_WIDTH = 561;
-    private static final int ROI_HEIGHT = 40;
+    private static final int ROI_HEIGHT = 90;
     private static final double MATCH_THRESHOLD = 0.85D;
     private static final Path NOT_RETURNED_TEMPLATE =
             Path.of("images", "template", "team", "not_returned_yet.png");
@@ -44,6 +50,13 @@ public final class TeamReturnPanelLocalOperation {
     private final InputSequences inputSequences;
     private final WindowScopedTempPath windowScopedTempPath;
     private final Map<WindowBindingKey, PanelOwner> locallyOpenedPanels = new ConcurrentHashMap<>();
+
+    /** 2026-08-23 用户契约（停止=彻底清空）：清该窗口停止时可能半开着的归队面板认领。 */
+    public void forgetWindowRealityMemory(String windowId) {
+        if (windowId != null && !windowId.isBlank()) {
+            locallyOpenedPanels.keySet().removeIf(key -> windowId.equals(key.windowId()));
+        }
+    }
 
     /**
      * Opens the bound leader's team panel without capturing a frame.

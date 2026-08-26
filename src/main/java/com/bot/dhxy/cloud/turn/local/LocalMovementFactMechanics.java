@@ -32,6 +32,13 @@ public final class LocalMovementFactMechanics {
     private final WindowTaskContextHolder contextHolder;
     private final Map<String, IntentFact> intentFacts = new ConcurrentHashMap<>();
 
+    /** 2026-08-23 用户契约（停止=彻底清空）：清该窗口的移动意图记录（当前只写不读，清掉防残留）。 */
+    public void forgetWindowRealityMemory(String windowId) {
+        if (windowId != null && !windowId.isBlank()) {
+            intentFacts.remove(windowId);
+        }
+    }
+
     public LocalMovementFactMechanics(GameClientTracker tracker,
                                       CoordinateHelper coordinateHelper,
                                       WindowTaskContextHolder contextHolder) {

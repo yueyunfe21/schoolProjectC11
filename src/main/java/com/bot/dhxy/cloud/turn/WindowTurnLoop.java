@@ -387,6 +387,11 @@ public final class WindowTurnLoop {
         return lastFailure;
     }
 
+    /** True only after Cloud accepted this loop's start request (a RunSlot exists for its startRequestId). */
+    boolean hasAcceptedStartAck() {
+        return startAckAccepted;
+    }
+
     /** @return the accepted Cloud start ACK, including its authoritative effective task projection. */
     public Optional<TurnTaskStartAck> acceptedStartAck() {
         return Optional.ofNullable(acceptedStartAck);

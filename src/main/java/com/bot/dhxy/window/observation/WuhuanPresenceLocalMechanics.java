@@ -121,25 +121,65 @@ final class WuhuanPresenceLocalMechanics {
             return null;
         }
         try {
+            double onceScore = Double.NaN;
+            double finishedScore = Double.NaN;
+            String verdict = null;
             BufferedImage once = completionOnceTemplate();
             if (once != null) {
-                double score = ImageFinder.bestMatchScore(dialog, once);
-                if (Double.isFinite(score) && score >= COMPLETION_THRESHOLD) {
-                    return COMPLETION_FINISHED_ONCE;
+                onceScore = ImageFinder.bestMatchScore(dialog, once);
+                if (Double.isFinite(onceScore) && onceScore >= COMPLETION_THRESHOLD) {
+                    verdict = COMPLETION_FINISHED_ONCE;
                 }
             }
             BufferedImage finished = completionFinishedTemplate();
-            if (finished != null) {
-                double score = ImageFinder.bestMatchScore(dialog, finished);
-                if (Double.isFinite(score) && score >= COMPLETION_THRESHOLD) {
-                    return COMPLETION_FINISHED;
+            if (verdict == null && finished != null) {
+                finishedScore = ImageFinder.bestMatchScore(dialog, finished);
+                if (Double.isFinite(finishedScore) && finishedScore >= COMPLETION_THRESHOLD) {
+                    verdict = COMPLETION_FINISHED;
                 }
             }
-            return once == null && finished == null ? null : COMPLETION_ABSENT;
+            if (verdict == null) {
+                verdict = once == null && finished == null ? null : COMPLETION_ABSENT;
+            }
+            saveCompletionEvidence(dialog, verdict, onceScore, finishedScore);
+            return verdict;
         } finally {
             dialog.flush();
         }
     }
+
+    /**
+     * Every completion-story match call writes its exact judged crop to disk (rolling pool of 60):
+     * a disputed verdict must always be answerable with the very pixels it was judged on.
+     */
+    private void saveCompletionEvidence(
+            BufferedImage dialog, String verdict, double onceScore, double finishedScore) {
+        try {
+            java.nio.file.Path dir = java.nio.file.Path.of("logs", "frames", "wuhuan-completion");
+            java.nio.file.Files.createDirectories(dir);
+            int slot = COMPLETION_EVIDENCE_SEQ.getAndIncrement() % 60;
+            java.nio.file.Path file = dir.resolve(String.format("completion-%02d-%s.png",
+                    slot, verdict == null ? "unsampled" : verdict));
+            java.nio.file.Path tmp = dir.resolve(String.format("completion-%02d.tmp.png", slot));
+            try (java.util.stream.Stream<java.nio.file.Path> stale = java.nio.file.Files.list(dir)) {
+                stale.filter(existing -> existing.getFileName().toString()
+                                .startsWith(String.format("completion-%02d-", slot)))
+                        .forEach(existing -> existing.toFile().delete());
+            }
+            ImageIO.write(dialog, "png", tmp.toFile());
+            java.nio.file.Files.move(tmp, file,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            org.slf4j.LoggerFactory.getLogger(WuhuanPresenceLocalMechanics.class).info(
+                    "[wuhuan-completion-evidence] verdict={} onceScore={} finishedScore={} threshold={} saved={}",
+                    verdict, onceScore, finishedScore, COMPLETION_THRESHOLD, file);
+        } catch (IOException | RuntimeException failure) {
+            org.slf4j.LoggerFactory.getLogger(WuhuanPresenceLocalMechanics.class).warn(
+                    "[wuhuan-completion-evidence] save failed: {}", failure.getMessage());
+        }
+    }
+
+    private static final java.util.concurrent.atomic.AtomicInteger COMPLETION_EVIDENCE_SEQ =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     void reset() {
         if (titleTemplate != null) {

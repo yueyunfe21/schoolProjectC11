@@ -171,6 +171,13 @@ public class WindowRuntimeContext {
     private volatile String ordinaryEnterBattleTargetMapSource;
     private volatile String taskOwnerPlayerId;
     private volatile String taskOwnerPlayerName;
+    /*
+     * 2026-08-18 切号事故:终局抹除 taskOwner 后,自动重启的新 run 会把"窗口里现在是谁"直接
+     * 认作新主人——用户契约是切走=暂停、切回主人才继续。终局抹除时把主人侧存到 lastTaskOwner*,
+     * 供 WindowTaskControlService 自动重启守门;手动新开任务照常按当前标题认主(意图明确)。
+     */
+    private volatile String lastTaskOwnerPlayerId;
+    private volatile String lastTaskOwnerPlayerName;
     private volatile String visiblePlayerId;
     private volatile String visiblePlayerName;
     private volatile boolean identitySuspended;
@@ -1070,7 +1077,28 @@ public class WindowRuntimeContext {
         return progress == null ? "-" : progress.toDisplayText();
     }
 
+    /** Clears only the unbound expected-combat claim created for one failed asynchronous input. */
+    public void clearExpectedCombatEnterClaim(String claimId, String reason) {
+        if (claimId == null || claimId.isBlank()) {
+            return;
+        }
+        while (true) {
+            WindowExpectedCombatEnterClaim current = expectedCombatEnterClaim.get();
+            if (current == null || !claimId.equals(current.claimId()) || current.combatGeneration() != null) {
+                return;
+            }
+            if (expectedCombatEnterClaim.compareAndSet(current, null)) {
+                log.info("[local-runner] cleared unbound expected combat enter claim: windowId={} claimId={} reason={}",
+                        windowId, claimId, normalize(reason));
+                return;
+            }
+        }
+    }
+
     public WindowTaskRunProgress getPausedTaskRunProgress() { return pausedTaskRunProgress.get(); }
+
+    /** 云端可经 WHOLE_TASK_PROGRESS_UPDATE 写入的实时次数账本；终局调度要与暂停快照一起取较大值。 */
+    public WindowTaskRunProgress getRunningTaskRunProgress() { return runningTaskProgress.get(); }
 
     /**
      * Update the user-facing in-task run counter for finite repeatable tasks.
@@ -2039,6 +2067,28 @@ public class WindowRuntimeContext {
      */
     public boolean isTiantingFengyaoPending() {
         return tiantingFengyaoPending.get() != null;
+    }
+
+    /*
+     * 2026-08-21 用户拍板(18:12 鬼王接任务空点事故):任务侧装的对话兴趣(如 GHOST_KING_ACCEPT_TASK)
+     * 本来就每个采样周期在匹配"接任务"选项,匹配到就点。把"这个选项真的被点掉了"这一刻记在这里,
+     * NPC 点击的 FIFO 就能拿它当"这一下点中没中 NPC"的判据:等到=成功收工;等不到=点空,直接取
+     * 下一个候选(记忆点/tooltip/黄名)。以前 defer 模式下 FIFO 点完就当成功,tooltip 永远轮不到。
+     */
+    private final java.util.concurrent.atomic.AtomicLong lastTaskDialogOptionAnsweredAtMs =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /** Stamp the moment a task-owned dialog interest actually clicked its option. */
+    public void markTaskDialogOptionAnswered(String actionKey) {
+        long now = System.currentTimeMillis();
+        lastTaskDialogOptionAnsweredAtMs.set(now);
+        log.info("[local-runner] task dialog option answered: windowId={} actionKey={} atMs={}",
+                windowId, normalize(actionKey), now);
+    }
+
+    /** @return epoch millis of the last task-owned dialog option click, or 0 when never. */
+    public long lastTaskDialogOptionAnsweredAtMs() {
+        return lastTaskDialogOptionAnsweredAtMs.get();
     }
 
     /** Clears the action-owned 使用封妖符 follow-up state. */
@@ -3291,9 +3341,26 @@ public class WindowRuntimeContext {
             clearTaskRunProgress();
             clearPausedTaskRunProgress("task finished");
             clearIdentitySuspension("task finished");
+            stashLastTaskOwnerBeforeWipe();
             taskOwnerPlayerId = null;
             taskOwnerPlayerName = null;
         }
+    }
+
+    private void stashLastTaskOwnerBeforeWipe() {
+        if (taskOwnerPlayerId != null) {
+            lastTaskOwnerPlayerId = taskOwnerPlayerId;
+            lastTaskOwnerPlayerName = taskOwnerPlayerName;
+        }
+    }
+
+    /** 上一个 run 的任务主人 id（终局抹除前侧存）；自动重启守门用，可能为 null。 */
+    public String getLastTaskOwnerPlayerId() {
+        return lastTaskOwnerPlayerId;
+    }
+
+    public String getLastTaskOwnerPlayerName() {
+        return lastTaskOwnerPlayerName;
     }
 
     public void markQueueFinished(WindowRuntimeStatus status,
@@ -3346,6 +3413,23 @@ public class WindowRuntimeContext {
      *
      * @param reason lifecycle boundary recorded in diagnostics; nullable.
      */
+    /**
+     * 2026-08-23 用户契约（停止=彻底清空）：清掉本窗口跨轮存活的"现实记忆"——识别到的
+     * 玩家位置/坐标、任何相位的对话准备残留、维护广播已处理表。仅由 fresh-start 复位链
+     * 调用（NORMAL 启动、崩溃自动重启）；暂停恢复不得调用。
+     */
+    public void clearCrossRunRealityMemory(String reason) {
+        lastKnownPathingLocation.set(null);
+        // 审查修正：该字段的不变量是永不为 null（其余清理点全部写 none()）。
+        dialogPreparationStatus.set(DialogPreparationStatus.none());
+        localMaintenanceBroadcastHandledAtByAction.clear();
+        PlayerCharacter me = gameState.getMe();
+        me.setCurrentMapName(null);
+        me.setX(0);
+        me.setY(0);
+        log.info("[fresh-start] cross-run reality memory cleared: windowId={} reason={}", windowId, reason);
+    }
+
     public void clearTaskExecutionState(String reason) {
         String clearReason = normalize(reason) == null ? "task execution reset" : normalize(reason);
 
@@ -3368,6 +3452,7 @@ public class WindowRuntimeContext {
         localCombatVisible = false;
         localCombatGeneration.set(0L);
         clearIdentitySuspension(clearReason);
+        stashLastTaskOwnerBeforeWipe();
         taskOwnerPlayerId = null;
         taskOwnerPlayerName = null;
         clearTaskRunProgress();

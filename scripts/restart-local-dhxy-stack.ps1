@@ -4,6 +4,8 @@
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "lib-process-tree.ps1")
+
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $cloudPort = 18080
 $ocrPort = 18762
@@ -107,7 +109,7 @@ function Stop-DhxyClientWindow {
             $registeredProcess = Get-Process -Id ([int]$registered.clientPid) -ErrorAction SilentlyContinue
             if ($null -ne $registeredProcess -and $registeredProcess.ProcessName -in @("java", "javaw")) {
                 Write-Stage "关闭上次由重启入口启动的客户端 pid=$($registeredProcess.Id)"
-                Stop-Process -Id $registeredProcess.Id -Force -Confirm:$false
+                [void](Stop-ProcessTreeSafely -ProcessId $registeredProcess.Id)
                 [void]$stopped.Add([int]$registeredProcess.Id)
             }
         } catch {
@@ -121,7 +123,7 @@ function Stop-DhxyClientWindow {
             continue
         }
         Write-Stage "关闭 DHXY 客户端 pid=$($client.Id)"
-        Stop-Process -Id $client.Id -Force -Confirm:$false
+        [void](Stop-ProcessTreeSafely -ProcessId $client.Id)
     }
 }
 
@@ -133,7 +135,7 @@ function Stop-CloudBrainListener {
             throw "拒绝关闭端口 $cloudPort：pid=$($process.Id) 不是 Java 云端进程，而是 $($process.ProcessName)。"
         }
         Write-Stage "关闭 Cloud Brain pid=$($process.Id) port=$cloudPort"
-        Stop-Process -Id $process.Id -Force -Confirm:$false
+        [void](Stop-ProcessTreeSafely -ProcessId $process.Id)
     }
 }
 
@@ -145,7 +147,8 @@ function Stop-DhxyOcrSidecar {
             throw "拒绝关闭端口 $ocrPort：pid=$($process.Id) 不是 Python OCR sidecar，而是 $($process.ProcessName)。"
         }
         Write-Stage "关闭旧 OCR sidecar pid=$($process.Id) port=$ocrPort"
-        Stop-Process -Id $process.Id -Force -Confirm:$false
+        # 树式收尾：RapidOCR 的 multiprocessing worker 是它的子进程，单杀父进程会把它们永久孤儿化。
+        [void](Stop-ProcessTreeSafely -ProcessId $process.Id)
     }
 }
 
@@ -160,6 +163,9 @@ Write-Stage "停止旧客户端与 Cloud Brain（不会关闭 IntelliJ、Node/80
 Stop-DhxyClientWindow
 Stop-CloudBrainListener
 Stop-DhxyOcrSidecar
+# 树式收尾只覆盖“由本脚本关闭”的路径。sidecar 自己崩溃、被任务管理器杀掉、或机器休眠导致
+# 父进程消失时同样会留下孤儿，所以每轮启动前再扫一次，避免像 2026-08-21 那样攒到 115 个。
+[void](Remove-OrphanedOcrWorkers)
 Wait-PortReleased -Port $cloudPort
 Wait-PortReleased -Port $ocrPort
 
@@ -245,8 +251,12 @@ if ([string]::IsNullOrWhiteSpace($dependencyClasspath)) {
     throw "客户端依赖 classpath 为空：$clientClasspathFile"
 }
 $clientClasspath = (Join-Path $projectRoot "target\classes") + ";" + $dependencyClasspath
-$clientArguments = @("-cp", $clientClasspath, "com.bot.dhxy.AutoBot")
-$clientArgumentLine = "-cp $(Quote-ProcessArgument $clientClasspath) com.bot.dhxy.AutoBot"
+# 整窗 BufferedImage 约 3MB；G1 默认 region 4MB 会把它们全判为 humongous 直进老年代，
+# 引发并发 GC 连轴转（实测 2 次 YGC/秒、1830 个并发周期/20 分钟）。region 提到 16MB 让
+# 帧对象走正常年轻代，-Xms 预热避免堆反复伸缩。
+$clientJvmOptions = "-Xms2g -XX:G1HeapRegionSize=16m"
+$clientArguments = @("-Xms2g", "-XX:G1HeapRegionSize=16m", "-cp", $clientClasspath, "com.bot.dhxy.AutoBot")
+$clientArgumentLine = "$clientJvmOptions -cp $(Quote-ProcessArgument $clientClasspath) com.bot.dhxy.AutoBot"
 
 Write-Stage "启动 DHXY JavaFX 客户端。"
 $clientLauncher = if (Test-Path -LiteralPath $javawExe -PathType Leaf) { $javawExe } else { $javaExe }

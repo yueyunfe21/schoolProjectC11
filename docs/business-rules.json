@@ -120,7 +120,7 @@
     },
     {
       "id": "BR-NPC-001",
-      "title": "NPC Click FIFO 候选顺序与成功后生产终止",
+      "title": "NPC Click FIFO 候选顺序、成功坐标永久栈与启动工作副本",
       "source": "docs/业务逻辑.md",
       "heading": "[BR-NPC-001] NPC Click 云端 FIFO 候选队列逻辑",
       "domains": ["npc-click", "fifo", "ocr", "client-cloud", "state-lifecycle"],

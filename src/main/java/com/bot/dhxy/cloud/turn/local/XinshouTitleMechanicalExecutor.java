@@ -113,7 +113,8 @@ public final class XinshouTitleMechanicalExecutor {
                  CLICK_PREPARED_POINT,
                  PRESS_ORDINARY_AUTO_COMBAT,
                  CAPTURE_COMBAT,
-                 RESTORE_AUTO_COMBAT ->
+                 RESTORE_AUTO_COMBAT,
+                 MAINTAIN_AUTO_PANEL ->
                      ExecutionResult.failed(ResultCode.INVALID_ACTION);
         };
     }

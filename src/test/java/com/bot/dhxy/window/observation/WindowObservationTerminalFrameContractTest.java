@@ -3,7 +3,6 @@ package com.bot.dhxy.window.observation;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationProtocolValidator;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationAnalysisResult;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationFactType;
-import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPositionValue;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationRequest;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationResponse;
 import com.bot.dhxy.config.WindowIsolationProperties;
@@ -29,6 +28,8 @@ import java.lang.reflect.Field;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -47,15 +48,13 @@ class WindowObservationTerminalFrameContractTest {
     private static final String TASK_RUN = "run-1";
 
     @Test
-    void resolvedBoundWindowPositionIsRetainedAsPositionFactUntilAcknowledged() throws Exception {
-        Fixture fixture = fixture("intent-position-fact");
-        armStableCandidate(fixture);
-        var terminal = fixture.sampler.collect(List.of()).terminalFrames().getFirst();
+    void resolvedBoundWindowPositionUpdatesLocalMemoryWithoutEchoingPositionFact() throws Exception {
+        Fixture fixture = fixture("intent-position-no-echo");
         fixture.sampler.acceptAnalysisResults(List.of(new ObservationAnalysisResult(
-                "analysis-position-fact",
-                "PATHING_COORDINATE_RESOLVED",
-                "coordinate-strip",
-                terminal.intentId(),
+                "pre-combat-coordinate:7",
+                "PRE_COMBAT_COORDINATE_RESOLVED",
+                "pre-combat-coordinate-strip",
+                null,
                 null,
                 null,
                 null,
@@ -64,19 +63,13 @@ class WindowObservationTerminalFrameContractTest {
                 65,
                 null)));
 
-        var firstBatch = fixture.sampler.collect(List.of(), 7L);
-        var fact = firstBatch.facts().stream()
-                .filter(candidate -> candidate.factType() == ObservationFactType.POSITION_SAMPLE)
-                .findFirst()
-                .orElseThrow();
-        ObservationPositionValue position = ObservationPositionValue.decode(fact.value());
-
-        assertEquals("大雁塔四层", position.mapName());
-        assertEquals(24, position.x());
-        assertEquals(65, position.y());
-        fixture.sampler.acknowledgeDeliveredFacts(7L, List.of(fact));
-        assertTrue(fixture.sampler.collect(List.of(), 8L).facts().stream()
-                .noneMatch(candidate -> candidate.factType() == ObservationFactType.POSITION_SAMPLE));
+        var local = fixture.context.getGameState().getMe();
+        assertEquals("大雁塔四层", local.getCurrentMapName());
+        assertEquals(24, local.getX());
+        assertEquals(65, local.getY());
+        assertTrue(fixture.sampler.collect(List.of(), 7L).facts().stream()
+                .noneMatch(candidate -> candidate.factType() == ObservationFactType.POSITION_SAMPLE),
+                "Cloud-recognized coordinates must not make a second Client-to-Cloud trip");
     }
 
     @Test
@@ -400,6 +393,15 @@ class WindowObservationTerminalFrameContractTest {
                     .count();
             altCCount.addAndGet(Math.toIntExact(presses));
             return true;
+        }
+
+        @Override
+        public CompletionStage<Boolean> submitAsync(String description, List<InputAction> actions) {
+            long presses = actions.stream()
+                    .filter(action -> action.getType() == InputActionType.PRESS_ALT_C)
+                    .count();
+            altCCount.addAndGet(Math.toIntExact(presses));
+            return CompletableFuture.completedFuture(true);
         }
     }
 

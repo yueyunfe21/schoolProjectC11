@@ -2,6 +2,7 @@ package com.bot.dhxy.window.observation;
 
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.tools.CoordinateHelper;
 
 import javax.imageio.ImageIO;
@@ -180,6 +181,12 @@ final class XinshouAnchorLocalMechanics {
         try {
             BufferedImage template = templates.computeIfAbsent(probe.path(), this::loadTemplate);
             double[] match = template == null ? null : ImageFinder.find(source, template, THRESHOLD);
+            // 用户铁律（2026-08-18 全量清扫）：模板匹配点落盘判定原图。
+            if (template != null) {
+                MatchEvidenceStore.saveOnChange(
+                        "xinshou-anchor-" + probe.wireValue().replace(".png", ""),
+                        null, source, template, match);
+            }
             Point point = coordinateHelper.resolveMatchedPointInRect(scaled, match);
             return point == null ? null : new Match(point);
         } finally {

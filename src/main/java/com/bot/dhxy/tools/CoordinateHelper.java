@@ -3,6 +3,7 @@ package com.bot.dhxy.tools;
 
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -97,6 +98,8 @@ public class CoordinateHelper {
         String screenPath = tracker.getLatestVisionPath();
 
         double[] result = ImageFinder.find(screenPath, templatePath, matchRate);
+        // 用户铁律（2026-08-18 全量清扫）：模板匹配点落盘判定原图。
+        saveMatchEvidenceFromPaths("coordinate-global-vision", screenPath, templatePath, result);
 
         if (result != null && result.length >= 2) {
             tracker.refreshWindowState();
@@ -109,8 +112,27 @@ public class CoordinateHelper {
         return null;
     }
 
+    /**
+     * 取证辅助（不改判定）：交给 {@link MatchEvidenceStore#saveOnChangeLazy}——先做节流判定，
+     * 确定要落盘了才把原图/模板从磁盘解码回内存；读图失败时工具类内部静默跳过。
+     *
+     * <p>2026-08-21 性能返修：旧实现无条件先做两次磁盘读+PNG 解码（其中原帧就是 ImageFinder
+     * 刚读过的同一个文件，同一张全窗图解码两遍），节流早退的承诺被解码成本架空，还偶发
+     * 边写边读的 IIOException。</p>
+     */
+    private static void saveMatchEvidenceFromPaths(
+            String site, String framePath, String templatePath, double[] thresholdMatch) {
+        MatchEvidenceStore.saveOnChangeLazy(
+                site,
+                null,
+                () -> ImagePreprocessor.pathToBufferedImage(framePath),
+                () -> ImagePreprocessor.pathToBufferedImage(templatePath),
+                thresholdMatch);
+    }
+
     public Point findImageAbsoluteCoordinateByImagePath(String templatePath, String screenPath, double matchRate) {
         double[] result = ImageFinder.find(screenPath, templatePath, matchRate);
+        saveMatchEvidenceFromPaths("coordinate-vision-by-path", screenPath, templatePath, result);
 
         if (result != null && result.length >= 2) {
             tracker.refreshWindowState();
@@ -171,6 +193,7 @@ public class CoordinateHelper {
                     templatePath, roiPath, rect[0], rect[1], rect[2], rect[3], matchRate, e);
             throw e;
         }
+        saveMatchEvidenceFromPaths("coordinate-region-scan", roiPath, templatePath, result);
 
         if (result != null && result.length >= 2) {
             Point absolute = resolveMatchedPointInRect(rect, result);
@@ -216,6 +239,7 @@ public class CoordinateHelper {
         washed.flush();
 
         double[] result = ImageFinder.find(washedScanPath, templatePath, matchRate);
+        saveMatchEvidenceFromPaths("coordinate-green-text", washedScanPath, templatePath, result);
         if (result != null && result.length >= 2) {
             Point absolute = resolveMatchedPointInRect(rect, result);
             log.info("Green text matched [{}] at ({},{})", templatePath, absolute.x, absolute.y);

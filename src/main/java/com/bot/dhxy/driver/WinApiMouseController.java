@@ -107,7 +107,47 @@ public class WinApiMouseController implements InputProvider {
     @Override
     public void moveMouse(int x, int y) {
         traceInput("moveMouse", "x=" + x + " y=" + y);
-        inputCoordinator.runInput("moveMouse", () -> moveCursorToLogicalPoint(x, y));
+        inputCoordinator.runInput("moveMouse", () -> glideCursorToLogicalPoint(x, y));
+    }
+
+    /** Below this physical distance a move stays a single set — a human wrist also jumps 80px. */
+    private static final int GLIDE_MIN_DISTANCE_PX = 80;
+
+    /**
+     * 2026-08-17 user decision: no more single-frame cross-screen teleports anywhere. A long move
+     * glides through 3~6 physical waypoints (roughly 40~150ms total, 1~2px jitter on the middle
+     * points, never on the endpoint); the final step still goes through
+     * {@link #moveCursorToLogicalPoint} with its verify/retry, so every caller's endpoint contract
+     * is byte-for-byte unchanged.
+     */
+    private void glideCursorToLogicalPoint(int x, int y) {
+        double scale = coordinateHelper.getScaleRatio();
+        int targetPhysX = (int) Math.round(x * scale);
+        int targetPhysY = (int) Math.round(y * scale);
+        POINT current = new POINT();
+        if (User32.INSTANCE.GetCursorPos(current)) {
+            double distance = Math.hypot(targetPhysX - current.x, targetPhysY - current.y);
+            if (distance > GLIDE_MIN_DISTANCE_PX) {
+                int steps = (int) Math.min(6L, Math.max(3L, Math.round(distance / 150.0)));
+                int totalMs = (int) Math.min(150L, 40L + Math.round(distance / 12.0));
+                int stepDelayMs = Math.max(8, totalMs / steps);
+                java.util.concurrent.ThreadLocalRandom random =
+                        java.util.concurrent.ThreadLocalRandom.current();
+                for (int step = 1; step < steps; step++) {
+                    int waypointX = current.x
+                            + (int) ((targetPhysX - current.x) * (double) step / steps)
+                            + random.nextInt(-2, 3);
+                    int waypointY = current.y
+                            + (int) ((targetPhysY - current.y) * (double) step / steps)
+                            + random.nextInt(-2, 3);
+                    User32.INSTANCE.SetCursorPos(waypointX, waypointY);
+                    if (!TaskSleep.sleep(stepDelayMs)) {
+                        break;
+                    }
+                }
+            }
+        }
+        moveCursorToLogicalPoint(x, y);
     }
 
     @Override
@@ -296,7 +336,7 @@ public class WinApiMouseController implements InputProvider {
                         + "] endY=" + endY + " step=" + rowStepPx);
         inputCoordinator.runInput("sweepWhileLeftHeld",
                 () -> {
-                    moveCursorToLogicalPoint(startX, startY);
+                    glideCursorToLogicalPoint(startX, startY);
                     TaskSleep.sleep(120);
                     sweepRows(startX, startY, leftX, rightX, endY, rowStepPx);
                 });
@@ -311,7 +351,7 @@ public class WinApiMouseController implements InputProvider {
     }
 
     private void doHoldSweep(int startX, int startY, int leftX, int rightX, int endY, int rowStepPx) {
-        moveCursorToLogicalPoint(startX, startY);
+        glideCursorToLogicalPoint(startX, startY);
         TaskSleep.sleep(120);
         sendInput(buildMouseInput(FLAG_MOUSE_LEFT_DOWN));
         TaskSleep.sleep(150);
@@ -385,7 +425,9 @@ public class WinApiMouseController implements InputProvider {
     }
 
     private void doClick(int x, int y, int delayMs, int downFlag, int upFlag) {
-        moveCursorToLogicalPoint(x, y);
+        // Sequences glide via the MOVE step first, so this set is normally a ~0px no-op; a click
+        // issued WITHOUT a prior move still glides here rather than teleporting across the screen.
+        glideCursorToLogicalPoint(x, y);
         sendInput(buildMouseInput(downFlag));
         TaskSleep.sleep(delayMs);
         sendInput(buildMouseInput(upFlag));

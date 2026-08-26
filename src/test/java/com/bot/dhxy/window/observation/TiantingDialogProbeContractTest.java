@@ -31,6 +31,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -562,6 +564,7 @@ class TiantingDialogProbeContractTest {
                 new WindowTaskContextHolder(new WindowIsolationProperties());
         final RecordingInputSequences inputSequences = new RecordingInputSequences();
         final ScriptedTracker tracker = new ScriptedTracker();
+        final List<ObservationKeyEvent> retainedEvents = new CopyOnWriteArrayList<>();
 
         Fixture() {
             context.setNativeBinding(new WindowNativeBinding(HWND, "t", "c", 88L, 0, 0, 1024, 768));
@@ -630,18 +633,22 @@ class TiantingDialogProbeContractTest {
             List<ObservationKeyEvent> collected = new java.util.ArrayList<>();
             for (int cycle = 0; cycle < cycles; cycle++) {
                 collected.addAll(newSampler().collect(List.of()).events());
+                collected.addAll(retainedEvents);
+                retainedEvents.clear();
             }
             return collected;
         }
 
         private WindowObservationSampler newSampler() {
-            return new WindowObservationSampler(
+            WindowObservationSampler sampler = new WindowObservationSampler(
                     context, contextHolder, tracker, new CoordinateHelper(tracker, null),
                     new DialogService(
                             new GameClientTracker(null, null, null, null, null, null, null, null,
                                     null, null, null),
                             new CoordinateHelper(null, null)),
                     inputSequences, RUN_ID, false);
+            sampler.bindAsyncEventPublisher(retainedEvents::add);
+            return sampler;
         }
 
         private static BufferedImage canvasWith(String templatePath) {
@@ -721,6 +728,13 @@ class TiantingDialogProbeContractTest {
         public boolean moveAndClickLeft(String source, int x, int y, int moveDelayMs, int clickDelayMs) {
             clicks.add(source + "@" + x + "," + y);
             return clickResult;
+        }
+
+        @Override
+        public CompletionStage<Boolean> moveAndClickLeftAsync(
+                String source, int x, int y, int moveDelayMs, int clickDelayMs) {
+            clicks.add(source + "@" + x + "," + y);
+            return CompletableFuture.completedFuture(clickResult);
         }
 
         @Override

@@ -141,6 +141,26 @@ class LocalCombatSignalMechanicsTest {
     }
 
     @Test
+    void savedPartialHudFrameReplaysAbsenceBeforeRecoveredCombatFrame() throws IOException {
+        BufferedImage partial = ImageIO.read(Path.of(
+                "images/test-cases/g098/partial-hud-frame.png").toFile());
+        BufferedImage recovered = ImageIO.read(Path.of(
+                "images/test-cases/g098/recovered-combat-frame.png").toFile());
+        LocalCombatSignalMechanics partialMechanics = savedFrameMechanics(partial);
+        LocalCombatSignalMechanics recoveredMechanics = savedFrameMechanics(recovered);
+        try {
+            assertEquals("ABSENT:none", partialMechanics.sample().wireValue());
+            assertEquals("ABSENT:minimap-visible", partialMechanics.sampleMinimap().wireValue());
+            assertEquals("VISIBLE:combat-flag", recoveredMechanics.sample().wireValue());
+        } finally {
+            partialMechanics.reset();
+            recoveredMechanics.reset();
+            partial.flush();
+            recovered.flush();
+        }
+    }
+
+    @Test
     void samplerCarriesExactlyOneLatestWinsCombatFactWithoutRoi() {
         Fixture fixture = new Fixture(false, false, false, false);
         WindowRuntimeContext context = new WindowRuntimeContext("window", new GameContext());
@@ -253,7 +273,7 @@ class LocalCombatSignalMechanicsTest {
     }
 
     @Test
-    void absentMinimapAndAbsentCombatTemplatesConfirmExitWithoutParkingForever() {
+    void absentMinimapAndAbsentCombatTemplatesRequireTwoConsecutiveFrames() {
         WindowRuntimeContext context = context();
         assertEquals(true, context.registerExpectedCombatEnterClaim(new WindowExpectedCombatEnterClaim(
                 "claim-reciprocal", "run", "business-reciprocal", "XIULUO_V2", "attempt-reciprocal",
@@ -270,9 +290,41 @@ class LocalCombatSignalMechanicsTest {
         sampler.observeLocalCombatTransition(
                 LocalCombatSignalMechanics.Signal.absent(), 2_000L, 2L, events);
 
+        assertEquals(List.of(ObservationKeyEventType.IN_COMBAT),
+                events.stream().map(ObservationKeyEvent::eventType).toList());
+        assertEquals(true, context.isLocalCombatVisible());
+
+        sampler.observeLocalCombatTransition(
+                LocalCombatSignalMechanics.Signal.absent(), 3_000L, 3L, events);
+
         assertEquals(List.of(ObservationKeyEventType.IN_COMBAT, ObservationKeyEventType.COMBAT_EXITED),
                 events.stream().map(ObservationKeyEvent::eventType).toList());
         assertEquals(false, context.isLocalCombatVisible());
+    }
+
+    @Test
+    void combatEvidenceAfterOneDualAbsentResetsExitConfirmation() {
+        WindowRuntimeContext context = context();
+        assertEquals(true, context.registerExpectedCombatEnterClaim(new WindowExpectedCombatEnterClaim(
+                "claim-partial-frame", "run", "business-partial-frame", "XIULUO_V2", "attempt-partial-frame",
+                "window", context.getNativeBinding().getNativeHandle(), "local-template", null)));
+        LocalCombatSignalMechanics mechanics = new LocalCombatSignalMechanics(
+                stage -> image(), path -> image(), (source, template, threshold) -> false);
+        WindowObservationSampler sampler = sampler(context, mechanics);
+        List<ObservationKeyEvent> events = new ArrayList<>();
+
+        sampler.observeLocalCombatTransition(
+                LocalCombatSignalMechanics.Signal.visible("combat-flag"), 1_000L, 1L, events);
+        sampler.observeLocalCombatTransition(
+                LocalCombatSignalMechanics.Signal.absent(), 2_000L, 2L, events);
+        sampler.observeLocalCombatTransition(
+                LocalCombatSignalMechanics.Signal.visible("combat-flag"), 3_000L, 3L, events);
+        sampler.observeLocalCombatTransition(
+                LocalCombatSignalMechanics.Signal.absent(), 4_000L, 4L, events);
+
+        assertEquals(List.of(ObservationKeyEventType.IN_COMBAT),
+                events.stream().map(ObservationKeyEvent::eventType).toList());
+        assertEquals(true, context.isLocalCombatVisible());
     }
 
     private static WindowExpectedCombatEnterClaim claim(
@@ -314,6 +366,25 @@ class LocalCombatSignalMechanicsTest {
 
     private static BufferedImage image() {
         return new BufferedImage(2, 2, BufferedImage.TYPE_3BYTE_BGR);
+    }
+
+    private static LocalCombatSignalMechanics savedFrameMechanics(BufferedImage frame) {
+        return new LocalCombatSignalMechanics(
+                stage -> {
+                    int width = Math.min(stage.width(), frame.getWidth() - stage.left());
+                    int height = Math.min(stage.height(), frame.getHeight() - stage.top());
+                    return width <= 0 || height <= 0
+                            ? null
+                            : frame.getSubimage(stage.left(), stage.top(), width, height);
+                },
+                path -> {
+                    try {
+                        return ImageIO.read(Path.of(path).toFile());
+                    } catch (IOException failure) {
+                        throw new IllegalStateException(failure);
+                    }
+                },
+                (source, template, threshold) -> ImageFinder.find(source, template, threshold) != null);
     }
 
     private static void assertCropSize(

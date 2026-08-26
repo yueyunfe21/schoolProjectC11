@@ -27,11 +27,9 @@ import com.bot.dhxy.runner.stop.TaskPauseToken;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.runner.stop.TaskStopToken;
 import com.bot.dhxy.window.observation.XinshouRecoveryLocalMechanics;
-import com.bot.dhxy.window.observation.XinshouRunnerAutoCombatState;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Objects;
@@ -61,7 +59,6 @@ public final class LocalServiceStepDispatcher {
     private final InputProvider inputProvider;
     private final InputSequences inputSequences;
     private final WindowTaskContextHolder contextHolder;
-    private XinshouRunnerAutoCombatState xinshouRunnerAutoCombatState;
 
     public LocalServiceStepDispatcher(BagLocalOperationExecutor bagAdapter,
                                       UiLocalOperationExecutor uiAdapter,
@@ -104,17 +101,6 @@ public final class LocalServiceStepDispatcher {
         this.inputProvider = Objects.requireNonNull(inputProvider, "inputProvider");
         this.inputSequences = Objects.requireNonNull(inputSequences, "inputSequences");
         this.contextHolder = Objects.requireNonNull(contextHolder, "contextHolder");
-    }
-
-    /**
-     * Direct mechanical-success callback into the already acknowledged Xinshou observation run.
-     * Test fixtures that construct this dispatcher manually remain intentionally unarmed.
-     */
-    @Autowired
-    void bindXinshouRunnerAutoCombatState(
-            XinshouRunnerAutoCombatState xinshouRunnerAutoCombatState) {
-        this.xinshouRunnerAutoCombatState = Objects.requireNonNull(
-                xinshouRunnerAutoCombatState, "xinshouRunnerAutoCombatState");
     }
 
     /**
@@ -179,8 +165,9 @@ public final class LocalServiceStepDispatcher {
                     call, actionPauseToken, actionStopToken, actionTaskStillCurrent);
             case XINSHOU_DRAG_RELEASE -> xinshouDragAdapter.release(actionStopToken);
             case UI_CLEAN_ALL, UI_CLOSE_GENERIC_WINDOWS, UI_PROBE_GENERIC_CLOSE, UI_CLEAN_LIGHTWEIGHT,
-                    UI_CLOSE_MAP_SEARCH_INPUT_BY_X2 -> uiAdapter.execute(call);
-            case QUEST_ACTIVATE, QUEST_CAPTURE_DETAIL -> questAdapter.execute(call, sourceStepIndex);
+                    UI_CLOSE_MAP_SEARCH_INPUT_BY_X2, UI_TAP_CENTER_DISMISS_OVERLAY -> uiAdapter.execute(call);
+            case QUEST_ACTIVATE, QUEST_CAPTURE_DETAIL, QUEST_REFRESH_CURRENT_TAB ->
+                    questAdapter.execute(call, sourceStepIndex);
             case TASK_TRACKER_CAPTURE_PANEL -> {
                 AtomicReference<LocalServiceExecution> result = new AtomicReference<>();
                 boolean completed = inputSequences.submitBackgroundExclusiveAndWait(
@@ -295,16 +282,10 @@ public final class LocalServiceStepDispatcher {
                                 arguments.sourceWindowTop(),
                                 arguments.sourceWindowWidth(),
                                 arguments.sourceWindowHeight()));
-                case RESTORE_AUTO_COMBAT -> {
-                    XinshouCombatLocalMechanics.Result result =
-                            xinshouCombatLocalMechanics.restoreAutoCombatOnce();
-                    if (result.status() == XinshouCombatLocalMechanics.Status.COMPLETED
-                            && xinshouRunnerAutoCombatState != null) {
-                        xinshouRunnerAutoCombatState.arm(
-                                contextHolder.rawCurrent().orElse(null));
-                    }
-                    yield mapCombatResult(action, result);
-                }
+                case RESTORE_AUTO_COMBAT -> mapCombatResult(
+                        action, xinshouCombatLocalMechanics.restoreAutoCombatOnce());
+                case MAINTAIN_AUTO_PANEL -> mapCombatResult(
+                        action, xinshouCombatLocalMechanics.maintainAutoPanelOnce(true));
             };
         } catch (RuntimeException failure) {
             return LocalServiceExecution.failed(
@@ -453,7 +434,8 @@ public final class LocalServiceStepDispatcher {
                  USE_LUNHUI_ITEM_AND_START,
                  PRESS_ESCAPE,
                  PRESS_ORDINARY_AUTO_COMBAT,
-                 RESTORE_AUTO_COMBAT -> arguments.recoveryTemplateName() == null
+                 RESTORE_AUTO_COMBAT,
+                 MAINTAIN_AUTO_PANEL -> arguments.recoveryTemplateName() == null
                     && hasNoPreparedPoint(arguments);
         };
     }

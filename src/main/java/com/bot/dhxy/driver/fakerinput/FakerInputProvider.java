@@ -98,7 +98,7 @@ public class FakerInputProvider implements InputProvider {
 
     @Override
     public void moveMouse(int x, int y) {
-        inputCoordinator.runInput("fakerInput:moveMouse", () -> moveToLogicalPoint(x, y));
+        inputCoordinator.runInput("fakerInput:moveMouse", () -> glideToLogicalPoint(x, y));
     }
 
     @Override
@@ -261,7 +261,7 @@ public class FakerInputProvider implements InputProvider {
     @Override
     public void dragAndDrop(int startX, int startY, int endX, int endY) {
         inputCoordinator.runInput("fakerInput:dragAndDrop", () -> {
-            moveToLogicalPoint(startX, startY);
+            glideToLogicalPoint(startX, startY);
             TaskSleep.sleep(200);
             setMouseButton(BUTTON_LEFT, true);
             try {
@@ -284,7 +284,7 @@ public class FakerInputProvider implements InputProvider {
     public void holdSweepWithoutRelease(
             int startX, int startY, int leftX, int rightX, int endY, int rowStepPx) {
         inputCoordinator.runInput("fakerInput:holdSweep", () -> {
-            moveToLogicalPoint(startX, startY);
+            glideToLogicalPoint(startX, startY);
             TaskSleep.sleep(120);
             setMouseButton(BUTTON_LEFT, true);
             TaskSleep.sleep(150);
@@ -296,7 +296,7 @@ public class FakerInputProvider implements InputProvider {
     public void sweepWhileLeftHeld(
             int startX, int startY, int leftX, int rightX, int endY, int rowStepPx) {
         inputCoordinator.runInput("fakerInput:sweepWhileLeftHeld", () -> {
-            moveToLogicalPoint(startX, startY);
+            glideToLogicalPoint(startX, startY);
             TaskSleep.sleep(120);
             sweepRows(leftX, rightX, startY, endY, rowStepPx);
         });
@@ -319,7 +319,7 @@ public class FakerInputProvider implements InputProvider {
     }
 
     private void click(int x, int y, int button, int delayMs) {
-        moveToLogicalPoint(x, y);
+        glideToLogicalPoint(x, y);
         setMouseButton(button, true);
         try {
             TaskSleep.sleep(Math.max(0, delayMs));
@@ -401,6 +401,59 @@ public class FakerInputProvider implements InputProvider {
                 TaskSleep.sleep(50);
             }
         });
+    }
+
+    /** Same user decision as the WinApi backend (2026-08-17/18): below this a jump is human. */
+    private static final int GLIDE_MIN_DISTANCE_PX = 80;
+
+    /**
+     * Human-like glide for the ACTIVE FakerInput backend — the earlier glide only covered the
+     * inactive WinApi backend, so no visible change reached the game. Long moves ride 3~6 waypoint
+     * HID reports (~40-150ms, 1-2px jitter, never on the endpoint); the final step still goes
+     * through {@link #moveToLogicalPoint} with its verify/retry, so endpoint contracts are unchanged.
+     */
+    private void glideToLogicalPoint(int logicalX, int logicalY) {
+        double scale = coordinateHelper.getScaleRatio();
+        int targetPhysX = (int) Math.round(logicalX * scale);
+        int targetPhysY = (int) Math.round(logicalY * scale);
+        POINT current = new POINT();
+        if (User32.INSTANCE.GetCursorPos(current)) {
+            double distance = Math.hypot(targetPhysX - current.x, targetPhysY - current.y);
+            if (distance > GLIDE_MIN_DISTANCE_PX) {
+                int steps = (int) Math.min(6L, Math.max(3L, Math.round(distance / 150.0)));
+                int totalMs = (int) Math.min(150L, 40L + Math.round(distance / 12.0));
+                int stepDelayMs = Math.max(8, totalMs / steps);
+                java.util.concurrent.ThreadLocalRandom random =
+                        java.util.concurrent.ThreadLocalRandom.current();
+                for (int step = 1; step < steps; step++) {
+                    moveWaypointPhysical(
+                            current.x + (int) ((targetPhysX - current.x) * (double) step / steps)
+                                    + random.nextInt(-2, 3),
+                            current.y + (int) ((targetPhysY - current.y) * (double) step / steps)
+                                    + random.nextInt(-2, 3));
+                    if (!TaskSleep.sleep(stepDelayMs)) {
+                        break;
+                    }
+                }
+            }
+        }
+        moveToLogicalPoint(logicalX, logicalY);
+    }
+
+    /** One unverified waypoint report; only the endpoint needs the converge/verify loop. */
+    private void moveWaypointPhysical(int physX, int physY) {
+        int screenWidth = User32.INSTANCE.GetSystemMetrics(WinUser.SM_CXSCREEN);
+        int screenHeight = User32.INSTANCE.GetSystemMetrics(WinUser.SM_CYSCREEN);
+        if (screenWidth <= 1 || screenHeight <= 1) {
+            return;
+        }
+        int clampedX = Math.max(0, Math.min(physX, screenWidth - 1));
+        int clampedY = Math.max(0, Math.min(physY, screenHeight - 1));
+        synchronized (this) {
+            device.updateAbsoluteMouse(heldMouseButtons,
+                    normalizeAbsoluteCoordinate(clampedX, screenWidth),
+                    normalizeAbsoluteCoordinate(clampedY, screenHeight), 0);
+        }
     }
 
     private void moveToLogicalPoint(int logicalX, int logicalY) {

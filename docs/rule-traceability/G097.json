@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "card": "G097",
+  "changeType": "business",
+  "status": "REVIEW_PASSED",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "5e05a9578a1b6116331def92ec255c27f490b68b",
+    "pushedReference": "origin/dev",
+    "cloudBranch": "dev",
+    "cloudCommit": "b0387a5eb07d714b74400e185bcd875befb8179e",
+    "cloudPushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../DHXY-cloud-brain"
+  },
+  "rules": ["BR-NPC-001"],
+  "affectedPaths": [
+    "docs/业务逻辑.md",
+    "docs/business-rules.json",
+    "docs/rule-traceability/G097.json",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/ACTIVE_WORK.md",
+    "docs/云端迁移常见错误清单.md",
+    "docs/cr-dashboard-data.js",
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/NpcClickMemoryStore.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/SmartClickRecognizer.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/DecisionEngine.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/remote/CloudWholeTaskReadyEventState.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "旧实现用持久化 failureStreak、stale 和 lastOutcome 使已有强验证成功坐标永久失效。",
+    "userDecision": "永久成功坐标只增不减并全栈去重；每次任务启动创建临时工作副本，失败只消耗副本，下一次启动恢复完整永久栈。",
+    "decisionRecordedAt": "2026-08-17",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G097-NPC-成功坐标永久栈与单次启动工作副本2026-08-17"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-NPC-001",
+      "producer": "Client NPC FIFO consumer executes one Cloud candidate and reports the existing verifier outcome with exact taskRunId and scene identity.",
+      "transport": "The existing NPC_CLICK_START/POLL and outcome report contracts carry taskRunId, exact scene fields, click point and verification strength; no protocol field is added.",
+      "consumer": "Cloud NpcClickMemoryStore exclusively appends unique verified-success points, snapshots all persistent stacks once per taskRunId, and SmartClickRecognizer drains the scene working stack before visual strategies.",
+      "ordering": "new taskRunId -> snapshot all permanent scene stacks -> LIFO MEMORY candidate -> verifier failure pops only the working copy and permits next MEMORY -> working copy exhausted -> existing TOOLTIP/YELLOW/PURPLE/CTRL order; verified new coordinate appends only to permanent storage and never rewrites the current run snapshot.",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/NpcClickMemoryStore.java",
+          "command": "rg -n \"taskRunId|successfulPoints|working|lookup\" src/main/java/com/yueyunfe/dhxy/cloudbrain/NpcClickMemoryStore.java",
+          "proves": [
+            "Permanent verified-success points and per-taskRun working copies have separate lifecycles.",
+            "Failure outcomes cannot mutate, invalidate or reorder permanent successful points."
+          ]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/SmartClickRecognizer.java",
+          "command": "rg -n \"MEMORY|clickLearnedMemory|produceQueueMessages\" src/main/java/com/yueyunfe/dhxy/cloudbrain/SmartClickRecognizer.java",
+          "proves": [
+            "All available working MEMORY candidates are emitted before TOOLTIP and later visual strategies.",
+            "The existing FIFO producer barrier still waits for Client verifier failure before producing the next candidate."
+          ]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/remote/CloudWholeTaskReadyEventState.java",
+          "command": "rg -n \"unregisterObservationRun|cancelNpcArrivalFrameRun|getTaskRunId\" src/main/java/com/yueyunfe/dhxy/cloudbrain/remote/CloudWholeTaskReadyEventState.java src/main/java/com/yueyunfe/dhxy/cloudbrain/DecisionEngine.java",
+          "proves": [
+            "Task terminal unregister retires only the exact taskRun working copy.",
+            "Permanent successful coordinates remain owned by NpcClickMemoryStore and survive run cleanup."
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {
+      "name": "business-rule-gate",
+      "result": "PASS",
+      "evidence": "node scripts/check-business-rule-gate.js --card G097"
+    },
+    {
+      "name": "isolated-production-compile",
+      "result": "PASS",
+      "evidence": "Java 21 javac compiled NpcClickMemoryStore, SmartClickRecognizer, DecisionEngine and CloudWholeTaskReadyEventState to %TEMP%/dhxy-cloud-g097-classes-final using target/dependency-classpath.txt; active target/classes was untouched."
+    },
+    {
+      "name": "static-lifecycle-review",
+      "result": "PASS",
+      "evidence": "Two static passes confirmed append-only coordinate uniqueness, per-taskRun LIFO isolation, producer-barrier ordering, legacy strong-success normalization, failure non-persistence and exact terminal cleanup; P0/P1/P2=0/0/0."
+    },
+    {
+      "name": "diff-check",
+      "result": "PASS",
+      "evidence": "git diff --check passed in DHXY-cloud-brain and DHXY-cr271."
+    }
+  ]
+}

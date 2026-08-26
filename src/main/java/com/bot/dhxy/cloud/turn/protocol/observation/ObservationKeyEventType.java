@@ -35,5 +35,11 @@ public enum ObservationKeyEventType {
      * One exact recovery-probe frame was available, but none of 天庭's seven known options matched.
      * This is the only event that authorizes the Cloud's generic dialog fallback.
      */
-    TIANTING_RECOVERY_ALL_MISSED
+    TIANTING_RECOVERY_ALL_MISSED,
+    /**
+     * The local runner watched the auto-combat panel disappear during combat, pressed one Alt+8
+     * itself, and verified the panel is visible again. The Cloud consumes this edge only to reset
+     * its remaining-rounds ledger; the physical repair has already happened locally.
+     */
+    AUTO_PANEL_MAINTAINED
 }

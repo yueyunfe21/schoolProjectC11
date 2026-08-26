@@ -71,8 +71,10 @@ class XinshouObservationPassiveSourceContractTest {
                 sampler, "private void sampleXiuluoLocalKanda(");
         String withoutNonXinshouMechanicalInput = withoutMethod(
                 withoutSanctionedKandaInput, "private void sampleTiantingDialogProbe(");
+        String withoutAllSanctionedMechanicalInput = withoutMethod(
+                withoutNonXinshouMechanicalInput, "private void sampleGhostKingChangshouFlightAssist(");
 
-        assertPassive(withoutNonXinshouMechanicalInput,
+        assertPassive(withoutAllSanctionedMechanicalInput,
                 "observation sampler outside the explicitly sanctioned non-Xinshou mechanical methods");
     }
 

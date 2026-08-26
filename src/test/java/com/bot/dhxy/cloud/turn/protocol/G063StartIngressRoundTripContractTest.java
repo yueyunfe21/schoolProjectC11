@@ -22,7 +22,8 @@ class G063StartIngressRoundTripContractTest {
         TurnTaskRuntimeSettings settings = new TurnTaskRuntimeSettings(
                 false, 1_200_000L, 7_200_000L, 0L,
                 false, true, false, false, false, true,
-                true, 70, true, 70, true, 70, false, 70);
+                true, 70, true, 70, true, 70, false, 70,
+                TurnTaskRuntimeSettings.LEADER_DEATH_RECOVERY_REACCEPT_TASK);
         TurnWindowMetadata window = new TurnWindowMetadata(
                 "dhxy-client", windowId, "Classic Client", "12345", 6789L,
                 new TurnWindowRect(0, 0, 1036, 783), false, false, null,

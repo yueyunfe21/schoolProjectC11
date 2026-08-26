@@ -198,6 +198,13 @@ public final class BagLocalOperationExecutor {
         if (call.bag() == null || call.ui() != null || call.giveItem() != null || call.quest() != null) {
             return LocalServiceExecution.failed("INVALID_BAG_ARGUMENTS", null);
         }
+        if (windowTaskContextHolder.rawCurrent()
+                .map(context -> context.isLocalCombatVisible())
+                .orElse(false)) {
+            // This is the final physical-input gate. Cloud phase recovery may lag behind the exact
+            // Runner state, but a return-item macro must never open the bag during combat.
+            return LocalServiceExecution.failed("LOCAL_COMBAT_ACTIVE", null);
+        }
 
         BagReturnItemMacroIntent intent;
         try {

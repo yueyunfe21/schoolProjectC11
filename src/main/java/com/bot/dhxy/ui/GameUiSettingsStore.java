@@ -1,6 +1,7 @@
 package com.bot.dhxy.ui;
 
 import com.bot.dhxy.config.BotProperties;
+import com.bot.dhxy.cloud.turn.protocol.TurnTaskRuntimeSettings;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -42,6 +43,7 @@ public class GameUiSettingsStore {
     private static final String MEMBER_COMMON_BOX_ENABLED = "memberCommonBoxEnabled";
     private static final String TASK_STARTUP_PREPARATION_ENABLED = "taskStartupPreparationEnabled";
     private static final String XIULUO_SKIP_BOSS_ENABLED = "xiuluoSkipBossEnabled";
+    private static final String LEADER_DEATH_RECOVERY_MODE = "leaderDeathRecoveryMode";
     private static final String DOUBLE_EXPERIENCE_CLAIM_ENABLED = "doubleExperienceClaimEnabled";
     private static final String PLAYER_HP_SUPPLY_ENABLED = "playerHpSupplyEnabled";
     private static final String PLAYER_HP_SUPPLY_THRESHOLD = "playerHpSupplyThreshold";
@@ -93,6 +95,8 @@ public class GameUiSettingsStore {
         botProperties.setTaskStartupPreparationEnabled(readBoolean(properties, TASK_STARTUP_PREPARATION_ENABLED, botProperties.isTaskStartupPreparationEnabled()));
         botProperties.setXiuluoSkipBossEnabled(readBoolean(
                 properties, XIULUO_SKIP_BOSS_ENABLED, botProperties.isXiuluoSkipBossEnabled()));
+        botProperties.setLeaderDeathRecoveryMode(readLeaderDeathRecoveryMode(
+                properties, botProperties.getLeaderDeathRecoveryMode()));
         botProperties.setDoubleExperienceClaimEnabled(readBoolean(
                 properties, DOUBLE_EXPERIENCE_CLAIM_ENABLED, botProperties.isDoubleExperienceClaimEnabled()));
         botProperties.setPlayerHpSupplyEnabled(readBoolean(properties, PLAYER_HP_SUPPLY_ENABLED, botProperties.isPlayerHpSupplyEnabled()));
@@ -136,6 +140,7 @@ public class GameUiSettingsStore {
         properties.setProperty(MEMBER_COMMON_BOX_ENABLED, String.valueOf(botProperties.isMemberCommonBoxEnabled()));
         properties.setProperty(TASK_STARTUP_PREPARATION_ENABLED, String.valueOf(botProperties.isTaskStartupPreparationEnabled()));
         properties.setProperty(XIULUO_SKIP_BOSS_ENABLED, String.valueOf(botProperties.isXiuluoSkipBossEnabled()));
+        properties.setProperty(LEADER_DEATH_RECOVERY_MODE, String.valueOf(botProperties.getLeaderDeathRecoveryMode()));
         properties.setProperty(DOUBLE_EXPERIENCE_CLAIM_ENABLED, String.valueOf(botProperties.isDoubleExperienceClaimEnabled()));
         properties.setProperty(PLAYER_HP_SUPPLY_ENABLED, String.valueOf(botProperties.isPlayerHpSupplyEnabled()));
         properties.setProperty(PLAYER_HP_SUPPLY_THRESHOLD, String.valueOf(botProperties.getPlayerHpSupplyThreshold()));
@@ -177,5 +182,18 @@ public class GameUiSettingsStore {
     private boolean readBoolean(Properties properties, String key, boolean fallback) {
         String value = properties.getProperty(key);
         return value == null || value.isBlank() ? fallback : Boolean.parseBoolean(value.trim());
+    }
+
+    /** 只接受两条约定线路；配置文件被手改坏时退回内存现值，绝不把非法值发给云端。 */
+    private String readLeaderDeathRecoveryMode(Properties properties, String fallback) {
+        String value = properties.getProperty(LEADER_DEATH_RECOVERY_MODE);
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        String normalized = value.trim().toUpperCase(java.util.Locale.ROOT);
+        return TurnTaskRuntimeSettings.LEADER_DEATH_RECOVERY_CONTINUE_TASK.equals(normalized)
+                        || TurnTaskRuntimeSettings.LEADER_DEATH_RECOVERY_REACCEPT_TASK.equals(normalized)
+                ? normalized
+                : fallback;
     }
 }

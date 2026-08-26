@@ -242,38 +242,6 @@ class XinshouCombatLocalMechanicsTest {
         assertEquals(1, port.executionCount);
     }
 
-    @Test
-    void runnerMaintenanceDoesNotPressAlt8WhenPanelIsAlreadyVisible() {
-        FakeExactWindowPort port = new FakeExactWindowPort();
-        port.panelVisibility =
-                XinshouCombatLocalMechanics.PanelVisibility.VISIBLE;
-        XinshouCombatLocalMechanics mechanics = new XinshouCombatLocalMechanics(port);
-
-        XinshouCombatLocalMechanics.Result result =
-                mechanics.maintainRunnerAutoCombatOnce();
-
-        assertEquals(XinshouCombatLocalMechanics.Status.COMPLETED, result.status());
-        assertEquals(List.of("PROBE"), port.events);
-        assertEquals(List.of("BACKGROUND"), port.executionModes);
-    }
-
-    @Test
-    void runnerMaintenancePressesOneAlt8AndRequiresVisibleRecheck() {
-        FakeExactWindowPort port = new FakeExactWindowPort();
-        port.panelResults.add(XinshouCombatLocalMechanics.PanelVisibility.ABSENT);
-        port.panelResults.add(XinshouCombatLocalMechanics.PanelVisibility.VISIBLE);
-        XinshouCombatLocalMechanics mechanics = new XinshouCombatLocalMechanics(port);
-
-        XinshouCombatLocalMechanics.Result result =
-                mechanics.maintainRunnerAutoCombatOnce();
-
-        assertEquals(XinshouCombatLocalMechanics.Status.COMPLETED, result.status());
-        assertEquals(
-                List.of("PROBE", "ALT_8", "WAIT:500", "PROBE"),
-                port.events);
-        assertEquals(List.of("BACKGROUND"), port.executionModes);
-    }
-
     private static final class FakeExactWindowPort
             implements XinshouCombatLocalMechanics.ExactWindowPort,
             XinshouCombatLocalMechanics.ExactWindowSession {

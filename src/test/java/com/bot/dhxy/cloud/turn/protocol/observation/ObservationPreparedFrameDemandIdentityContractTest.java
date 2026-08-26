@@ -35,7 +35,7 @@ class ObservationPreparedFrameDemandIdentityContractTest {
     private static ObservationRequest request() {
         return new ObservationRequest(
                 ObservationProtocolValidator.CONTRACT_VERSION,
-                "tenant-1", "device-1", "window-1", "12345", "WUHuan_V2", "run-1",
+                "tenant-1", "device-1", "window-1", "12345", "WUHUAN_V3", "run-1",
                 1L, System.currentTimeMillis(), 0L,
                 null, null, null, "test", null,
                 List.of(), List.of(), List.of(), List.of());

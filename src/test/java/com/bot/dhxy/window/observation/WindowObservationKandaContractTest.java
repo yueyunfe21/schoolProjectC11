@@ -23,6 +23,8 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -539,6 +541,13 @@ class WindowObservationKandaContractTest {
         public boolean moveAndClickLeft(String description, int x, int y, int settleMs, int delayMs) {
             clicks.add(new Click(description, x, y, settleMs, delayMs));
             return clickResult;
+        }
+
+        @Override
+        public CompletionStage<Boolean> moveAndClickLeftAsync(
+                String description, int x, int y, int settleMs, int delayMs) {
+            clicks.add(new Click(description, x, y, settleMs, delayMs));
+            return CompletableFuture.completedFuture(clickResult);
         }
     }
 }

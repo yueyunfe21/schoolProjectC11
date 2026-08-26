@@ -33,11 +33,12 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * TURN-40G: one resident observation runner per Cloud-acknowledged window. The runner communicates exclusively over
  * the independent observation plane — it never touches the turn command slot and never focuses a window. Its sampler
- * performs exact-HWND background ROI capture and local mechanical state detection but no input. It maintains a
- * monotonic {@code observerSeq}, keeps at most one
- * request in flight by construction (a single worker thread with synchronous sends), retains key events until the
- * Cloud acknowledges them, parks at a slow heartbeat when the Cloud has issued no interests, and treats transport
- * failure as transport failure only — never as a business fact.
+ * performs exact-HWND capture and may enqueue fenced input intents, but the global input worker alone executes them.
+ * It maintains a
+ * monotonic {@code observerSeq}, keeps at most one request in flight, and retains key events until the Cloud
+ * acknowledges them. Physical observation and HTTPS transport are separate lanes: a slow Cloud response can
+ * delay the next upload but can never stop local combat/pathing sampling. Transport failure remains transport
+ * failure only — never a business fact.
  */
 public final class WindowObservationRunner {
 
@@ -73,11 +74,16 @@ public final class WindowObservationRunner {
     /** Prevents an in-flight response for the previous queue child from committing into the new child. */
     private final AtomicLong taskBindingRevision = new AtomicLong();
     private final AtomicBoolean running = new AtomicBoolean(false);
+    /** One transport/batch cycle at a time; the resident observation thread never waits for it. */
+    private final AtomicBoolean transportCycleRunning = new AtomicBoolean(false);
+    /** G103-CR3：transport 期间到达的状态变化需要在 transport 结束后补一次定点唤醒。 */
+    private final AtomicBoolean followupAfterTransport = new AtomicBoolean(false);
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
     private final AtomicBoolean retainStateOnStop = new AtomicBoolean(false);
     private final AtomicLong observerSeq = new AtomicLong();
 
     private volatile Thread workerThread;
+    private volatile Thread transportThread;
     private volatile long interestRevision;
     private volatile List<ObservationInterest> interests = List.of();
     private volatile long lastTransportFailureAtMs;
@@ -199,6 +205,11 @@ public final class WindowObservationRunner {
             if (!running.compareAndSet(false, true)) {
                 throw new IllegalStateException("observation runner is already running for windowId=" + windowId);
             }
+            if (transportCycleRunning.get()) {
+                running.set(false);
+                throw new IllegalStateException("previous observation transport is still running for windowId="
+                        + windowId);
+            }
             synchronized (taskBindingMonitor) {
                 retainStateOnStop.set(false);
                 stopRequested.set(false);
@@ -253,6 +264,10 @@ public final class WindowObservationRunner {
             if (thread != null) {
                 thread.interrupt();
             }
+            Thread transport = transportThread;
+            if (transport != null) {
+                transport.interrupt();
+            }
         }
         synchronized (taskBindingMonitor) {
             if (inFlightSendCancellation != null) {
@@ -274,7 +289,7 @@ public final class WindowObservationRunner {
         }
         long deadlineNanos = System.nanoTime() + timeout.toNanos();
         synchronized (lifecycleMonitor) {
-            while (running.get()) {
+            while (running.get() || transportCycleRunning.get()) {
                 long remainingNanos = deadlineNanos - System.nanoTime();
                 if (remainingNanos <= 0L) {
                     return false;
@@ -339,6 +354,7 @@ public final class WindowObservationRunner {
                 startupScreenObservationPending = true;
                 startupCombatObservationPending = true;
                 lastSuccessfulSendAtMs = 0L;
+                lastTransportFailureAtMs = 0L;
                 if (sampler != null) {
                     sampler.reset();
                 }
@@ -401,7 +417,21 @@ public final class WindowObservationRunner {
      * The wake carries no business fact by itself; the next sampler pass reads the authoritative runtime state.
      */
     public void wakeForLocalStateChange() {
+        /*
+         * G103-CR3/CR5 P1（wake 竞态）：状态变化发生在 transport 仍 running 时（如 sendOnce 在
+         * transport 线程上处理回包、发现新 demand 并调用本方法），runLoop 被吵醒后只能做
+         * physical-only 一拍又睡回去；transport 随后结束但（按 G103 纪律）不再无条件唤醒——
+         * parked 态下新 demand 最坏拖满 5s。置位 followupAfterTransport，由 transport 的
+         * finally 在清掉 running 之后【有条件】补一次定点唤醒。
+         *
+         * CR5 原子化：running 检查+置标志与 finally 的清 running+消费标志共用 pacer 同一
+         * 同步边界——不存在"读到 running=true 但旧 transport 已清并消费过标志"的交错，
+         * 不会把 stale 标志遗留给下一次 transport。
+         */
         synchronized (pacer) {
+            if (transportCycleRunning.get()) {
+                followupAfterTransport.set(true);
+            }
             wakePending = true;
             pacer.notifyAll();
         }
@@ -411,7 +441,15 @@ public final class WindowObservationRunner {
         log.info("Observation runner started: deviceId={} windowId={} taskRunId={}", deviceId, windowId, taskRunId);
         try {
             while (!stopRequested.get() && !Thread.currentThread().isInterrupted()) {
-                sendOnce();
+                if (sampler != null) {
+                    // G103：把本拍的有效采样周期喂给共享帧限频门（战斗 1s / 寻路 300ms / 五倍 100ms）。
+                    sampler.setEffectiveSharedFramePeriodMs(currentPeriodMs());
+                }
+                if (transportCycleRunning.get()) {
+                    samplePhysicalStateWhileTransportRuns();
+                } else {
+                    startTransportCycle();
+                }
                 pace();
             }
         } catch (RuntimeException unexpected) {
@@ -458,6 +496,7 @@ public final class WindowObservationRunner {
                 retainedPreparedFrame = null;
                 deliveredPreparedFrameIdentity = null;
                 lastSuccessfulSendAtMs = 0L;
+                lastTransportFailureAtMs = 0L;
                 lastDeliveredPathingFact = null;
             }
         }
@@ -510,6 +549,10 @@ public final class WindowObservationRunner {
                     || !Objects.equals(retained.demandId(), demand.demandId())
                     || retained.generation() != demand.generation()) {
                 try {
+                    if (sampler != null && demand.purpose() != null
+                            && demand.purpose().contains("dialog")) {
+                        // disabled 2026-08-17 pending no-focus rework
+                    }
                     retained = preparedFrameCapture.capture(demand);
                     synchronized (taskBindingMonitor) {
                         if (stopRequested.get()
@@ -610,8 +653,16 @@ public final class WindowObservationRunner {
         String currentIntentId = pathingFactsForThisRequest.isEmpty()
                 ? null : pathingFactsForThisRequest.get(0).intentId();
         long nowMs = System.currentTimeMillis();
-        boolean heartbeatDue = lastSuccessfulSendAtMs <= 0L
-                || nowMs - lastSuccessfulSendAtMs >= parkedHeartbeatPeriodMs;
+        /*
+         * G103-CR6 P1：发送门本身锚 max(成功, 失败/拒收)。只靠 pace 的完成锚不够——runLoop 先
+         * startTransportCycle 再 pace，慢失败在 pace 计算之后才完成时，失败锚来不及约束下一拍，
+         * 下一次 HTTP 已经发出（实测 parked 800ms 档失败→下一请求仅隔 15-17ms）。把 backoff 门
+         * 放在真正调用 client.send 之前：无论 tick 以什么时序到达，无载荷发送距上一次完成
+         * （成功或失败）至少一个 parked 周期；有载荷发送仍按采样节奏走（capture 门已限频）。
+         */
+        long sendCompletionAnchorMs = Math.max(lastSuccessfulSendAtMs, lastTransportFailureAtMs);
+        boolean heartbeatDue = sendCompletionAnchorMs <= 0L
+                || nowMs - sendCompletionAnchorMs >= parkedHeartbeatPeriodMs;
         boolean immediatePathingSend = pathingFactsForThisRequest.stream()
                 .anyMatch(fact -> requiresImmediatePathingSend(fact, lastDeliveredPathingFact));
         boolean hasImmediatePayload = !factsForThisRequest.isEmpty()
@@ -705,7 +756,8 @@ public final class WindowObservationRunner {
             }
             synchronized (samplerMonitor) {
                 synchronized (taskBindingMonitor) {
-                    if (taskBindingRevision.get() != requestTaskBindingRevision) {
+                    if (stopRequested.get()
+                            || taskBindingRevision.get() != requestTaskBindingRevision) {
                         log.info("Observation response ignored after child task rebind: windowId={} taskRunId={} "
                                         + "requestTaskCode={} currentTaskCode={} observerSeq={} "
                                         + "requestBindingRevision={} currentBindingRevision={}",
@@ -727,7 +779,13 @@ public final class WindowObservationRunner {
                                     windowId, taskRunId, requestObserverSeq, response.acceptedObserverSeq(),
                                     !preparedFramesForThisRequest.isEmpty(), failures);
                         }
-                        wakeForLocalStateChange();
+                        /*
+                         * G103-CR5 P1：这里原来 wakeForLocalStateChange() 立即重试——云端连续低
+                         * acceptedObserverSeq 时每个回包都唤醒，绕过全部 deadline 形成 HTTP/collect
+                         * 唤醒热循环。重试改交给 pace 的节奏/失败锚 deadline（失败已记
+                         * lastTransportFailureAtMs），下一次尝试按 cadence/backoff 到点自然发生；
+                         * 保留的 payload/事件在那一拍原样重传。
+                         */
                         return;
                     }
                     boolean carriedPreparedFrame = !preparedFramesForThisRequest.isEmpty();
@@ -762,6 +820,15 @@ public final class WindowObservationRunner {
                                 windowId, taskRunId, request.observerSeq(), interestRevision,
                                 interests.stream().map(ObservationInterest::interestKey).toList());
                     }
+                    /*
+                     * G103-CR2/CR3 P2：只有兴趣集把【真实有效节奏】变快才定点唤醒（如 parked 5s
+                     * 心跳切战斗 1s）。有效节奏按 currentPeriodMs 同规则计算（parked/寻路车道/MIN
+                     * 钳制）；变慢/等速/仅修订号变化不唤醒——多余唤醒只会喂 transport/collect 热循环。
+                     */
+                    if (shouldWakeForAppliedInterests(previousInterests, interests,
+                            parkedHeartbeatPeriodMs, localLanePeriodMs())) {
+                        wakeForLocalStateChange();
+                    }
                     ObservationPreparedFrameDemand previousDemand = preparedFrameDemand;
                     ObservationPreparedFrameDemand nextDemand = response.preparedFrameDemands().isEmpty()
                             ? null : response.preparedFrameDemands().getFirst();
@@ -775,15 +842,16 @@ public final class WindowObservationRunner {
                             || retainedPreparedFrame.generation() != nextDemand.generation())) {
                         retainedPreparedFrame = null;
                     }
-                    if (nextDemand != null) {
-                        if (previousDemand == null
-                                || !Objects.equals(previousDemand.demandId(), nextDemand.demandId())
-                                || previousDemand.generation() != nextDemand.generation()) {
-                            log.info("Prepared-frame demand received: windowId={} taskRunId={} observerSeq={} "
-                                            + "demandId={} purpose={} generation={} issuedAtMs={}",
-                                    windowId, taskRunId, request.observerSeq(), nextDemand.demandId(),
-                                    nextDemand.purpose(), nextDemand.generation(), nextDemand.issuedAtMs());
-                        }
+                    /*
+                     * G103-CR2 P2：只有【新到/换代】的 demand 才定点唤醒。同一 demand 在后续回包里
+                     * 反复出现（客户端尚未交付前云端每次都会重发）不再唤醒——重试按正常采样节奏走，
+                     * 否则每次回包都 wake，形成回包驱动的 transport/collect 热循环。
+                     */
+                    if (isNewPreparedFrameDemand(previousDemand, nextDemand)) {
+                        log.info("Prepared-frame demand received: windowId={} taskRunId={} observerSeq={} "
+                                        + "demandId={} purpose={} generation={} issuedAtMs={}",
+                                windowId, taskRunId, request.observerSeq(), nextDemand.demandId(),
+                                nextDemand.purpose(), nextDemand.generation(), nextDemand.issuedAtMs());
                         wakeForLocalStateChange();
                     }
                     if (sampler != null) {
@@ -817,7 +885,8 @@ public final class WindowObservationRunner {
             // latest state, and simply try again on the next cycle.
             synchronized (samplerMonitor) {
                 synchronized (taskBindingMonitor) {
-                    if (taskBindingRevision.get() != requestTaskBindingRevision) {
+                    if (stopRequested.get()
+                            || taskBindingRevision.get() != requestTaskBindingRevision) {
                         wakeForLocalStateChange();
                         return;
                     }
@@ -830,6 +899,25 @@ public final class WindowObservationRunner {
                                 windowId, taskRunId, request.observerSeq(), interestRevision, interests.size(),
                                 roisForThisRequest.size(), failures, transportFailure.kind(),
                                 transportFailure.getMessage());
+                        // 2026-08-23 21:19 事故取证：400 semantic 拒收时必须能看到被拒批里
+                        // pathing 事实的完整形态，否则只有云端一句校验文案，无法定位写家。
+                        if (transportFailure.kind() == ObservationTransportException.Kind.HTTP_STATUS
+                                && transportFailure.getMessage() != null
+                                && transportFailure.getMessage().contains("INVALID_OBSERVATION_REQUEST")
+                                && !pathingFactsForThisRequest.isEmpty()) {
+                            ObservationPathingFact rejected = pathingFactsForThisRequest.getFirst();
+                            log.warn("[observation] rejected batch pathing fact: windowId={} intentId={} state={} "
+                                            + "transition={} type={} current={}({}, {}) target={}({}, {}) "
+                                            + "frameId={} frameGen={} startedAt={} updatedAt={} locChangedAt={} "
+                                            + "terminalFrames={}",
+                                    windowId, rejected.intentId(), rejected.state(), rejected.transition(),
+                                    rejected.pathingType(), rejected.currentMapName(), rejected.currentX(),
+                                    rejected.currentY(), rejected.targetMapName(), rejected.targetX(),
+                                    rejected.targetY(), rejected.terminalFrameId(),
+                                    rejected.terminalFrameGeneration(), rejected.pathingStartedAtMs(),
+                                    rejected.pathingUpdatedAtMs(), rejected.locationChangedAtMs(),
+                                    terminalFramesForThisRequest.size());
+                        }
                     }
                     /*
                      * A semantic 400 is not a transient transport hiccup: identical content can never
@@ -845,6 +933,69 @@ public final class WindowObservationRunner {
                     }
                 }
             }
+        }
+    }
+
+    private void startTransportCycle() {
+        if (!transportCycleRunning.compareAndSet(false, true)) {
+            return;
+        }
+        Thread thread = new Thread(() -> {
+            try {
+                sendOnce();
+            } catch (RuntimeException unexpected) {
+                if (!stopRequested.get()) {
+                    log.error("Observation transport cycle failed unexpectedly: windowId={} type={} message={}",
+                            windowId, unexpected.getClass().getSimpleName(), unexpected.getMessage(), unexpected);
+                }
+            } finally {
+                transportThread = null;
+                /*
+                 * G103（2026-08-25 用户确认）：这里原来无条件 wakeForLocalStateChange()——每次
+                 * HTTPS 回包一到就跳过 pace() 直接开下一轮，采样节奏被回包速度接管（实测队长窗
+                 * 5.7 次整窗 PrintWindow/秒）。回包完成本身不是状态变化，无条件唤醒已删。
+                 *
+                 * G103-CR3/CR5 P1：唯一例外是【transport 期间】到达过定点唤醒（followupAfterTransport
+                 * 置位）——那次唤醒只换来一拍 physical-only，携带新 demand/新状态的下一次 transport
+                 * 还没被安排。清 running 与消费标志在 pacer 同一同步边界内完成（与
+                 * wakeForLocalStateChange 的检查+置位原子互斥），补一次唤醒且仅此一次；
+                 * 无状态变化的回包依然零唤醒。
+                 */
+                synchronized (pacer) {
+                    transportCycleRunning.set(false);
+                    if (followupAfterTransport.compareAndSet(true, false)) {
+                        wakePending = true;
+                        pacer.notifyAll();
+                    }
+                }
+                synchronized (lifecycleMonitor) {
+                    lifecycleMonitor.notifyAll();
+                }
+            }
+        }, "dhxy-observe-transport-" + windowId);
+        thread.setDaemon(true);
+        transportThread = thread;
+        try {
+            thread.start();
+        } catch (RuntimeException | Error startFailure) {
+            transportThread = null;
+            transportCycleRunning.set(false);
+            throw startFailure;
+        }
+    }
+
+    private void samplePhysicalStateWhileTransportRuns() {
+        if (sampler == null) {
+            return;
+        }
+        try {
+            synchronized (samplerMonitor) {
+                sampler.collectPhysicalStateOnly(observerSeq.get());
+            }
+        } catch (RuntimeException sampleFailure) {
+            log.debug("Physical observation continued with one failed tick while transport is in flight: "
+                            + "windowId={} observerSeq={} message={}",
+                    windowId, observerSeq.get(), sampleFailure.getMessage());
         }
     }
 
@@ -864,8 +1015,7 @@ public final class WindowObservationRunner {
     }
 
     private boolean observesWuhuan(String exactTaskCode) {
-        return "WUHUAN_V2".equalsIgnoreCase(exactTaskCode)
-                || "WUHUAN_V3".equalsIgnoreCase(exactTaskCode);
+        return "WUHUAN_V3".equalsIgnoreCase(exactTaskCode);
     }
 
     /**
@@ -909,6 +1059,35 @@ public final class WindowObservationRunner {
 
     private void pace() {
         long periodMs = currentPeriodMs();
+        /*
+         * G103-CR P1：绝对采样 deadline。等待时长不是固定一个周期，而是"距上次共享帧捕获满一个
+         * 周期还剩多久"——周期末尾被定点 wake 提前吵醒过的拍，下一次等待自动缩短到剩余量，
+         * 捕获间隔上界就是 periodMs 本身（旧行为最坏 ~1.9×周期）。无帧（清屏/捕获失败/静默成员）
+         * 时回退整周期，避免失败自旋。
+         */
+        long waitMs = periodMs;
+        if (sampler != null) {
+            // 单调时钟（nanoTime 派生），与 sampler 记录捕获时刻同源；NTP/墙钟跳变免疫。
+            waitMs = paceWaitMs(periodMs, sampler.sharedCycleFrameCapturedAtMs(),
+                    WindowObservationSampler.monotonicMillis());
+        }
+        /*
+         * G103-CR3/CR5：双锚 deadline。捕获 deadline 锚在捕获时刻，而 sendOnce 的心跳判据锚在
+         * "上次成功发送"（晚一个处理间隙）——只按捕获锚起搏时，每个 parked tick 都恰好早到
+         * 几十毫秒被 skip-send 守卫拦下，心跳被系统性拖向 2×parked。取两个 deadline 的较早者；
+         * 心跳唤起的 tick 里共享帧门会复用现帧，不产生额外 PrintWindow。
+         *
+         * CR5 P1（失败热循环）：①transport in-flight 时心跳 deadline 完全退出 pace——反正不能
+         * 再发，只按物理采样 deadline 起搏，不许 physical-only 自旋；②完成后锚取
+         * max(上次成功, 上次失败/拒收)——心跳逾期期间一次失败后，下一次尝试至少再等一个
+         * parked 周期（失败即 backoff），过期成功锚不再直接放行立即重试。失败记录本身已被
+         * taskBindingRevision 守卫（rebind 后的旧回包在记录前早退），reset 链清零两锚。
+         */
+        if (!transportCycleRunning.get()) {
+            long completionAnchorMs = Math.max(lastSuccessfulSendAtMs, lastTransportFailureAtMs);
+            waitMs = Math.min(waitMs,
+                    heartbeatWaitMs(parkedHeartbeatPeriodMs, completionAnchorMs, System.currentTimeMillis()));
+        }
         synchronized (pacer) {
             if (stopRequested.get()) {
                 return;
@@ -917,8 +1096,12 @@ public final class WindowObservationRunner {
                 wakePending = false;
                 return;
             }
+            if (waitMs <= 0L) {
+                // 捕获 deadline 已到期：立即进入下一拍（下一拍必然重拍共享帧，capturedAt 前移）。
+                return;
+            }
             try {
-                pacer.wait(periodMs);
+                pacer.wait(waitMs);
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
             }
@@ -926,19 +1109,90 @@ public final class WindowObservationRunner {
         }
     }
 
+    /**
+     * G103-CR 合同点：本拍应当等待的毫秒数。{@code capturedAtMs<=0}（无共享帧）等满整周期；
+     * 有帧时等到"捕获时刻+周期"的绝对 deadline，且永不超过一个整周期。到期返回 {@code <=0}。
+     */
+    static long paceWaitMs(long periodMs, long capturedAtMs, long nowMs) {
+        if (capturedAtMs <= 0L) {
+            return periodMs;
+        }
+        return Math.min(periodMs, capturedAtMs + periodMs - nowMs);
+    }
+
+    /**
+     * G103-CR3 合同点：距 parked 心跳 deadline（上次成功发送+parked 周期，墙钟锚）的剩余毫秒，
+     * 上界一个 parked 周期。从未发送过（{@code lastSuccessfulSendAtMs<=0}）返回整周期——
+     * 首拍本来就会立即发送。
+     */
+    static long heartbeatWaitMs(long parkedHeartbeatPeriodMs, long lastSuccessfulSendAtMs, long nowWallMs) {
+        if (lastSuccessfulSendAtMs <= 0L) {
+            return parkedHeartbeatPeriodMs;
+        }
+        return Math.min(parkedHeartbeatPeriodMs,
+                lastSuccessfulSendAtMs + parkedHeartbeatPeriodMs - nowWallMs);
+    }
+
+    /**
+     * G103-CR2/CR3 合同点：仅当应用的兴趣集把【真实有效节奏】变快时才定点唤醒。有效节奏含
+     * parked 心跳、寻路 300ms 车道与 MIN 钳制——例如活跃寻路（300ms）期间新到战斗兴趣（1s）
+     * 不加速、不唤醒；变慢/等速/仅修订号变化不唤醒。
+     */
+    static boolean shouldWakeForAppliedInterests(List<ObservationInterest> previousInterests,
+                                                 List<ObservationInterest> appliedInterests,
+                                                 long parkedHeartbeatPeriodMs,
+                                                 long localLanePeriodMs) {
+        return effectiveCadenceMs(appliedInterests, parkedHeartbeatPeriodMs, localLanePeriodMs)
+                < effectiveCadenceMs(previousInterests, parkedHeartbeatPeriodMs, localLanePeriodMs);
+    }
+
+    /** G103-CR2 合同点：prepared-frame demand 是否为新到/换代——只有它才值得定点唤醒。 */
+    static boolean isNewPreparedFrameDemand(ObservationPreparedFrameDemand previousDemand,
+                                            ObservationPreparedFrameDemand nextDemand) {
+        return nextDemand != null
+                && (previousDemand == null
+                || !Objects.equals(previousDemand.demandId(), nextDemand.demandId())
+                || previousDemand.generation() != nextDemand.generation());
+    }
+
     long currentPeriodMs() {
-        if (sampler != null && sampler.hasActiveWubeiEnterBattleInterest()) {
-            return WindowObservationSampler.WUBEI_PREPARE_PERIOD_MS;
+        // Transport being in flight must not accelerate physical sampling: every local probe is
+        // period-gated internally (>=1s), and each un-gated tick pays one whole-window PrintWindow
+        // redraw per window.
+        return effectiveCadenceMs(interests, parkedHeartbeatPeriodMs, localLanePeriodMs());
+    }
+
+    /**
+     * G103-CR5 P2①：本地快车道统一入口——寻路 300ms 与五倍进战 100ms 都在这里，
+     * current cadence 与 interest 加速判定共用同一 effectiveCadenceMs 计算，不再各走各的
+     * early-return。无车道=Long.MAX_VALUE。
+     */
+    private long localLanePeriodMs() {
+        long lane = Long.MAX_VALUE;
+        if (sampler != null) {
+            if (sampler.hasActiveWubeiEnterBattleInterest()) {
+                lane = WindowObservationSampler.WUBEI_PREPARE_PERIOD_MS;
+            }
+            if (sampler.hasActivePathingIntent()) {
+                lane = Math.min(lane, WindowObservationSampler.LOCAL_PATHING_SAMPLE_PERIOD_MS);
+            }
         }
-        List<ObservationInterest> currentInterests = interests;
-        long localPeriodMs = sampler != null && sampler.hasActivePathingIntent()
-                ? WindowObservationSampler.LOCAL_PATHING_SAMPLE_PERIOD_MS
-                : Long.MAX_VALUE;
-        if (currentInterests.isEmpty()) {
-            return Math.min(parkedHeartbeatPeriodMs, localPeriodMs);
+        return lane;
+    }
+
+    /**
+     * G103-CR3 合同点：一组兴趣在给定 parked 心跳与本地车道（寻路 300ms/无=MAX）下的真实有效
+     * 节奏——与 {@link #currentPeriodMs()} 同一套规则（空集=min(parked,本地)；非空=min(本地,最快兴趣)
+     * 再按 {@link #MIN_SAMPLE_PERIOD_MS} 钳制）。加速唤醒判定必须用它，不得用原始兴趣周期。
+     */
+    static long effectiveCadenceMs(List<ObservationInterest> interests,
+                                   long parkedHeartbeatPeriodMs,
+                                   long localLanePeriodMs) {
+        if (interests.isEmpty()) {
+            return Math.min(parkedHeartbeatPeriodMs, localLanePeriodMs);
         }
-        long fastest = localPeriodMs;
-        for (ObservationInterest interest : currentInterests) {
+        long fastest = localLanePeriodMs;
+        for (ObservationInterest interest : interests) {
             fastest = Math.min(fastest, interest.samplePeriodMs());
         }
         return Math.max(MIN_SAMPLE_PERIOD_MS, fastest);

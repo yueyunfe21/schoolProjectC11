@@ -256,6 +256,66 @@ public final class TurnModeGuard {
         }
     }
 
+    /** {@link #awaitAndForceRemoveStoppedRemote} 的结果，供调用方决定告警措辞。 */
+    public enum ForcedRemoval {
+        /** 当前没有注册的远程 loop，无需处理。 */
+        NOT_REGISTERED,
+        /** loop 已停止且云端确认了终止，按常规移除。 */
+        REMOVED_CONFIRMED,
+        /** loop 已停止但云端未确认终止，按停止语义强制移除（记 warn）。 */
+        REMOVED_UNCONFIRMED
+    }
+
+    /**
+     * 停止路径专用：等待该 loop 真正停止后移除它，**即使云端没有确认终止**。
+     *
+     * <p>与 {@link #awaitAndRemoveStoppedRemote} 的唯一差别是最后那道"云端确认"门。启动路径必须
+     * 保持 fail-closed（拿不到确认就不敢新建 run，防双主）；但停止是用户手里最后的出路，它的语义是
+     * "我不要它了"，不该反过来要求云端先点头。</p>
+     *
+     * <p>2026-08-21 实锤：PAUSE_RESUME 建的新 loop 在 27ms 后于检查点干净停止——从未启动成功、
+     * 从未拿到云端终态、也没有失败，恰好落在 {@link #canRemoveStoppedLoop} 四个豁免条件之外。
+     * 此后该窗口启动被拒（云端未确认终止）、停止也被拒（同一道门），两条路都堵死，只能重启客户端。
+     * 两个窗口因此静止了 13 分钟。</p>
+     *
+     * <p>强制移除的安全性：①本地 loop 已确认停止（awaitStopped 成功），不存在还在跑的本地执行体；
+     * ②云端 {@code CloudTurnTaskRuntime} 自己会跑完并终结它的队列，不依赖客户端；③即便云端那边
+     * 仍有活跃 RunSlot，后续新 start 会带着不同的 startRequestId 撞上云端的 typed CONFLICT，
+     * 云端"绝不替换、排队或停止活跃 run"——双主由云端侧兜底，不需要客户端用死锁来防。</p>
+     *
+     * @param windowId 精确窗口标识
+     * @return 移除结果；未注册返回 {@link ForcedRemoval#NOT_REGISTERED}
+     */
+    public ForcedRemoval awaitAndForceRemoveStoppedRemote(String windowId) {
+        String exactWindowId = requireExactIdentity(windowId, "windowId");
+        WindowTurnLoop loop;
+        synchronized (modeMonitor) {
+            loop = loopRegistry.find(exactWindowId).orElse(null);
+            if (loop == null) {
+                return ForcedRemoval.NOT_REGISTERED;
+            }
+        }
+        try {
+            if (!loop.awaitStopped(Duration.ofMillis(longWaitTimeoutMs))) {
+                // 本地 loop 还没停就强移，等于放任一个仍在发指令的执行体脱离登记 —— 这个门必须留着。
+                throw new IllegalStateException(
+                        "远程 turn loop 未在时限内停止：windowId=" + exactWindowId);
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(
+                    "等待远程 turn loop 停止时被中断：windowId=" + exactWindowId, interrupted);
+        }
+        synchronized (modeMonitor) {
+            if (loopRegistry.find(exactWindowId).orElse(null) != loop) {
+                return ForcedRemoval.NOT_REGISTERED;
+            }
+            boolean confirmed = canRemoveStoppedLoop(loop);
+            loopRegistry.remove(exactWindowId);
+            return confirmed ? ForcedRemoval.REMOVED_CONFIRMED : ForcedRemoval.REMOVED_UNCONFIRMED;
+        }
+    }
+
     static boolean canRemoveStoppedLoop(WindowTurnLoop loop) {
         /*
          * A loop that died on a local failure can never satisfy hasAcceptedTaskTerminal: fetching the
@@ -267,7 +327,17 @@ public final class TurnModeGuard {
          * runtime finishes its own queue regardless (its startup turn times out and fails the run), so
          * removing the dead loop risks no double-started RunSlot.
          */
+        /*
+         * 2026-08-25 21:44 五环轮间死锁(473 案,四窗逐个卡死):轮间自动重启的新 loop 因 guard
+         * 拒绝而被停掉——它"发过 start、无云端终态、未被显式拒、无失败",落在上面四条豁免之外,
+         * 滞留注册表后每 4 秒的下一次重试又被它自己挡住,死局自我复制(与 08-21 PAUSE_RESUME
+         * 27ms 干净停止同款)。第五豁免:云端从未 ACK 过这个 start(startAckAccepted 恒 false)
+         * = 云端从未为该 startRequestId 建立 RunSlot,移除它零双主风险——比下方 force-remove
+         * 注释里的安全论证③更强(那条还允许云端有活跃 RunSlot 靠 typed CONFLICT 兜底)。
+         * 拿到过 ACK 而无终态的 loop 仍保持 fail-closed。
+         */
         return !loop.hasTaskStartRequest()
+                || !loop.hasAcceptedStartAck()
                 || loop.hasAcceptedTaskTerminal()
                 || loop.wasTaskStartExplicitlyRejected()
                 || loop.lastFailure() != null;

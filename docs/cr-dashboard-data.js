@@ -1,5 +1,104 @@
 window.CR_DASHBOARD_DATA = [
   {
+    "id": "G105",
+    "number": 105,
+    "owner": "Codex",
+    "status": "防护已交付、完整备份通过、只读监控运行中、退出后维护已挂起",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Codex 全局/项目规则、健康监控、状态归档维护、会话交接",
+    "summary": "禁止宽目录递归刷盘；资源异常只告警不杀进程；退出后先备份再归档旧会话并轮转日志。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G104",
+    "number": 104,
+    "owner": "Codex",
+    "status": "源码交付、Cloud 编译与真实回放 3/3 通过，待重启 fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Cloud 修罗 Story 地图坐标识别、真实尺寸性能回放",
+    "summary": "已删除近十亿次手写全图滑窗；无效现场图 6ms 拒绝，有效四圣庄 59ms、龙窟七层 51ms。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G103",
+    "number": 103,
+    "owner": "Codex",
+    "status": "七审 P0×0/P1×0/P2×0；源码验收通过，待五窗 fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Runner cadence、transport follow-up/backoff、共享整窗截图、match-evidence",
+    "summary": "发送门双锚与慢完成合同已闭环；fresh 验证战斗约 1Hz、失败链路不热循环且事件不延迟。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G102",
+    "number": 102,
+    "owner": "Codex",
+    "status": "SOURCE DELIVERED / COMPILE PASS / CONTRACT 8/8 / P90 REPLAY PASS / FRESH REQUIRED",
+    "kind": "open",
+    "domain": "Dialog",
+    "files": "五环 NPC Dialog 交接、FIFO defer 验证、presence 全站唯一、给鞋 terminal 清屏",
+    "summary": "\"缺第二种接任务模板\"结论已被 P90 原图推翻撤回；真因=FIFO defer 被硬编码 false 走旧方差门误判后重复点 NPC。收口=恢复 defer 传参+旧方差门 presence 全删+统一 DialogFramePresenceMechanics；待真实五窗 fresh 验收。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G101",
+    "number": 101,
+    "owner": "Codex",
+    "status": "fresh 已验证联合判定与后台放权生效；后续被 G102 两处既有交接缺陷阻断",
+    "kind": "open",
+    "domain": "通用",
+    "files": "五环接任务 Title/Dialog 联合判定、后台放权",
+    "summary": "每次点击只做一代联合判定；暂不可用模板立即推进，UNKNOWN 最多一次复判，视觉等待不占 turn。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G100",
+    "number": 100,
+    "owner": "Codex",
+    "status": "位置源码交付、隔离编译与定向合同通过，待 fresh；watchdog 仍开放",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Cloud 坐标 OCR 同请求提交、Client 删除位置回声",
+    "summary": "Cloud 识别地图坐标后立即更新 exact task 缓存；接任务继续快速读缓存，不增加现场 OCR。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G099",
+    "number": 99,
+    "owner": "Codex",
+    "status": "fresh 失败：G103 发现 transport 回包唤醒导致截图风暴，待返修",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Runner 观察采样、输入执行、HTTPS transport",
+    "summary": "三通道解耦保留；transport 完成不得绕过 cadence 并驱动新整窗截图。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G098",
+    "number": 98,
+    "owner": "Codex",
+    "status": "源码交付、Client 合同 4/4 与双仓编译通过，待重启 fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "修罗 Runner 纠错覆盖、战斗帧抗抖、包裹输入硬闸",
+    "summary": "更新的 exact `IN_COMBAT` 无条件覆盖回 `WAIT_COMBAT`；单帧坏图不脱战，战斗中禁止 return-item 物理输入。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G097",
+    "number": 97,
+    "owner": "Codex",
+    "status": "源码、规则门与隔离编译通过，待重启 fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Cloud NPC 成功坐标持久化、per-taskRun 工作副本、FIFO MEMORY 候选",
+    "summary": "永久栈只增不减且全栈去重；失败只消耗本次启动副本，换 taskRun 恢复完整历史。",
+    "verification": "需复核"
+  },
+  {
     "id": "G096",
     "number": 96,
     "owner": "Codex",

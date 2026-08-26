@@ -10,6 +10,7 @@ import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.input.action.InputActionExecutionResult;
 import com.bot.dhxy.input.action.InputActionQueue;
 import com.bot.dhxy.input.action.InputActionSafetyReason;
+import com.bot.dhxy.input.action.InputActionType;
 import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.extern.slf4j.Slf4j;
@@ -288,8 +289,10 @@ public final class TurnInputStepExecutor {
                 } else if (step.type() == TurnStepType.INPUT && inputActionMapper.isMouse(step.inputAction())) {
                     hasMouse = true;
                     allMouseAllowedDuringCombat &= allowsCombatActiveMouse(step.inputAction(), step.input());
-                    actions.addAll(inputActionMapper.mapMouse(
-                            step.inputAction(), step.input(), window.metadata().windowRect()));
+                    actions.addAll(dropRedundantLeadingMove(
+                            inputActionMapper.mapMouse(
+                                    step.inputAction(), step.input(), window.metadata().windowRect()),
+                            actions));
                 } else if (step.type() == TurnStepType.INPUT) {
                     actions.add(mapClosedKeyboardAction(step.inputAction(), step.input()));
                 } else {
@@ -481,6 +484,49 @@ public final class TurnInputStepExecutor {
     }
 
     /** Only the typed automatic-combat panel drag may bypass G004's combat mouse fence. */
+
+    /**
+     * 用户拍板（2026-08-21，13:00 事故）：闭合鼠标序列里去掉**同点位的重复移动**。
+     * SCROLL 在映射层被固定展开成"移动+滚轮"，云端一次"滚到底"发三次滚动，就变成
+     * 移动→滚、移动→滚、移动→滚，而三次移动坐标完全相同（实测 691,427），鼠标根本没
+     * 离开过——后两次纯属白做，却吃掉 1.79s + 3.08s，占整串 9.8 秒的一半。
+     *
+     * <p>只在闭合独占序列里做，且只剥复合动作（如 SCROLL）自带的前置移动：整串持有全局
+     * 输入锁，中途没有别的窗口能挪动鼠标，因此"上一动作已把指针放到同一点"是可证事实。
+     * 单独一条 MOVE_MOUSE 步骤永不剥离（调用方可能就是要刷新悬停），语义不变。</p>
+     */
+    private static List<InputAction> dropRedundantLeadingMove(List<InputAction> mapped,
+                                                              List<InputAction> alreadyQueued) {
+        if (mapped == null || mapped.size() < 2 || alreadyQueued == null || alreadyQueued.isEmpty()) {
+            return mapped;
+        }
+        InputAction first = mapped.get(0);
+        if (first.getType() != InputActionType.MOVE_MOUSE) {
+            return mapped;
+        }
+        Integer lastX = null;
+        Integer lastY = null;
+        for (InputAction queued : alreadyQueued) {
+            switch (queued.getType()) {
+                case MOVE_MOUSE, CLICK_LEFT, CLICK_RIGHT, DOUBLE_RIGHT_CLICK -> {
+                    lastX = queued.getX();
+                    lastY = queued.getY();
+                }
+                case DRAG_AND_DROP -> {
+                    lastX = queued.getEndX();
+                    lastY = queued.getEndY();
+                }
+                default -> {
+                    // 滚轮/等待等不移动指针，保持上一次已知位置。
+                }
+            }
+        }
+        if (lastX == null || lastY == null
+                || first.getX() != lastX || first.getY() != lastY) {
+            return mapped;
+        }
+        return mapped.subList(1, mapped.size());
+    }
     static boolean allowsCombatActiveMouse(TurnInputAction action, TurnInputSpec input) {
         return action == TurnInputAction.DRAG_LEFT
                 && input != null

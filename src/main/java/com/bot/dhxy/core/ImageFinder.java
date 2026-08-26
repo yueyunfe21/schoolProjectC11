@@ -14,8 +14,30 @@ import java.util.List;
 
 public class ImageFinder {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ImageFinder.class);
+
     static {
         OpenCvNativeLoader.ensureLoaded();
+    }
+
+    /**
+     * 2026-08-23 用户批准（3519 案）：搜索图比模板小时 OpenCV matchTemplate 直接抛断言异常，
+     * 会炸掉调用方整个输入事务。语义上"装不下模板"就是"没匹配到"，按未命中返回 null；
+     * 截图被窗口边缘削小的场景由调用方自行兜底（如包裹检查回退全窗搜索）。
+     */
+    private static volatile long lastUndersizeWarnAtMs;
+
+    private static boolean sourceSmallerThanTemplate(Mat source, Mat target) {
+        if (source.cols() >= target.cols() && source.rows() >= target.rows()) {
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastUndersizeWarnAtMs >= 5_000L) {
+            lastUndersizeWarnAtMs = now;
+            log.warn("ImageFinder: search image smaller than template; return no-match: source={}x{} template={}x{}",
+                    source.cols(), source.rows(), target.cols(), target.rows());
+        }
+        return true;
     }
 
     /**
@@ -25,6 +47,13 @@ public class ImageFinder {
         Mat source = Imgcodecs.imread(sourcePath);
         Mat target = Imgcodecs.imread(targetPath);
         if (source.empty() || target.empty()) {
+            source.release();
+            target.release();
+            return null;
+        }
+        if (sourceSmallerThanTemplate(source, target)) {
+            source.release();
+            target.release();
             return null;
         }
 
@@ -61,10 +90,16 @@ public class ImageFinder {
             target.release();
             return null;
         }
+        if (sourceSmallerThanTemplate(source, target)) {
+            source.release();
+            target.release();
+            return null;
+        }
 
         Mat result = new Mat();
         Imgproc.matchTemplate(source, target, result, Imgproc.TM_CCOEFF_NORMED);
         Core.MinMaxLocResult mmr = Core.minMaxLoc(result);
+        saveMatchEvidence(sourceImage, targetImage, mmr.maxVal);
         double[] coordsAndSim = null;
         if (mmr.maxVal >= threshold) {
             double centerX = mmr.maxLoc.x + target.cols() / 2.0;
@@ -96,14 +131,70 @@ public class ImageFinder {
             target.release();
             return Double.NaN;
         }
+        if (sourceSmallerThanTemplate(source, target)) {
+            source.release();
+            target.release();
+            return Double.NaN;
+        }
         Mat result = new Mat();
         try {
             Imgproc.matchTemplate(source, target, result, Imgproc.TM_CCOEFF_NORMED);
-            return Core.minMaxLoc(result).maxVal;
+            double score = Core.minMaxLoc(result).maxVal;
+            saveMatchEvidence(sourceImage, targetImage, score);
+            return score;
         } finally {
             source.release();
             target.release();
             result.release();
+        }
+    }
+
+    /**
+     * Every template judgment leaves its judged pixels on disk (user hard rule 2026-08-17: a
+     * disputed verdict must always be answerable with evidence). Rolling pool of 1000 pairs under
+     * {@code logs/frames/match-evidence/}, rate-limited to one save per 250ms so hot sampling loops
+     * pay nothing measurable; the score rides in the filename.
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger EVIDENCE_SLOT =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.concurrent.atomic.AtomicLong EVIDENCE_LAST_SAVE_MS =
+            new java.util.concurrent.atomic.AtomicLong();
+    /*
+     * G103-CR P1（2026-08-25）：这个滚动池才是 logs/frames/match-evidence 的持续写入方——
+     * 每 250ms 一次、在感知调用线程上【同步】做目录列举+旧档删除+两张 PNG 编码写盘，战斗期
+     * 实测 126-200 张/分钟。判定链留痕的主通道是 MatchEvidenceStore（按站点翻转/决策点存档，
+     * 异步低优先写线程），全部保留；本滚动池降级为调试通道，默认关闭，
+     * -Ddhxy.matchEvidence.rollingPool=true 启动可恢复。
+     */
+    private static final boolean EVIDENCE_ROLLING_POOL_ENABLED =
+            Boolean.getBoolean("dhxy.matchEvidence.rollingPool");
+
+    private static void saveMatchEvidence(BufferedImage source, BufferedImage target, double score) {
+        if (!EVIDENCE_ROLLING_POOL_ENABLED) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        long last = EVIDENCE_LAST_SAVE_MS.get();
+        if (now - last < 250L || !EVIDENCE_LAST_SAVE_MS.compareAndSet(last, now)) {
+            return;
+        }
+        try {
+            java.nio.file.Path dir = java.nio.file.Path.of("logs", "frames", "match-evidence");
+            java.nio.file.Files.createDirectories(dir);
+            int slot = EVIDENCE_SLOT.getAndIncrement() % 1000;
+            String scoreText = Double.isFinite(score)
+                    ? String.format("%.3f", score).replace('.', '_') : "nan";
+            try (java.util.stream.Stream<java.nio.file.Path> stale = java.nio.file.Files.list(dir)) {
+                String prefix = String.format("m%04d-", slot);
+                stale.filter(existing -> existing.getFileName().toString().startsWith(prefix))
+                        .forEach(existing -> existing.toFile().delete());
+            }
+            javax.imageio.ImageIO.write(source, "png",
+                    dir.resolve(String.format("m%04d-src-s%s.png", slot, scoreText)).toFile());
+            javax.imageio.ImageIO.write(target, "png",
+                    dir.resolve(String.format("m%04d-tpl-s%s.png", slot, scoreText)).toFile());
+        } catch (java.io.IOException | RuntimeException ignored) {
+            // Evidence must never break the judgment it documents.
         }
     }
 
@@ -116,6 +207,11 @@ public class ImageFinder {
         Mat target = Imgcodecs.imread(targetPath);
         List<double[]> matches = new ArrayList<>();
         if (source.empty() || target.empty()) {
+            source.release();
+            target.release();
+            return matches;
+        }
+        if (sourceSmallerThanTemplate(source, target)) {
             source.release();
             target.release();
             return matches;

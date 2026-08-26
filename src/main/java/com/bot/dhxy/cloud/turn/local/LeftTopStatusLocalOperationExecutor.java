@@ -31,6 +31,31 @@ public final class LeftTopStatusLocalOperationExecutor {
     private static final double MATCH_MARGIN = 0.02D;
     private static final Path OPEN_TEMPLATE = Path.of("images", "template", "status", "left_top_open.png");
     private static final Path CLOSED_TEMPLATE = Path.of("images", "template", "status", "left_top_closed.png");
+    /*
+     * 2026-08-21 性能返修（E44）：这是每 ~3s × 每窗口的巡逻探测，旧实现每拍都从磁盘重新
+     * ImageIO.read 两张模板。模板文件运行期不变，进程内解码一次终身复用。
+     */
+    private static volatile BufferedImage openTemplateCache;
+    private static volatile BufferedImage closedTemplateCache;
+
+    private static BufferedImage cachedTemplate(Path path, boolean open) throws IOException {
+        BufferedImage cached = open ? openTemplateCache : closedTemplateCache;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (LeftTopStatusLocalOperationExecutor.class) {
+            cached = open ? openTemplateCache : closedTemplateCache;
+            if (cached == null) {
+                cached = ImageIO.read(path.toFile());
+                if (open) {
+                    openTemplateCache = cached;
+                } else {
+                    closedTemplateCache = cached;
+                }
+            }
+            return cached;
+        }
+    }
 
     private final WindowTaskContextHolder contextHolder;
     private final WindowNativeBindingRefreshService bindingRefreshService;
@@ -74,13 +99,18 @@ public final class LeftTopStatusLocalOperationExecutor {
             return complete(Observation.captureFailed());
         }
         try {
-            BufferedImage open = ImageIO.read(OPEN_TEMPLATE.toFile());
-            BufferedImage closed = ImageIO.read(CLOSED_TEMPLATE.toFile());
+            BufferedImage open = cachedTemplate(OPEN_TEMPLATE, true);
+            BufferedImage closed = cachedTemplate(CLOSED_TEMPLATE, false);
             if (!fits(roi, open) || !fits(roi, closed)) {
                 return complete(Observation.unknown(-1.0D, -1.0D));
             }
             double[] openMatch = ImageFinder.find(roi, open, -1.0D);
             double[] closedMatch = ImageFinder.find(roi, closed, -1.0D);
+            /*
+             * 落盘取证已按用户决定移除（2026-08-21）：该探测已稳定、无需 debug，且它是
+             * 每 ~3s × 每窗口的巡逻——曾是 match-evidence 目录最大的写入方。分数仍然逐拍
+             * 打进下方 INFO 日志，判定链留痕不受影响；需要复查时把这两行取证加回即可。
+             */
             if (openMatch == null || closedMatch == null) {
                 return complete(Observation.unknown(-1.0D, -1.0D));
             }

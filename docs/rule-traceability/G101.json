@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "card": "G101",
+  "changeType": "business",
+  "status": "REVIEW_PASSED",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "5e05a9578a1b6116331def92ec255c27f490b68b",
+    "pushedReference": "origin/dev",
+    "cloudBranch": "dev",
+    "cloudCommit": "ac398141139a375a07561777f46b3d4c705a70b0",
+    "cloudPushedReference": "origin/dev"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-WUHAN-001"],
+  "affectedPaths": [
+    "docs/业务逻辑.md",
+    "docs/business-rules.json",
+    "docs/rule-traceability/G101.json",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/ACTIVE_WORK.md",
+    "docs/cr-dashboard-data.js",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wuhuan/v3/FiveRingTaskV3.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/remote/CloudWholeTaskReadyEventState.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java"},
+    {"repo": "cloud", "path": "scripts/g101-wuhuan-accept-joint-decision-contract.js"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "旧实现把 post-accept Title 完整轮询放在 Dialog 白字分类之前，随后又在 Dialog wait 中持续让 Title/rearm 抢占，明确的 TEMPORARILY_UNAVAILABLE 动作不能立即结束该轮。",
+    "userDecision": "每次接任务点击只发一代后台 Title snapshot，并与一张 fresh Dialog 分类联合决断；暂不可用模板明确命中立即短路 Title、点 Story 并重放。两者都 UNKNOWN 才允许一次 fresh 复判，视觉等待不占全局 turn。",
+    "decisionRecordedAt": "2026-08-24",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G101-五环接任务单次联合判定与后台放权2026-08-24"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-WUHAN-001",
+      "producer": "Client exact-window Runner publishes one requested Title snapshot and one fresh Dialog presence/frame generation after each accept click.",
+      "transport": "Existing observation interests, exact-HWND prepared-frame demand and PreparedDialogActionState carry Title fact or VERIFY_WHITE_TEMPLATE without holding the task turn.",
+      "consumer": "FiveRingTaskV3 consumes the first explicit Title/Dialog result, prioritizes TEMPORARILY_UNAVAILABLE as the immediate Story-replay branch, and permits only one UNKNOWN fresh recheck.",
+      "ordering": "accept click under turn -> release -> one Title snapshot plus Dialog-only classification -> Title present succeeds OR TEMP template dismisses/replays -> both unknown permits one fresh joint recheck -> second unknown retires the scene instead of rearming Title forever.",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/main/java/com/bot/dhxy/task/wuhuan/v3/FiveRingTaskV3.java",
+          "command": "rg -n \"TEMPORARILY_UNAVAILABLE|requestWuhuanV3TitleSnapshot|armWuhuanDialogInspection|forceRelease\" src/main/java/com/bot/dhxy/task/wuhuan/v3/FiveRingTaskV3.java",
+          "proves": [
+            "Each accept click owns one Title snapshot generation and explicit template result ends the wait.",
+            "Visual wait releases the exact task turn before parking; only Story/input execution reacquires it."
+          ]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/remote/CloudWholeTaskReadyEventState.java",
+          "command": "rg -n \"armWuhuanDialogInspection|requestWuhuanV3TitleSnapshot\" src/main/java/com/yueyunfe/dhxy/cloudbrain/remote/CloudWholeTaskReadyEventState.java",
+          "proves": [
+            "Dialog classification can be armed without creating a continuous Title interest.",
+            "The Title request remains an explicit one-shot snapshot boundary."
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {
+      "name": "cloud-production-compile",
+      "result": "PASS",
+      "evidence": "mvn -q -DskipTests compile in D:/mavenProject/dhxy-cloud-brain"
+    },
+    {
+      "name": "g101-source-contract",
+      "result": "PASS",
+      "evidence": "node scripts/g101-wuhuan-accept-joint-decision-contract.js: 3/3 PASS"
+    },
+    {
+      "name": "static-turn-and-generation-review",
+      "result": "PASS",
+      "evidence": "Confirmed max two decision attempts, Dialog action before Title bailout, Dialog-only interest, TEMP rearm suppression, and SmartClick outer task-turn removal."
+    },
+    {
+      "name": "diff-check",
+      "result": "PASS",
+      "evidence": "git diff --check passed in dhxy-cloud-brain and DHXY-cr271; line-ending warnings only."
+    }
+  ]
+}

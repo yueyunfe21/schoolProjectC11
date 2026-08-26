@@ -1,4 +1,4 @@
-param(
+﻿param(
     [int]$Port = 18080,
     [string]$Path = "/api/cloud/decision",
     [string]$Token = "local-dev-token",
@@ -15,6 +15,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+. (Join-Path $PSScriptRoot "lib-process-tree.ps1")
 
 if ($Path -ne "/api/cloud/decision") {
     throw "External dhxy-cloud-brain currently serves /api/cloud/decision; unsupported Path=$Path"
@@ -468,14 +470,14 @@ function Start-OcrSidecar {
         if (($null -ne $health) -and ($health.ok -eq $true) -and ([long]$health.pid -ne [long]$process.Id)) {
             # Someone else answers the port while our process is alive — conflict; stop only our
             # own just-started PID and fail closed.
-            try { Stop-Process -Id $process.Id -Force -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+            try { [void](Stop-ProcessTreeSafely -ProcessId $process.Id) } catch {}
             throw "ocr-sidecar-conflict: port $OcrPort is answered by pid=$($health.pid) while this launcher's own sidecar pid=$($process.Id) is starting; refusing to start"
         }
         if ($process.HasExited) {
             throw "ocr-sidecar-launch-failed: sidecar process exited early (exitCode=$($process.ExitCode)); see $ocrLog"
         }
     }
-    try { Stop-Process -Id $process.Id -Force -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+    try { [void](Stop-ProcessTreeSafely -ProcessId $process.Id) } catch {}
     throw "ocr-sidecar-launch-failed: health did not become ready within 90s; own pid=$($process.Id) stopped"
 }
 
@@ -491,7 +493,8 @@ if ($null -ne $ocrHealth) {
         # A.2/A.4 normal restart: this is OUR previously launched instance (mode=launched, full
         # identity verified) — stop it (never by port) and launch a fresh one.
         Write-Host "CR257 OCR sidecar restart: stopping own registered instance pid=$($ocrRegistry.pid) startedAtMs=$($ocrRegistry.startedAtMs) runId=$($ocrRegistry.runId)"
-        Stop-Process -Id $ocrRegistry.pid -Force -Confirm:$false
+        # 树式收尾：单杀 sidecar 父进程会把 RapidOCR 的 multiprocessing worker 永久孤儿化。
+        [void](Stop-ProcessTreeSafely -ProcessId $ocrRegistry.pid)
         Start-Sleep -Milliseconds 1500
         Start-OcrSidecar
     } else {

@@ -25,6 +25,12 @@ import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
+import java.util.Deque;
+import java.util.Map;
+import java.util.Objects;
+import java.nio.file.Files;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 /**
  * Handles non-task UI interruptions for the currently bound game window.
@@ -49,8 +55,22 @@ public class UICleanerService {
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
     private final WindowScopedTempPath windowScopedTempPath;
+    private final com.bot.dhxy.window.runtime.WindowTaskContextHolder windowTaskContextHolder;
 
     private final Random random = new Random();
+
+    /*
+     * 2026-08-26 00:39 用户令(灵兽村宠物面板挡接任务案):无关闭钮的展示面板(宠物属性/装备
+     * 查看等)模板清障关不掉,任务卡死时上层每 ~30 秒来一轮清障、每轮都 not-found(实测 15 分钟
+     * 25 次)。这类面板点击面板任意处即关,故:同一窗口在时间窗内连续多轮"清障后仍未恢复"
+     * (又被请求清障且又什么都没关掉)时,fallback 点一次客户区中心——面板在时点击被面板吃掉
+     * =关闭;真干净时误点游戏世界的代价(走两步/点开NPC)由后续流程纠正,且仅在高置信卡死时发生。
+     */
+    private static final Path CENTER_TAP_EVIDENCE_DIR =
+            Path.of("images", "temp", "match-evidence", "center-tap-fallback");
+    private static final DateTimeFormatter CENTER_TAP_STAMP =
+            DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS");
+
 
     /**
      * Run the broad cleanup used before/after generic task transitions.
@@ -332,6 +352,98 @@ public class UICleanerService {
             cleanupPass.invalidateFrame("generic window closed");
         }
         return closedAny;
+    }
+
+    /** Dark-fraction probe over the client-center region a closable overlay panel would cover. */
+    private boolean isDarkCenterOverlayPresent() {
+        int left = tracker.getWindowBaseX() + 292;
+        int top = tracker.getWindowBaseY() + 214;
+        java.awt.image.BufferedImage region = tracker.captureToMemory(
+                "uiCleanup:center-overlay-probe", left, top, left + 440, top + 340);
+        if (region == null) {
+            return false;
+        }
+        try {
+            long dark = 0;
+            long total = 0;
+            for (int y = 0; y < region.getHeight(); y += 2) {
+                for (int x = 0; x < region.getWidth(); x += 2) {
+                    int rgb = region.getRGB(x, y);
+                    int lum = (int) (0.299 * ((rgb >>> 16) & 0xFF)
+                            + 0.587 * ((rgb >>> 8) & 0xFF) + 0.114 * (rgb & 0xFF));
+                    if (lum <= 85) {
+                        dark++;
+                    }
+                    total++;
+                }
+            }
+            double fraction = total == 0 ? 0 : (double) dark / total;
+            log.info("UI cleanup center-overlay probe: darkFraction={}", String.format("%.2f", fraction));
+            return fraction >= 0.55;
+        } finally {
+            region.flush();
+        }
+    }
+
+    private static String windowKeyFromScreenPath(String screenPath) {
+        if (screenPath == null || screenPath.isBlank()) {
+            return null;
+        }
+        for (String part : screenPath.replace(java.io.File.separatorChar, '/').split("/")) {
+            if (part.startsWith("hwnd-")) {
+                return part;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 显式的"点一次客户区中心"兜底：关掉一块没有关闭钮、模板清障关不掉的展示面板
+     * （宠物属性/装备查看等——点面板任意处即关，2026-08-26 00:39 灵兽村案）。
+     *
+     * <p>2026-08-26 12:35 教训（用户抓获：五个挂机窗战斗中被 focus+点击、任务剧情框被越权
+     * 点掉）：此兜底**绝不自动触发**——清障内部的"没关掉东西"计数分不清卡死遮挡/战斗画面/
+     * 任务正要处理的对话框。只允许任务侧在**自己的多轮识别失败**重试链上显式调用，且内部
+     * 仍有两道门：①战斗中不点；②客户区中央必须真有一块暗色大面板（在位检测），否则拒点。</p>
+     *
+     * @param source 调用方诊断标签（任务码+失败上下文）
+     * @return true 仅当真的提交了中心点击
+     */
+    public boolean tapClientCenterToDismissOverlay(String source) {
+        String windowKey = source == null ? "unknown"
+                : source.replaceAll("[^A-Za-z0-9._-]", "_");
+        String screenPath = tracker.getLatestVisionPath();
+        if (windowTaskContextHolder.rawCurrent()
+                .map(context -> context.isLocalCombatVisible()).orElse(false)) {
+            log.info("UI cleanup center-tap refused: local combat visible source={}", source);
+            return false;
+        }
+        if (!isDarkCenterOverlayPresent()) {
+            log.info("UI cleanup center-tap refused: no dark overlay at client center source={} "
+                    + "(screen is genuinely clean)", source);
+            return false;
+        }
+        try {
+            Files.createDirectories(CENTER_TAP_EVIDENCE_DIR);
+            Files.copy(Path.of(Objects.requireNonNull(screenPath, "no latest vision frame")),
+                    CENTER_TAP_EVIDENCE_DIR.resolve(
+                            CENTER_TAP_STAMP.format(LocalDateTime.now()) + "_" + windowKey + ".png"));
+        } catch (Exception evidenceFailure) {
+            log.warn("UI cleanup center-tap evidence save failed: window={} reason={}",
+                    windowKey, evidenceFailure.getMessage());
+        }
+        int clickX = tracker.getWindowBaseX() + 512 - 20 + random.nextInt(41);
+        int clickY = tracker.getWindowBaseY() + 384 - 20 + random.nextInt(41);
+        log.warn("UI cleanup center-tap fallback: explicit task-side request source={} "
+                        + "click=({}, {}) — dismissing a closable overlay that has no close-button template",
+                source, clickX, clickY);
+        return inputSequences.submitExclusiveAndWait("uiCleanup:centerTapFallback", () -> {
+            if (!InputActionScope.checkpoint()) {
+                return false;
+            }
+            inputProvider.clickLeft(clickX, clickY, 80);
+            return TaskSleep.sleep(250) && InputActionScope.checkpoint();
+        });
     }
 
     /**

@@ -210,6 +210,25 @@ public final class XinshouDragLocalOperationExecutor {
         }
     }
 
+    /**
+     * 2026-08-23 用户契约（停止=彻底清空）：fresh-start 复位链调用——中止仍攥着的实体拖拽会话。
+     * 审查修正：必须持 retainedLock（可见性/与 sweep 并发），且只中止属于本窗口的拖拽——
+     * 别的窗口正在跑的新手拖拽不许被无关窗口的 fresh-start 误杀。
+     */
+    public void abortRetainedDragForFreshStart(String windowId) {
+        synchronized (retainedLock) {
+            ActiveDrag retained = activeDrag;
+            if (retained == null) {
+                return;
+            }
+            if (windowId != null && retained.context != null
+                    && !windowId.equals(retained.context.getWindowId())) {
+                return;
+            }
+            abortRetainedDrag();
+        }
+    }
+
     private void abortRetainedDrag() {
         ActiveDrag retained = activeDrag;
         activeDrag = null;

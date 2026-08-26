@@ -55,7 +55,7 @@ class WindowRemoteTurnControlContractTest {
 
     @Test
     void everySupportedLocalTaskTypeMapsToItsExactWireCode() {
-        assertEquals(TurnTaskCode.WUHUAN_V2, WindowTaskControlService.toTurnTaskCode(TaskType.WUHuan_V2));
+        assertEquals(TurnTaskCode.WUHUAN_V3, WindowTaskControlService.toTurnTaskCode(TaskType.WUHUAN_V3));
         assertEquals(TurnTaskCode.WUBEI, WindowTaskControlService.toTurnTaskCode(TaskType.WUBEI));
         assertEquals(TurnTaskCode.XIULUO_V2, WindowTaskControlService.toTurnTaskCode(TaskType.XIULUO_V2));
         assertEquals(TurnTaskCode.XINSHOU, WindowTaskControlService.toTurnTaskCode(TaskType.XINSHOU));
@@ -141,7 +141,7 @@ class WindowRemoteTurnControlContractTest {
 
     @Test
     void pauseCleanupRetainsAcknowledgedSoloAuthorityAndResumeProjectsSolo() {
-        WindowRuntimeContext solo = retainedContext("solo", WindowRole.UNKNOWN, TaskType.WUHuan_V2);
+        WindowRuntimeContext solo = retainedContext("solo", WindowRole.UNKNOWN, TaskType.WUHUAN_V3);
         solo.setRole(WindowTaskControlService.acknowledgedWindowRole(
                 "solo", preflight("solo", LocalTeamRolePreflightService.Role.SOLO), null));
 
@@ -150,7 +150,7 @@ class WindowRemoteTurnControlContractTest {
         assertEquals(WindowRole.LEADER, solo.getRole());
         Map<String, LocalTeamRolePreflightService.Preflight> retained =
                 WindowTaskControlService.retainedPauseResumePreflights(
-                        List.of(solo), Map.of("solo", TaskType.WUHuan_V2));
+                        List.of(solo), Map.of("solo", TaskType.WUHUAN_V3));
         assertEquals(LocalTeamRolePreflightService.Role.SOLO, retained.get("solo").role());
     }
 
@@ -246,8 +246,8 @@ class WindowRemoteTurnControlContractTest {
     @Test
     void queueMappingPreservesOrderAndRejectsEmptyOrUnsupportedQueues() {
         List<TurnTaskCode> mapped = WindowTaskControlService.toTurnTaskCodes(
-                WindowTaskQueue.of(TaskType.WUHuan_V2, TaskType.AUTO_BATTLE, TaskType.WUBEI));
-        assertEquals(List.of(TurnTaskCode.WUHUAN_V2, TurnTaskCode.AUTO_BATTLE, TurnTaskCode.WUBEI), mapped);
+                WindowTaskQueue.of(TaskType.WUHUAN_V3, TaskType.AUTO_BATTLE, TaskType.WUBEI));
+        assertEquals(List.of(TurnTaskCode.WUHUAN_V3, TurnTaskCode.AUTO_BATTLE, TurnTaskCode.WUBEI), mapped);
 
         // An empty queue has nothing to run remotely.
         assertThrows(IllegalArgumentException.class,
@@ -256,7 +256,7 @@ class WindowRemoteTurnControlContractTest {
         // A single unsupported member rejects the whole queue rather than silently dropping it.
         assertThrows(IllegalArgumentException.class,
                 () -> WindowTaskControlService.toTurnTaskCodes(
-                        WindowTaskQueue.of(TaskType.WUHuan_V2, TaskType.SLEEP_COMPUTER)));
+                        WindowTaskQueue.of(TaskType.WUHUAN_V3, TaskType.SLEEP_COMPUTER)));
     }
 
     @Test

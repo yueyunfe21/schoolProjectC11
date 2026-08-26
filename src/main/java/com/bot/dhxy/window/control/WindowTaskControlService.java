@@ -70,10 +70,13 @@ public class WindowTaskControlService {
     private final LocalTeamRolePreflightService localTeamRolePreflightService;
     private final StartupCombatGateService startupCombatGateService;
     private final BagService bagService;
+    private final LocalFreshStartReset localFreshStartReset;
     private final AtomicBoolean remoteStartInFlight = new AtomicBoolean(false);
     private final AtomicLong remoteStartEpoch = new AtomicLong(0L);
     private final Object remoteStartLifecycleMonitor = new Object();
     private final Map<String, String> remoteTerminalRecoveryPending = new ConcurrentHashMap<>();
+    /** 每窗口生命周期 epoch 下限:恢复/续跑/ACK 的 startEpoch 低于它即视为已被显式取消或替换。 */
+    private final ConcurrentHashMap<String, Long> remoteWindowEpochFloor = new ConcurrentHashMap<>();
 
     @Autowired
     public WindowTaskControlService(MultiWindowTaskManager taskManager,
@@ -83,7 +86,8 @@ public class WindowTaskControlService {
                                     BotProperties botProperties,
                                     LocalTeamRolePreflightService localTeamRolePreflightService,
                                     StartupCombatGateService startupCombatGateService,
-                                    BagService bagService) {
+                                    BagService bagService,
+                                    LocalFreshStartReset localFreshStartReset) {
         this.taskManager = Objects.requireNonNull(taskManager, "taskManager");
         this.turnModeGuard = Objects.requireNonNull(turnModeGuard, "turnModeGuard");
         this.sidecarLauncher = Objects.requireNonNull(sidecarLauncher, "sidecarLauncher");
@@ -93,6 +97,7 @@ public class WindowTaskControlService {
                 localTeamRolePreflightService, "localTeamRolePreflightService");
         this.startupCombatGateService = Objects.requireNonNull(startupCombatGateService, "startupCombatGateService");
         this.bagService = Objects.requireNonNull(bagService, "bagService");
+        this.localFreshStartReset = Objects.requireNonNull(localFreshStartReset, "localFreshStartReset");
     }
 
     public WindowSystemSnapshot getSystemSnapshot() {
@@ -701,6 +706,9 @@ public class WindowTaskControlService {
         if (isRemoteStartCancelled(startEpoch)) {
             return;
         }
+        // 2026-08-23 用户契约（停止=彻底清空）：全局页签校准按"冷启动批"清一次并当场重新校准，
+        // 不放进每窗口复位链（审查修正：否则会抹掉本方法刚学到的值）。
+        bagService.forgetMainBagTaskTabCalibration();
         WindowRuntimeContext leader = windowIds.stream()
                 .map(windowId -> taskManager.getRunner(windowId).map(WindowTaskRunner::getWindowContext).orElse(null))
                 .filter(Objects::nonNull)
@@ -731,9 +739,13 @@ public class WindowTaskControlService {
                                                    TaskStartupMode startupMode,
                                                    String explicitLeaderWindowId,
                                                    TurnTaskRuntimeSettings retainedRuntimeSettings) {
-        if (isRemoteStartCancelled(startEpoch)) {
+        // 按窗口判取消:别的窗口停止/启动不再作废本窗口的启动与恢复重启(2026-08-22 定案)。
+        if (startEpoch <= 0L || Thread.currentThread().isInterrupted()
+                || !isWindowLifecycleCurrent(windowId, startEpoch)) {
             return WindowTaskCommandDetail.failed(windowId, "远程启动已被暂停或停止");
         }
+        // 本窗口的新生命周期从此开始:抬 floor,旧 run 留在飞行中的恢复/续跑就此作废(替换语义)。
+        remoteWindowEpochFloor.merge(windowId, startEpoch, Math::max);
         WindowTaskRunner runner = taskManager.getRunner(windowId).orElse(null);
         if (runner == null) {
             return WindowTaskCommandDetail.failed(windowId, "窗口不存在");
@@ -758,6 +770,18 @@ public class WindowTaskControlService {
                 return WindowTaskCommandDetail.failed(
                         windowId, "清理旧任务失败，拒绝启动新任务：" + failure.getMessage());
             }
+        }
+        /*
+         * 2026-08-23 用户契约（停止=彻底清空）：用户手动新开一轮（NORMAL，覆盖停止后/队列做完后
+         * 再启动；含战斗门放行后的 AFTER_COMBAT_EXIT_STARTUP 冷启动）——把本窗口现实记忆清到
+         * 进程刚启动的状态。审查修正：必须放在旧任务循环确认停止之后，否则旧线程会在清完后
+         * 立刻把脏缓存写回去（清了等于没清）。崩溃自动重启在 recoverRemoteTerminal 单独清；
+         * 暂停恢复（PAUSE_RESUME）与队列内衔接（CLEAN_QUEUE_TRANSITION）不清。
+         */
+        if (startupMode == TaskStartupMode.NORMAL
+                || startupMode == TaskStartupMode.AFTER_COMBAT_EXIT_STARTUP) {
+            localFreshStartReset.resetWindowRealityMemory(
+                    windowId, context, "startupMode=" + startupMode);
         }
         // G008 phase 2: make the new Cloud acknowledgement and its observation runner see a clean task boundary.
         // This is deliberately before startRemote(); markRemoteStarted() runs after ACK and must not erase the
@@ -849,7 +873,7 @@ public class WindowTaskControlService {
                                                 RemoteTerminalRecoveryPlan recoveryPlan,
                                                 WindowTaskRunProgress resumeProgress,
                                                 int attempt) {
-        if (remoteStartEpoch.get() != startEpoch || !loop.isRunning()) {
+        if (!isWindowLifecycleCurrent(context.getWindowId(), startEpoch) || !loop.isRunning()) {
             log.info("Ignore late Cloud start ACK after cancellation/replacement: windowId={} startRequestId={} epoch={}",
                     context.getWindowId(), startRequestId, startEpoch);
             return;
@@ -857,7 +881,7 @@ public class WindowTaskControlService {
         try {
             WindowTaskQueue effectiveQueue = projectEffectiveQueue(requestedQueue, startAck);
             synchronized (remoteStartLifecycleMonitor) {
-                if (remoteStartEpoch.get() != startEpoch || !loop.isRunning()) {
+                if (!isWindowLifecycleCurrent(context.getWindowId(), startEpoch) || !loop.isRunning()) {
                     return;
                 }
                 WindowTaskRunProgress effectiveProgress = resumeProgress != null
@@ -874,7 +898,7 @@ public class WindowTaskControlService {
             log.info("Cloud start ACK projected asynchronously: windowId={} startRequestId={} attempt={}",
                     context.getWindowId(), startRequestId, attempt);
         } catch (RuntimeException failure) {
-            if (remoteStartEpoch.get() != startEpoch || !loop.isRunning()) {
+            if (!isWindowLifecycleCurrent(context.getWindowId(), startEpoch) || !loop.isRunning()) {
                 return;
             }
             long retryDelayMs = WindowTurnLoop.failureRetryDelayMs(context.getWindowId(), attempt);
@@ -918,7 +942,8 @@ public class WindowTaskControlService {
                 botProperties.isPetHpSupplyEnabled(),
                 botProperties.getPetHpSupplyThreshold(),
                 botProperties.isPetMpSupplyEnabled(),
-                botProperties.getPetMpSupplyThreshold());
+                botProperties.getPetMpSupplyThreshold(),
+                botProperties.getLeaderDeathRecoveryMode());
     }
 
     private void projectRemoteTerminal(
@@ -936,7 +961,7 @@ public class WindowTaskControlService {
                 || terminal.status() == TurnTaskTerminalResult.Status.SKIPPED) {
             String windowId = runner.getWindowContext().getWindowId();
             RemoteTerminalRecoveryPlan remainingPlan = recoveryPlan.remainingFrom(loop.recoverableQueueIndex());
-            if (remoteStartEpoch.get() != recoveryPlan.startEpoch()) {
+            if (!isWindowLifecycleCurrent(windowId, recoveryPlan.startEpoch())) {
                 log.info("Ignore recoverable terminal after explicit cancellation/replacement: windowId={} "
                                 + "startRequestId={} status={} epoch={}",
                         windowId, terminal.startRequestId(), terminal.status(), recoveryPlan.startEpoch());
@@ -959,8 +984,111 @@ public class WindowTaskControlService {
                     () -> recoverRemoteTerminal(remainingPlan, terminal, 1));
             return;
         }
+        if (terminal.status() == TurnTaskTerminalResult.Status.SUCCESS
+                && scheduleNextConfiguredRun(runner, terminal, recoveryPlan)) {
+            return;
+        }
         runner.markRemoteStopped("Cloud任务终止：" + terminal.status()
                 + " (" + terminal.startRequestId() + ")");
+    }
+
+    /**
+     * SUCCESS is a per-run terminal, not a per-task one: a finite repeatable task configured for
+     * N runs (五环 maxRuns=2 does one 环 per Cloud run and returns SUCCESS between them) expects
+     * this layer to relaunch until the configured count is spent. The Cloud pushes no run counter
+     * to the Client, so the counter lives here: each continuation seeds the pause-resume progress
+     * snapshot that {@code startOneRemote} already consumes as {@code taskInitialCompletedRuns}.
+     *
+     * @return true when a continuation restart was scheduled and the window must stay owned.
+     */
+    private boolean scheduleNextConfiguredRun(WindowTaskRunner runner,
+                                              TurnTaskTerminalResult terminal,
+                                              RemoteTerminalRecoveryPlan recoveryPlan) {
+        if (recoveryPlan.taskCodes().size() != 1 || recoveryPlan.taskMaxRuns().size() != 1) {
+            return false;
+        }
+        Integer maxRuns = recoveryPlan.taskMaxRuns().get(0);
+        if (maxRuns == null || maxRuns <= 1) {
+            return false;
+        }
+        String windowId = recoveryPlan.windowId();
+        if (!isWindowLifecycleCurrent(windowId, recoveryPlan.startEpoch())) {
+            return false;
+        }
+        WindowRuntimeContext context = runner.getWindowContext();
+        WindowTaskRunProgress paused = context.getPausedTaskRunProgress();
+        TaskType primaryType = fromTurnTaskCode(recoveryPlan.taskCodes().get(0));
+        int completedSoFar = paused != null
+                && paused.getTaskType() == primaryType
+                && paused.getTotalRuns() == maxRuns
+                ? paused.getCompletedRuns()
+                : 0;
+        /*
+         * 用户拍板（2026-08-20）：云端终止类收束（五环完成故事 STOP_ALL_RUNS/次数用完/冷却）会经
+         * WHOLE_TASK_PROGRESS_UPDATE 把实时账本推满（completed=total）。这里必须同时认这本账，
+         * 否则"全部做完"的语义跨不过云端边界——五环配 2 次时 00:37 判完成、00:38 本层仍按 1/2
+         * 误排第 2 轮并跑去重新接任务（实证）。取两本账较大值，正常单轮成功的排班不受影响。
+         */
+        WindowTaskRunProgress live = context.getRunningTaskRunProgress();
+        if (live != null
+                && live.getTaskType() == primaryType
+                && live.getTotalRuns() == maxRuns) {
+            completedSoFar = Math.max(completedSoFar, live.getCompletedRuns());
+        }
+        int newCompleted = completedSoFar + 1;
+        if (newCompleted >= maxRuns) {
+            return false;
+        }
+        String previousPending = remoteTerminalRecoveryPending.put(windowId, terminal.startRequestId());
+        if (terminal.startRequestId().equals(previousPending)) {
+            return true;
+        }
+        context.updateTaskRunProgress(newCompleted, maxRuns);
+        context.retainTaskRunProgressForPause();
+        long retryDelayMs = WindowTurnLoop.failureRetryDelayMs(windowId, 1);
+        log.info("Finite task run completed with remaining runs; scheduling next run: windowId={} task={} "
+                        + "completedRuns={} totalRuns={} startRequestId={} retryDelayMs={}",
+                windowId, recoveryPlan.taskCodes().get(0), newCompleted, maxRuns,
+                terminal.startRequestId(), retryDelayMs);
+        CompletableFuture.delayedExecutor(retryDelayMs, TimeUnit.MILLISECONDS).execute(
+                () -> recoverRemoteTerminal(recoveryPlan, terminal, 1));
+        return true;
+    }
+
+    private static final long OWNER_RETURN_RECHECK_MS = 3_000L;
+
+    /**
+     * 切号守门：上一个 run 的任务主人不在窗口标题栏里时，扣住自动重启并按固定间隔重查活标题，
+     * 主人切回来才放行。只作用于自动重启链（recoverRemoteTerminal 的两个来源：可恢复终态重启、
+     * 配置轮数续跑）；手动重新开任务不经过这里。
+     *
+     * @return true=本次重启已被扣住（已安排下一次重查），调用方直接返回
+     */
+    private boolean holdRestartUntilTaskOwnerReturns(RemoteTerminalRecoveryPlan recoveryPlan,
+                                                     TurnTaskTerminalResult terminal,
+                                                     int attempt) {
+        String windowId = recoveryPlan.windowId();
+        WindowRuntimeContext context = taskManager.getRunner(windowId)
+                .map(WindowTaskRunner::getWindowContext).orElse(null);
+        String expectedOwnerId = context == null ? null : context.getLastTaskOwnerPlayerId();
+        if (expectedOwnerId == null) {
+            return false;
+        }
+        WindowNativeBinding liveBinding = bindingRefreshService.refreshAndCommit(context).orElse(null);
+        String liveTitle = liveBinding == null ? null : liveBinding.getTitle();
+        String visibleId = com.bot.dhxy.window.runtime.WindowTitleIdentityParser.parse(liveTitle)
+                .map(identity -> identity.playerId() == null ? null : identity.playerId().trim())
+                .orElse(null);
+        if (expectedOwnerId.equals(visibleId)) {
+            return false;
+        }
+        log.warn("Recoverable restart held: task owner not in window (switch-away contract): windowId={} "
+                        + "expectedOwner={}/{} visible={} status={} recheckMs={}",
+                windowId, context.getLastTaskOwnerPlayerName(), expectedOwnerId, visibleId,
+                terminal.status(), OWNER_RETURN_RECHECK_MS);
+        CompletableFuture.delayedExecutor(OWNER_RETURN_RECHECK_MS, TimeUnit.MILLISECONDS).execute(
+                () -> recoverRemoteTerminal(recoveryPlan, terminal, attempt));
+        return true;
     }
 
     /**
@@ -979,17 +1107,35 @@ public class WindowTaskControlService {
                     windowId, terminal.startRequestId(), terminal.status());
             return;
         }
-        if (remoteStartEpoch.get() != recoveryPlan.startEpoch()) {
+        if (!isWindowLifecycleCurrent(windowId, recoveryPlan.startEpoch())) {
             remoteTerminalRecoveryPending.remove(windowId, terminal.startRequestId());
             log.info("Cancel recoverable-terminal restart after explicit lifecycle change: windowId={} "
                             + "startRequestId={} status={} epoch={}",
                     windowId, terminal.startRequestId(), terminal.status(), recoveryPlan.startEpoch());
             return;
         }
+        /*
+         * 用户契约(2026-08-18,切号事故):窗口被切到别的角色时,自动重启必须原地等主人切回来,
+         * 绝不许把当前角色认作新主人接着跑。逐次重查活标题,直到主人回窗才放行;手动重开不走
+         * 这条路,不受影响。
+         */
+        if (holdRestartUntilTaskOwnerReturns(recoveryPlan, terminal, attempt)) {
+            return;
+        }
         try {
             TurnModeGuard.RemoteLoopState previous = turnModeGuard.remoteState(windowId);
             if (previous.registered() && !turnModeGuard.awaitAndRemoveStoppedRemote(windowId)) {
                 throw new IllegalStateException("terminal remote loop disappeared before exact removal");
+            }
+            // 2026-08-23 用户契约：崩溃自动重启按停止对待——现实记忆清光（进度照旧保留），
+            // 否则毒缓存跟着一轮轮重启循环（3519 案连崩 8 次即此因）。
+            // 审查修正：只有 FAILED 才是崩溃；SUCCESS 续跑（队列内下一轮）属于同一生命周期，不清。
+            if (terminal.status() == TurnTaskTerminalResult.Status.FAILED) {
+                localFreshStartReset.resetWindowRealityMemory(
+                        windowId,
+                        taskManager.getRunner(windowId)
+                                .map(WindowTaskRunner::getWindowContext).orElse(null),
+                        "crash-recovery:" + terminal.status());
             }
             WindowTaskCommandDetail restarted = startOneRemote(
                     recoveryPlan.deviceId(), windowId, recoveryPlan.taskCodes(), recoveryPlan.taskMaxRuns(),
@@ -1005,7 +1151,7 @@ public class WindowTaskControlService {
                             + "status={} attempt={}",
                     windowId, terminal.startRequestId(), terminal.status(), attempt);
         } catch (RuntimeException recoveryFailure) {
-            if (remoteStartEpoch.get() != recoveryPlan.startEpoch()) {
+            if (!isWindowLifecycleCurrent(windowId, recoveryPlan.startEpoch())) {
                 remoteTerminalRecoveryPending.remove(windowId, terminal.startRequestId());
                 return;
             }
@@ -1027,9 +1173,9 @@ public class WindowTaskControlService {
         synchronized (remoteStartLifecycleMonitor) {
             // G008 phase 1: pause is an abort boundary, never an in-place remote resume.  The old
             // observer/handle/token must be torn down before a later UI start creates a fresh turn run.
-            cancelPendingRemoteStarts("pause");
+            cancelPendingRemoteStarts("pause", windowIds);
             return abortRemoteRuns(windowIds, "remote turn paused; fresh start required",
-                    WindowRuntimeStatus.PAUSED, "远程暂停并清理旧运行完成");
+                    WindowRuntimeStatus.PAUSED, "远程暂停并清理旧运行完成", false);
         }
     }
 
@@ -1040,16 +1186,22 @@ public class WindowTaskControlService {
 
     public WindowTaskCommandResult stopRemoteWindows(Collection<String> windowIds) {
         synchronized (remoteStartLifecycleMonitor) {
-            cancelPendingRemoteStarts("stop");
+            cancelPendingRemoteStarts("stop", windowIds);
+            /*
+             * 停止是用户手里最后的出路：即使云端没确认终止也必须把本地 loop 摘掉。
+             * 2026-08-21 实锤——两个窗口在"启动被拒 + 停止也被拒"里静止 13 分钟，
+             * 唯一出路是重启客户端。详见 TurnModeGuard#awaitAndForceRemoveStoppedRemote。
+             */
             return abortRemoteRuns(windowIds, "remote turn stopped",
-                    WindowRuntimeStatus.STOPPED, "远程停止选中窗口完成");
+                    WindowRuntimeStatus.STOPPED, "远程停止选中窗口完成", true);
         }
     }
 
     private WindowTaskCommandResult abortRemoteRuns(Collection<String> windowIds,
                                                      String reason,
                                                      WindowRuntimeStatus lifecycleStatus,
-                                                     String summary) {
+                                                     String summary,
+                                                     boolean forceRemoveUnconfirmed) {
         List<String> ids = normalizeWindowIds(windowIds);
         if (ids.isEmpty()) {
             return WindowTaskCommandResult.empty("没有选中的窗口", getSnapshots());
@@ -1079,6 +1231,24 @@ public class WindowTaskControlService {
         }
         for (String windowId : requested) {
             try {
+                if (forceRemoveUnconfirmed) {
+                    TurnModeGuard.ForcedRemoval removal =
+                            turnModeGuard.awaitAndForceRemoveStoppedRemote(windowId);
+                    switch (removal) {
+                        case NOT_REGISTERED -> details.add(WindowTaskCommandDetail.success(
+                                windowId, "远程 turn loop 已不存在，本地运行边界已清理"));
+                        case REMOVED_CONFIRMED -> details.add(WindowTaskCommandDetail.success(
+                                windowId, "已停止并移除远程 turn loop"));
+                        case REMOVED_UNCONFIRMED -> {
+                            // 云端没确认，但停止必须落地：摘掉本地 loop 并留痕，不把用户堵死。
+                            log.warn("远程停止：云端未确认终止，按停止语义强制移除本地 turn loop："
+                                    + "windowId={}", windowId);
+                            details.add(WindowTaskCommandDetail.success(
+                                    windowId, "已停止；云端未确认终止，已强制清理本地 turn loop"));
+                        }
+                    }
+                    continue;
+                }
                 if (!turnModeGuard.awaitAndRemoveStoppedRemote(windowId)) {
                     details.add(WindowTaskCommandDetail.success(
                             windowId, "远程 turn loop 已不存在，本地运行边界已清理"));
@@ -1129,7 +1299,6 @@ public class WindowTaskControlService {
 
     static TurnTaskCode toTurnTaskCode(TaskType type) {
         return switch (type) {
-            case WUHuan_V2 -> TurnTaskCode.WUHUAN_V2;
             case WUHUAN_V3 -> TurnTaskCode.WUHUAN_V3;
             case WUBEI -> TurnTaskCode.WUBEI;
             case XIULUO_V2 -> TurnTaskCode.XIULUO_V2;
@@ -1138,6 +1307,8 @@ public class WindowTaskControlService {
             case CATCH_GHOST -> TurnTaskCode.CATCH_GHOST;
             case GHOST_KING -> TurnTaskCode.GHOST_KING;
             case YIPIN_GUARD_TEST -> TurnTaskCode.YIPIN_GUARD_TEST;
+            case PATHING_TEST -> TurnTaskCode.PATHING_TEST;
+            case DALISI_QUIZ -> TurnTaskCode.DALISI_QUIZ;
             case G056_DOUBLE_EXPERIENCE_ACCEPTANCE -> TurnTaskCode.G056_DOUBLE_EXPERIENCE_ACCEPTANCE;
             case WILD_BATTLE -> TurnTaskCode.WILD_BATTLE;
             case TIANTING -> TurnTaskCode.TIANTING;
@@ -1160,7 +1331,8 @@ public class WindowTaskControlService {
 
     static TaskType fromTurnTaskCode(TurnTaskCode code) {
         return switch (code) {
-            case WUHUAN_V2 -> TaskType.WUHuan_V2;
+            // 五环 V2 已下线：协议码保留（共享协议不动），客户端不再有对应任务类型。
+            case WUHUAN_V2 -> TaskType.UNKNOWN;
             case WUHUAN_V3 -> TaskType.WUHUAN_V3;
             case WUBEI -> TaskType.WUBEI;
             case XIULUO_V2 -> TaskType.XIULUO_V2;
@@ -1169,6 +1341,8 @@ public class WindowTaskControlService {
             case CATCH_GHOST -> TaskType.CATCH_GHOST;
             case GHOST_KING -> TaskType.GHOST_KING;
             case YIPIN_GUARD_TEST -> TaskType.YIPIN_GUARD_TEST;
+            case PATHING_TEST -> TaskType.PATHING_TEST;
+            case DALISI_QUIZ -> TaskType.DALISI_QUIZ;
             case G056_DOUBLE_EXPERIENCE_ACCEPTANCE -> TaskType.G056_DOUBLE_EXPERIENCE_ACCEPTANCE;
             case WILD_BATTLE -> TaskType.WILD_BATTLE;
             case TIANTING -> TaskType.TIANTING;
@@ -1185,6 +1359,8 @@ public class WindowTaskControlService {
             case CATCH_GHOST -> botProperties.getCatchGhostMaxRuns();
             case GHOST_KING -> botProperties.getGhostKingMaxRuns();
             case YIPIN_GUARD_TEST -> 1;
+            case PATHING_TEST -> 1;
+            case DALISI_QUIZ -> 1;
             case G056_DOUBLE_EXPERIENCE_ACCEPTANCE -> 1;
             case WUHUAN_V2 -> botProperties.getWuhuanMaxRuns();
             case WUHUAN_V3 -> botProperties.getWuhuanMaxRuns();
@@ -1468,7 +1644,7 @@ public class WindowTaskControlService {
                     .orElse(TaskType.UNKNOWN);
             LocalTeamRolePreflightService.Role fixedRole = switch (taskType) {
                 case AUTO_BATTLE -> LocalTeamRolePreflightService.Role.MEMBER;
-                case WUHuan_V2, WUHUAN_V3, XINSHOU -> LocalTeamRolePreflightService.Role.SOLO;
+                case WUHUAN_V3, XINSHOU, PATHING_TEST, DALISI_QUIZ -> LocalTeamRolePreflightService.Role.SOLO;
                 default -> null;
             };
             WindowRuntimeContext context = taskManager.getRunner(windowId)
@@ -1516,10 +1692,29 @@ public class WindowTaskControlService {
                 || Thread.currentThread().isInterrupted();
     }
 
-    private void cancelPendingRemoteStarts(String reason) {
+    /*
+     * 2026-08-22 用户批准修正(第二次咬人):生命周期作废原来是**全局** epoch——停任意一个窗口就把
+     * 所有窗口飞行中的自动恢复/续跑全部判作废。实证两起:08-21 停/恢复 3465 吞掉了 3473 的第 2 轮
+     * (scheduleNextConfiguredRun epoch 不等→false);08-22 10:42 停 3465 吞掉了 3511 的崩溃自动重启
+     * (Ignore recoverable terminal ... epoch=1,全局已 2)。改为**按窗口**作废:全局 AtomicLong 只当
+     * 单调发号器 + 批量启动过程的在飞守卫;每窗口一个 epoch 下限(floor),恢复/续跑/ACK 只比对
+     * 自己窗口的 floor。停止/暂停只抬所选窗口的 floor;新启动某窗口时抬该窗口 floor(替换旧 run)。
+     */
+    private void cancelPendingRemoteStarts(String reason, Collection<String> windowIds) {
         long cancelledEpoch = remoteStartEpoch.incrementAndGet();
-        remoteTerminalRecoveryPending.clear();
-        log.warn("Remote start lifecycle invalidated: reason={} epoch={}", reason, cancelledEpoch);
+        List<String> ids = normalizeWindowIds(windowIds);
+        for (String windowId : ids) {
+            remoteWindowEpochFloor.merge(windowId, cancelledEpoch, Math::max);
+            remoteTerminalRecoveryPending.remove(windowId);
+        }
+        log.warn("Remote start lifecycle invalidated: reason={} epoch={} windows={}",
+                reason, cancelledEpoch, ids);
+    }
+
+    /** @return true while this window's exact start-epoch is still the newest lifecycle it has seen. */
+    private boolean isWindowLifecycleCurrent(String windowId, long startEpoch) {
+        return startEpoch > 0L
+                && startEpoch >= remoteWindowEpochFloor.getOrDefault(windowId, 0L);
     }
 
     private WindowTaskCommandResult remoteStartCancelled(List<String> windowIds) {

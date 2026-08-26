@@ -1014,6 +1014,13 @@ public class InputActionRequest {
                         "retained-window-generation-changed:" + normalizedStage,
                         InputActionSafetyReason.WINDOW_BINDING_CHANGED);
             }
+        } else if (stopToken != null && stopToken.isStopRequested()) {
+            // 用户拍板（2026-08-18）：停止必须立即掐断本地输入——已开始的普通批量请求（云端
+            // 下发的点击/等待串）过去只查窗口身份不查停止位，一整串会跨过停止点执行完。停止是
+            // 终态，没有暂停那种"别拆一半"的顾虑，这里对非保留态请求同样放行 stop 检查。
+            return new DetailedCancellation(
+                    "task-stop:" + normalizeReason(stage, "unknown-stage"),
+                    InputActionSafetyReason.STOP_REQUESTED);
         }
         DetailedCancellation externalFailure = detectExternalSafetyReason(stage);
         if (externalFailure != null) {

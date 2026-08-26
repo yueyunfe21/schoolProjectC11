@@ -54,6 +54,46 @@ class DialogFramePresenceMechanicsReplayTest {
         }
     }
 
+    /*
+     * G102 复查第 5 项（2026-08-24）：DialogService 的非 defer FIFO 验证与五倍前置传入的是
+     * 窄 ROI (250,312,529,208)，而 Runner 用最大 ROI (200,250,640,300)。本回放在同一正负
+     * corpus 上断言两种 ROI 判定完全一致（实测 mismatches=0），固化"窄 ROI 不产生新误报/漏报"
+     * 的证明；将来若判定分叉，此测试红。
+     */
+    @Test
+    void narrowServiceRoiMatchesWideRunnerRoiVerdicts() throws Exception {
+        assertTrue(Files.isDirectory(CORPUS_ROOT), "missing dialog-frame corpus: " + CORPUS_ROOT);
+        final int narrowX = 250;
+        final int narrowY = 312;
+        final int narrowW = 529;
+        final int narrowH = 208;
+        List<Path> cases;
+        try (Stream<Path> stream = Files.walk(CORPUS_ROOT, 2)) {
+            cases = stream.filter(Files::isRegularFile)
+                    .filter(path -> path.toString().endsWith(".png"))
+                    .filter(this::isRawWindowFrame)
+                    .filter(path -> {
+                        String parent = path.getParent().getFileName().toString();
+                        return parent.equals("positive") || parent.equals("negative");
+                    })
+                    .sorted(Comparator.comparing(Path::toString))
+                    .toList();
+        }
+        assertTrue(!cases.isEmpty(), "dialog-frame corpus is empty");
+        DialogFramePresenceMechanics mechanics = new DialogFramePresenceMechanics();
+        for (Path source : cases) {
+            boolean expected = source.getParent().getFileName().toString().equals("positive");
+            BufferedImage fullFrame = ImageIO.read(source.toFile());
+            try {
+                BufferedImage narrowRoi = fullFrame.getSubimage(narrowX, narrowY, narrowW, narrowH);
+                assertEquals(expected, mechanics.isPresent(narrowRoi),
+                        "narrow ROI verdict diverged: " + source.getFileName());
+            } finally {
+                fullFrame.flush();
+            }
+        }
+    }
+
     private boolean isRawWindowFrame(Path path) {
         try {
             BufferedImage image = ImageIO.read(path.toFile());

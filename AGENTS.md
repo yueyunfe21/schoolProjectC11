@@ -2,6 +2,12 @@
 
 This repository is the DHXY desktop automation project. When using Codex or any coding agent, read this file first, then read `docs/DHXY_CONTEXT.md` before making changes.
 
+## 强制规范零：禁止无边界递归扫描
+
+- 禁止从仓库根目录、工作区根目录或更宽目录直接运行 `Get-ChildItem -Recurse`、`dir /s`、`tree /f`、递归目录体积统计，或把全量递归结果装入数组后再过滤。这类命令会遍历 `.git`、构建产物、日志和图片语料，可能把磁盘与内存打满。
+- 查代码和文件名优先使用 `rg`、`rg --files`、`git ls-files`；查日志优先读取已知日志文件并用 `rg` 定位，不允许先递归找所有 `log/out/err` 文件。
+- 确需扫描时，必须先限定一个明确的小目录，排除 `.git`、`target`、`build`、`node_modules`、日志与图片语料目录，并同时限制结果量和运行时间。预计超过 30 秒的扫描要先告知用户；一旦磁盘队列或内存持续上升，立即停止。
+
 **开工前的四件事,一件都不许跳(详见下面三节):**
 
 1. **读你要改的那个任务的业务文档**(下表对照)。

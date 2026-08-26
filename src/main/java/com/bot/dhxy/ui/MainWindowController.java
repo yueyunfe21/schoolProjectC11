@@ -31,6 +31,7 @@ import com.bot.dhxy.window.runtime.WindowTitleIdentity;
 import com.bot.dhxy.window.runtime.WindowTitleIdentityParser;
 import com.bot.dhxy.cloud.turn.protocol.TurnMapSurveyCommand;
 import com.bot.dhxy.cloud.turn.protocol.TurnMapSurveyResult;
+import com.bot.dhxy.cloud.turn.protocol.TurnTaskRuntimeSettings;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.beans.property.ReadOnlyObjectWrapper;
@@ -197,6 +198,9 @@ public class MainWindowController {
     private CheckBox summonSkillCleanEnabledCheckBox;
     private CheckBox taskStartupPreparationEnabledCheckBox;
     private CheckBox xiuluoSkipBossEnabledCheckBox;
+    private ComboBox<String> leaderDeathRecoveryModeComboBox;
+    private static final String LEADER_DEATH_RECOVERY_CONTINUE_LABEL = "继续做当前任务";
+    private static final String LEADER_DEATH_RECOVERY_REACCEPT_LABEL = "放弃并重新接任务";
     private CheckBox doubleExperienceClaimEnabledCheckBox;
     private CheckBox xiuluoMaintenanceRunImmediatelyCheckBox;
     private CheckBox xiuluoHealPetMaintenanceEnabledCheckBox;
@@ -252,7 +256,6 @@ public class MainWindowController {
 
     private Map<TaskType, String> createDefaultTaskCountSummaries() {
         Map<TaskType, String> summaries = new EnumMap<>(TaskType.class);
-        summaries.put(TaskType.WUHuan_V2, "1轮");
         summaries.put(TaskType.WUHUAN_V3, "1轮");
         summaries.put(TaskType.WUBEI, "1次");
         summaries.put(TaskType.XIULUO_V2, "1次");
@@ -309,11 +312,11 @@ public class MainWindowController {
 
         windowTaskTypeComboBox = new ComboBox<>();
         windowTaskTypeComboBox.getItems().setAll(selectableTaskTypes());
-        windowTaskTypeComboBox.setValue(TaskType.WUHuan_V2);
+        windowTaskTypeComboBox.setValue(TaskType.WUHUAN_V3);
 
         queueTaskTypeComboBox = new ComboBox<>();
         queueTaskTypeComboBox.getItems().setAll(selectableTaskTypes());
-        queueTaskTypeComboBox.setValue(TaskType.WUHuan_V2);
+        queueTaskTypeComboBox.setValue(TaskType.WUHUAN_V3);
 
         windowFilterComboBox = new ComboBox<>();
         windowFilterComboBox.getItems().setAll(WindowTableFilter.values());
@@ -434,6 +437,8 @@ public class MainWindowController {
         taskStartupPreparationEnabledCheckBox.setSelected(botProperties.isTaskStartupPreparationEnabled());
         xiuluoSkipBossEnabledCheckBox = new CheckBox("跳过修罗 Boss");
         xiuluoSkipBossEnabledCheckBox.setSelected(botProperties.isXiuluoSkipBossEnabled());
+        leaderDeathRecoveryModeComboBox = buildLeaderDeathRecoveryModeComboBox(
+                botProperties.getLeaderDeathRecoveryMode());
         doubleExperienceClaimEnabledCheckBox = new CheckBox("领取双倍");
         doubleExperienceClaimEnabledCheckBox.setSelected(botProperties.isDoubleExperienceClaimEnabled());
         xiuluoMaintenanceRunImmediatelyCheckBox = new CheckBox("修罗启动维护");
@@ -553,12 +558,12 @@ public class MainWindowController {
     }
 
     /*
-     * 巫医和修理是全局任务维护开关，任务侧用 intervalMs <= 0 表示禁用。它们不要复用
-     * 三技能的短间隔选项，避免用户误以为几分钟级别也适合跑 NPC 维护。
+     * 巫医和修理是全局任务维护开关，任务侧用 intervalMs <= 0 表示禁用。
+     * 2026-08-26 用户要求：加 15/20 分钟、去掉 240（240 的旧存值归一到 120）。
      */
     private ComboBox<Integer> buildMaintenanceIntervalComboBox(long intervalMs) {
         ComboBox<Integer> comboBox = new ComboBox<>();
-        comboBox.getItems().setAll(30, 60, 120, 240);
+        comboBox.getItems().setAll(15, 20, 30, 60, 120);
         comboBox.setValue(normalizeMaintenanceIntervalMinutes(intervalMs));
         comboBox.setPrefWidth(86);
         return comboBox;
@@ -605,6 +610,8 @@ public class MainWindowController {
         botProperties.setSummonSkillCleanEnabled(summonSkillCleanEnabledCheckBox.isSelected());
         botProperties.setTaskStartupPreparationEnabled(taskStartupPreparationEnabledCheckBox.isSelected());
         botProperties.setXiuluoSkipBossEnabled(xiuluoSkipBossEnabledCheckBox.isSelected());
+        botProperties.setLeaderDeathRecoveryMode(
+                normalizeLeaderDeathRecoveryMode(leaderDeathRecoveryModeComboBox.getValue()));
         botProperties.setDoubleExperienceClaimEnabled(doubleExperienceClaimEnabledCheckBox.isSelected());
         botProperties.setXiuluoMaintenanceRunImmediatelyOnStart(xiuluoMaintenanceRunImmediatelyCheckBox.isSelected());
         botProperties.setSummonSkillCleanIntervalMs(normalizeSummonSkillIntervalMinutes(
@@ -700,7 +707,6 @@ public class MainWindowController {
         taskCountSummaries.put(TaskType.GHOST_KING,
                 formatTaskCountSummary(botProperties.getGhostKingMaxRuns(), "次"));
         taskCountSummaries.put(TaskType.WUBEI, formatTaskCountSummary(botProperties.getFivefoldMaxRuns(), "次"));
-        taskCountSummaries.put(TaskType.WUHuan_V2, formatTaskCountSummary(botProperties.getWuhuanMaxRuns(), "轮"));
         taskCountSummaries.put(TaskType.WUHUAN_V3, formatTaskCountSummary(botProperties.getWuhuanMaxRuns(), "轮"));
         taskCountSummaries.put(TaskType.XINSHOU, "1小时");
         taskCountSummaries.put(TaskType.WILD_BATTLE,
@@ -773,13 +779,12 @@ public class MainWindowController {
                 }
                 taskCountSummaries.put(TaskType.GHOST_KING, formatTaskCountSummary(normalized, "次"));
             }
-            case WUHuan_V2, WUHUAN_V3 -> {
+            case WUHUAN_V3 -> {
                 int wuhuanRuns = normalizeWuhuanRunCount(normalized);
                 botProperties.setWuhuanMaxRuns(wuhuanRuns);
                 if (wuhuanRunCountComboBox != null) {
                     wuhuanRunCountComboBox.setValue(wuhuanRuns);
                 }
-                taskCountSummaries.put(TaskType.WUHuan_V2, formatTaskCountSummary(wuhuanRuns, "轮"));
                 taskCountSummaries.put(TaskType.WUHUAN_V3, formatTaskCountSummary(wuhuanRuns, "轮"));
             }
             case WUBEI -> {
@@ -863,16 +868,22 @@ public class MainWindowController {
     }
 
     private int normalizeMaintenanceIntervalMinutes(Integer minutes) {
-        if (minutes == null || minutes <= 45) {
+        if (minutes == null || minutes <= 0) {
+            return 30;
+        }
+        if (minutes <= 17) {
+            return 15;
+        }
+        if (minutes <= 25) {
+            return 20;
+        }
+        if (minutes <= 45) {
             return 30;
         }
         if (minutes <= 90) {
             return 60;
         }
-        if (minutes <= 180) {
-            return 120;
-        }
-        return 240;
+        return 120;
     }
 
     private String formatMaintenanceIntervalText(long intervalMs) {
@@ -1052,9 +1063,9 @@ public class MainWindowController {
         clearQueueButton.setOnAction(event -> clearPendingTaskQueue());
         startQueueButton.setOnAction(event -> startPendingTaskQueue());
         presetCurrentTaskQueueButton.setOnAction(event -> setPendingTaskQueue(windowTaskTypeComboBox.getValue()));
-        presetFiveRingQueueButton.setOnAction(event -> setPendingTaskQueue(TaskType.WUHuan_V2));
+        presetFiveRingQueueButton.setOnAction(event -> setPendingTaskQueue(TaskType.WUHUAN_V3));
         presetAutoBattleQueueButton.setOnAction(event -> setPendingTaskQueue(TaskType.AUTO_BATTLE));
-        presetFiveRingAutoBattleQueueButton.setOnAction(event -> setPendingTaskQueue(TaskType.WUHuan_V2, TaskType.AUTO_BATTLE));
+        presetFiveRingAutoBattleQueueButton.setOnAction(event -> setPendingTaskQueue(TaskType.WUHUAN_V3, TaskType.AUTO_BATTLE));
         selectAllWindowsButton.setOnAction(event -> selectAllWindows());
         selectRunningWindowsButton.setOnAction(event -> selectWindowsByState(WindowTaskSnapshot::isRunning));
         selectIdleWindowsButton.setOnAction(event -> selectWindowsByState(snapshot -> !snapshot.isBusy()));
@@ -1239,7 +1250,28 @@ public class MainWindowController {
     }
 
     private Parent buildXiuluoConfigPanel() {
-        return buildSection("修罗设置", buildControlRow(xiuluoSkipBossEnabledCheckBox));
+        return buildSection("修罗设置", buildControlRow(xiuluoSkipBossEnabledCheckBox),
+                buildControlRow(new Label("队长死亡后"), leaderDeathRecoveryModeComboBox));
+    }
+
+    /**
+     * 队长死亡恢复出口（用户 2026-08-17 定的两条线路）：归队完成后继续做当前任务，或放弃本次
+     * 任务走回起点重新接。选择随每次启动的运行时设置快照发给云端，按窗口生效。
+     */
+    private ComboBox<String> buildLeaderDeathRecoveryModeComboBox(String configured) {
+        ComboBox<String> comboBox = new ComboBox<>();
+        comboBox.getItems().setAll(LEADER_DEATH_RECOVERY_CONTINUE_LABEL, LEADER_DEATH_RECOVERY_REACCEPT_LABEL);
+        comboBox.setValue(TurnTaskRuntimeSettings.LEADER_DEATH_RECOVERY_REACCEPT_TASK
+                .equalsIgnoreCase(configured == null ? "" : configured.trim())
+                ? LEADER_DEATH_RECOVERY_REACCEPT_LABEL
+                : LEADER_DEATH_RECOVERY_CONTINUE_LABEL);
+        return comboBox;
+    }
+
+    private String normalizeLeaderDeathRecoveryMode(String label) {
+        return LEADER_DEATH_RECOVERY_REACCEPT_LABEL.equals(label)
+                ? TurnTaskRuntimeSettings.LEADER_DEATH_RECOVERY_REACCEPT_TASK
+                : TurnTaskRuntimeSettings.LEADER_DEATH_RECOVERY_CONTINUE_TASK;
     }
 
     private void showApplySettingsFeedback() {
@@ -2004,7 +2036,7 @@ public class MainWindowController {
 
     private void openLatestTaskCountEditor() {
         TaskType taskType = pendingTaskQueue.isEmpty()
-                ? TaskType.WUHuan_V2
+                ? TaskType.WUHUAN_V3
                 : pendingTaskQueue.get(pendingTaskQueue.size() - 1);
         openTaskCountInlineEditor(taskType);
     }
@@ -2092,14 +2124,14 @@ public class MainWindowController {
 
     private boolean isEditableTaskCount(TaskType taskType) {
         return switch (taskType) {
-            case XIULUO, XIULUO_V2, XINSHOU_TRAINING, CATCH_GHOST, GHOST_KING, WUHuan_V2, WUHUAN_V3, WUBEI, WILD_BATTLE, AUTO_BATTLE, TIANTING -> true;
+            case XIULUO, XIULUO_V2, XINSHOU_TRAINING, CATCH_GHOST, GHOST_KING, WUHUAN_V3, WUBEI, WILD_BATTLE, AUTO_BATTLE, TIANTING -> true;
             case SLEEP_COMPUTER -> false;
             default -> false;
         };
     }
 
     private int normalizeInlineTaskCount(TaskType taskType, int value) {
-        if (taskType == TaskType.WUHuan_V2 || taskType == TaskType.WUHUAN_V3) {
+        if (taskType == TaskType.WUHUAN_V3 || taskType == TaskType.WUHUAN_V3) {
             return normalizeWuhuanRunCount(value);
         }
         if (isDurationTask(taskType)) {
@@ -2193,7 +2225,7 @@ public class MainWindowController {
 
     private String taskMetaIconLiteral(TaskType taskType) {
         return switch (taskType) {
-            case WUHuan_V2, WUHUAN_V3 -> "fas-circle-notch";
+            case WUHUAN_V3 -> "fas-circle-notch";
             case XIULUO_V2 -> "fas-ghost";
             case XINSHOU_TRAINING -> "fas-graduation-cap";
             case CATCH_GHOST -> "fas-ghost";
@@ -2208,7 +2240,7 @@ public class MainWindowController {
 
     private String taskMetaStyleClass(TaskType taskType) {
         return switch (taskType) {
-            case WUHuan_V2, WUHUAN_V3 -> "task-meta-wuhuan";
+            case WUHUAN_V3 -> "task-meta-wuhuan";
             case WUBEI -> "task-meta-wubei";
             case XIULUO_V2 -> "task-meta-xiuluo";
             case XINSHOU_TRAINING -> "task-meta-xiuluo";
@@ -2222,8 +2254,7 @@ public class MainWindowController {
 
     private String taskMetaAccessibleText(TaskType taskType) {
         return switch (taskType) {
-            case WUHuan_V2 -> "五环";
-            case WUHUAN_V3 -> "wuhuanV3";
+            case WUHUAN_V3 -> "五环";
             case WUBEI -> "五倍";
             case XIULUO_V2 -> "修罗";
             case XINSHOU_TRAINING -> "江湖历练";
@@ -2643,9 +2674,9 @@ public class MainWindowController {
     }
 
     private void scanAndRefreshGameWindowsFromMain() {
-        TaskType defaultTaskType = windowTaskTypeComboBox == null ? TaskType.WUHuan_V2 : windowTaskTypeComboBox.getValue();
+        TaskType defaultTaskType = windowTaskTypeComboBox == null ? TaskType.WUHUAN_V3 : windowTaskTypeComboBox.getValue();
         if (defaultTaskType == null || defaultTaskType == TaskType.UNKNOWN) {
-            defaultTaskType = TaskType.WUHuan_V2;
+            defaultTaskType = TaskType.WUHUAN_V3;
         }
         TaskType scanTaskType = defaultTaskType;
         addWindowLog("刷新：正在扫描游戏窗口并更新绑定...");
@@ -3428,6 +3459,7 @@ public class MainWindowController {
         setNodeDisabled(fivefoldRunCountField, disabled);
         setNodeDisabled(taskStartupPreparationEnabledCheckBox, disabled);
         setNodeDisabled(xiuluoSkipBossEnabledCheckBox, disabled);
+        setNodeDisabled(leaderDeathRecoveryModeComboBox, disabled);
         setNodeDisabled(doubleExperienceClaimEnabledCheckBox, disabled);
         setNodeDisabled(xiuluoMaintenanceRunImmediatelyCheckBox, disabled);
         setNodeDisabled(summonSkillCleanEnabledCheckBox, disabled);

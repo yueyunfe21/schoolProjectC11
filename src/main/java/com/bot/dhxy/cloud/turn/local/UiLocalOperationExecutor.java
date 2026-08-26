@@ -48,6 +48,7 @@ public final class UiLocalOperationExecutor {
             case UI_PROBE_GENERIC_CLOSE -> executeProbeGenericClose(call);
             case UI_CLEAN_LIGHTWEIGHT -> executeCleanLightweight(call);
             case UI_CLOSE_MAP_SEARCH_INPUT_BY_X2 -> executeCloseMapSearchInputByX2(call);
+            case UI_TAP_CENTER_DISMISS_OVERLAY -> executeTapCenterDismissOverlay(call);
             default -> LocalServiceExecution.failed("UNSUPPORTED_LOCAL_OPERATION", null);
         };
     }
@@ -83,6 +84,14 @@ public final class UiLocalOperationExecutor {
             return LocalServiceExecution.failed("INVALID_UI_ARGUMENTS", null);
         }
         return completed(call.operation(), uiCleanerService.cleanLightweightInterruptions(source));
+    }
+
+    private LocalServiceExecution executeTapCenterDismissOverlay(TurnLocalServiceCall call) {
+        if (call.ui() == null || call.ui().source() == null || call.ui().source().isBlank()) {
+            return LocalServiceExecution.failed("INVALID_UI_ARGUMENTS", null);
+        }
+        return completed(call.operation(),
+                uiCleanerService.tapClientCenterToDismissOverlay("turn:" + call.ui().source()));
     }
 
     private LocalServiceExecution executeCloseMapSearchInputByX2(TurnLocalServiceCall call) {

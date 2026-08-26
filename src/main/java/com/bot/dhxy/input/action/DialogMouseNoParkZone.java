@@ -63,6 +63,36 @@ public final class DialogMouseNoParkZone {
      * @param windowTop screen-absolute unscaled window top edge.
      * @return true only when the pointer is inside the rectangle and must be moved out.
      */
+    /** Screen-point zone test for callers outside this package (pre-capture cursor nudge). */
+    public static boolean containsScreenPoint(int screenX, int screenY, int windowLeft, int windowTop) {
+        return contains(screenX, screenY, windowLeft, windowTop);
+    }
+
+    /**
+     * 2026-08-17 user decision: leaving the zone must look human — shortest path out, not a 500px
+     * teleport. Returns a screen point just past the NEAREST zone edge with 15~35px random margin.
+     */
+    public static Point nearestExitTarget(int screenX, int screenY, int windowLeft, int windowTop) {
+        int relX = screenX - windowLeft;
+        int relY = screenY - windowTop;
+        int margin = java.util.concurrent.ThreadLocalRandom.current().nextInt(15, 36);
+        int toLeft = relX - ZONE_LEFT_REL_X;
+        int toRight = ZONE_RIGHT_REL_X - relX;
+        int toTop = relY - ZONE_TOP_REL_Y;
+        int toBottom = ZONE_BOTTOM_REL_Y - relY;
+        int min = Math.min(Math.min(toLeft, toRight), Math.min(toTop, toBottom));
+        if (min == toBottom) {
+            return new Point(screenX, windowTop + ZONE_BOTTOM_REL_Y + margin);
+        }
+        if (min == toTop) {
+            return new Point(screenX, windowTop + ZONE_TOP_REL_Y - margin);
+        }
+        if (min == toLeft) {
+            return new Point(windowLeft + ZONE_LEFT_REL_X - margin, screenY);
+        }
+        return new Point(windowLeft + ZONE_RIGHT_REL_X + margin, screenY);
+    }
+
     static boolean contains(int screenX, int screenY, int windowLeft, int windowTop) {
         int relX = screenX - windowLeft;
         int relY = screenY - windowTop;

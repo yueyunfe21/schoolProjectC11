@@ -9,6 +9,7 @@ import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.concurrent.CompletionStage;
 import java.util.function.Supplier;
 
 /**
@@ -40,6 +41,17 @@ public class InputSequences {
      */
     public boolean submitAndWait(String description, List<InputAction> actions) {
         return inputActionQueue.submitAndWait(description, actions);
+    }
+
+    /**
+     * Submits an atomic input sequence while leaving the observation caller free to keep sampling.
+     *
+     * @param description diagnostic label for logs
+     * @param actions ordered actions with screen-absolute coordinates where applicable
+     * @return worker completion; the caller must react through the stage and must not wait on it
+     */
+    public CompletionStage<Boolean> submitAsync(String description, List<InputAction> actions) {
+        return inputActionQueue.submitAsync(description, actions);
     }
 
     /**
@@ -131,6 +143,25 @@ public class InputSequences {
      */
     public boolean moveAndClickLeft(String description, int x, int y, int settleMs, int delayMs) {
         return submitAndWait(description, List.of(
+                InputAction.moveMouse(x, y),
+                InputAction.sleep(settleMs),
+                InputAction.clickLeft(x, y, delayMs)
+        ));
+    }
+
+    /**
+     * Enqueues one atomic move/click transaction without blocking the observation thread.
+     *
+     * @param description diagnostic label
+     * @param x screen-absolute X pixel
+     * @param y screen-absolute Y pixel
+     * @param settleMs delay after moving before clicking, in milliseconds
+     * @param delayMs post-click delay in milliseconds
+     * @return completion stage owned by the global input worker
+     */
+    public CompletionStage<Boolean> moveAndClickLeftAsync(
+            String description, int x, int y, int settleMs, int delayMs) {
+        return submitAsync(description, List.of(
                 InputAction.moveMouse(x, y),
                 InputAction.sleep(settleMs),
                 InputAction.clickLeft(x, y, delayMs)

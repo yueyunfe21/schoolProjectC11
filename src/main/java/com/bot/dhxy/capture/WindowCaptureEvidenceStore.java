@@ -48,6 +48,22 @@ public class WindowCaptureEvidenceStore {
     private static final long MAX_PENDING_WRITES = 64L;
     private static final long SHUTDOWN_DRAIN_SECONDS = 30L;
     private static final long DROPPED_WARNING_STEP = 100L;
+    /**
+     * Minimum spacing between persisted evidence sets per window. Routine observation sampling
+     * captures whole frames continuously; persisting each one saturated the PNG writers and the
+     * evidence disk (measured 18 MB/s, 32 GB/day). Replay only needs a sparse pixel trail.
+     */
+    private static final long PER_WINDOW_MIN_INTERVAL_MS = 300_000L;
+    /** One capture transaction persists a source frame plus its ROI crop; both share one slot. */
+    private static final long SAME_BURST_WINDOW_MS = 150L;
+    /**
+     * Hard cap per claimed slot. The time window alone is not enough: turn, observation and
+     * transport threads capture concurrently, so one 150ms window can see several capture
+     * transactions of two files each (measured 170 files/min on the leader with no cap).
+     */
+    private static final int MAX_FILES_PER_BURST = 2;
+    /** Evidence days kept on disk: today plus this many previous days. */
+    private static final int RETAINED_PREVIOUS_DAYS = 2;
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS");
 
@@ -57,6 +73,12 @@ public class WindowCaptureEvidenceStore {
     private final AtomicLong pendingWrites = new AtomicLong();
     private final AtomicLong droppedWrites = new AtomicLong();
     private final AtomicBoolean retentionSweepScheduled = new AtomicBoolean();
+    private final java.util.concurrent.ConcurrentHashMap<String, RateSlot> rateSlotByWindow =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** One claimed per-window persistence slot: the burst anchor time and files accepted so far. */
+    private record RateSlot(long anchorMs, int accepted) {
+    }
     private final ExecutorService evidenceWriteExecutor;
     private final ExecutorService retentionSweepExecutor = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "dhxy-capture-retention");
@@ -100,15 +122,21 @@ public class WindowCaptureEvidenceStore {
         if (image == null) {
             return;
         }
-        if (contextHolder.rawCurrent()
-                .map(WindowRuntimeContext::getRole)
-                .filter(WindowRole.MEMBER::equals)
-                .isPresent()) {
+        Optional<WindowRuntimeContext> boundContext = contextHolder.rawCurrent();
+        if (boundContext.isEmpty()) {
+            // An unbound capture has no task identity to replay against; historically these leaked
+            // into unbound_* directories and bypassed the member exclusion below.
+            return;
+        }
+        if (boundContext.map(WindowRuntimeContext::getRole).filter(WindowRole.MEMBER::equals).isPresent()) {
             return;
         }
         LocalDateTime now = LocalDateTime.now();
         scheduleRetentionSweep(now.toLocalDate());
         String windowId = currentWindowId(binding);
+        if (!reserveRateSlot(windowId)) {
+            return;
+        }
         String safeProvider = sanitize(provider == null ? "unknown" : provider);
         long captureSequence = sequence.incrementAndGet();
         int width = Math.max(0, x2 - x1);
@@ -189,8 +217,8 @@ public class WindowCaptureEvidenceStore {
     }
 
     /**
-     * Retain every image from the current local calendar day and remove only parseable evidence-day directories
-     * that are older. A failed cleanup never affects a capture write.
+     * Retain the current local calendar day plus {@link #RETAINED_PREVIOUS_DAYS} previous days and remove only
+     * parseable evidence-day directories that are older. A failed cleanup never affects a capture write.
      */
     private synchronized void purgePreviousDays(LocalDate today) {
         if (today.equals(lastRetentionSweepDay)) {
@@ -214,7 +242,8 @@ public class WindowCaptureEvidenceStore {
 
     private boolean isOlderEvidenceDay(Path candidate, LocalDate today) {
         try {
-            return LocalDate.parse(candidate.getFileName().toString(), DAY).isBefore(today);
+            return LocalDate.parse(candidate.getFileName().toString(), DAY)
+                    .isBefore(today.minusDays(RETAINED_PREVIOUS_DAYS));
         } catch (Exception ignored) {
             return false;
         }
@@ -321,6 +350,30 @@ public class WindowCaptureEvidenceStore {
                 y2,
                 imageWidth,
                 imageHeight);
+    }
+
+    /**
+     * Claims one per-window persistence slot. A fresh claim anchors a short burst window so the
+     * source frame and its ROI crop from the same capture transaction both persist, bounded by
+     * {@link #MAX_FILES_PER_BURST}; afterwards the window stays closed for
+     * {@link #PER_WINDOW_MIN_INTERVAL_MS}.
+     */
+    private boolean reserveRateSlot(String windowId) {
+        long nowMs = System.currentTimeMillis();
+        boolean[] accepted = new boolean[1];
+        rateSlotByWindow.compute(windowId, (key, last) -> {
+            if (last == null || nowMs - last.anchorMs() >= PER_WINDOW_MIN_INTERVAL_MS) {
+                accepted[0] = true;
+                return new RateSlot(nowMs, 1);
+            }
+            if (nowMs - last.anchorMs() <= SAME_BURST_WINDOW_MS
+                    && last.accepted() < MAX_FILES_PER_BURST) {
+                accepted[0] = true;
+                return new RateSlot(last.anchorMs(), last.accepted() + 1);
+            }
+            return last;
+        });
+        return accepted[0];
     }
 
     private boolean reserveWriterCapacity() {

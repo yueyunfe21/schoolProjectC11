@@ -76,6 +76,23 @@ public class QuestManagerService {
     private static final int WUHUAN_TASK_LINK_CLICK_HOLD_MS = 150;
 
 
+    /**
+     * 2026-08-22 用户契约（追踪面板防过期刷新专用）：只做「Alt+Q 开面板→点『当前任务』页→关面板」。
+     * 切到当前任务页本身就会让游戏重同步左侧追踪面板；在列表里找任务/点任务是多余动作，禁止。
+     *
+     * @return true 当面板成功打开并切到当前任务页后关闭；false 表示面板锚点始终没找到。
+     */
+    public boolean refreshCurrentTaskPanelTab() {
+        Point anchor = ensurePanel();
+        if (anchor == null) {
+            log.warn("quest panel refresh: panel anchor not found; nothing refreshed");
+            return false;
+        }
+        closePanel("quest:refreshCurrentTabClose");
+        log.info("quest panel refresh done: open -> current-task tab -> close (no task activation)");
+        return true;
+    }
+
     public boolean activateTaskIfPresent(String task) { return activateTaskIfPresent(task, false); }
 
     public boolean activateTaskIfPresent(String task, boolean keepOpen) {

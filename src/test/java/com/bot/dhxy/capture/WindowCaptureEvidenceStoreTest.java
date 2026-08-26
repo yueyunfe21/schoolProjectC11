@@ -44,15 +44,18 @@ class WindowCaptureEvidenceStoreTest {
         });
         assertTrue(writerOccupied.await(2, TimeUnit.SECONDS));
 
-        WindowCaptureEvidenceStore store = new WindowCaptureEvidenceStore(
-                new WindowTaskContextHolder(new WindowIsolationProperties()), tempDir, writer);
+        WindowTaskContextHolder contextHolder = new WindowTaskContextHolder(new WindowIsolationProperties());
+        WindowCaptureEvidenceStore store = new WindowCaptureEvidenceStore(contextHolder, tempDir, writer);
         BufferedImage source = new BufferedImage(3, 2, BufferedImage.TYPE_INT_ARGB);
         source.setRGB(1, 1, Color.RED.getRGB());
         WindowNativeBinding binding = new WindowNativeBinding(
                 "1234", "test-window", "test-class", 9L, 10, 20, 3, 2);
+        WindowRuntimeContext leader = new WindowRuntimeContext("leader-window", new GameContext());
+        leader.setRole(WindowRole.LEADER);
 
         try {
-            store.persist(source, binding, "TEST", 10, 20, 13, 22);
+            contextHolder.runWith(leader,
+                    () -> store.persist(source, binding, "TEST", 10, 20, 13, 22));
             assertFalse(hasExtension(tempDir, ".png"),
                     "PNG writing must stay queued while the dedicated writer is occupied");
 
@@ -71,9 +74,66 @@ class WindowCaptureEvidenceStoreTest {
         assertEquals(Color.RED.getRGB(), saved.getRGB(1, 1),
                 "the queued writer must persist the caller-time pixel snapshot");
         String sidecar = Files.readString(metadata.get(0));
-        assertTrue(sidecar.contains("windowId=unbound_1234"));
+        assertTrue(sidecar.contains("windowId=leader-window"));
         assertTrue(sidecar.contains("provider=TEST"));
         assertTrue(sidecar.contains("rect=10,20,13,22"));
+    }
+
+    @Test
+    void unboundCaptureIsNotPersisted() throws Exception {
+        ExecutorService writer = Executors.newSingleThreadExecutor();
+        WindowCaptureEvidenceStore store = new WindowCaptureEvidenceStore(
+                new WindowTaskContextHolder(new WindowIsolationProperties()), tempDir, writer);
+        BufferedImage source = new BufferedImage(3, 2, BufferedImage.TYPE_INT_ARGB);
+        WindowNativeBinding binding = new WindowNativeBinding(
+                "1234", "test-window", "test-class", 9L, 10, 20, 3, 2);
+
+        try {
+            store.persist(source, binding, "TEST", 10, 20, 13, 22);
+        } finally {
+            store.shutdownExecutors();
+            source.flush();
+        }
+
+        assertFalse(hasExtension(tempDir, ".png"),
+                "a capture with no bound window context must not leave evidence");
+        assertFalse(hasExtension(tempDir, ".meta"));
+    }
+
+    @Test
+    void perWindowRateLimitKeepsOneBurstAndDropsFollowUpsInsideInterval() throws Exception {
+        ExecutorService writer = Executors.newSingleThreadExecutor();
+        WindowTaskContextHolder contextHolder = new WindowTaskContextHolder(new WindowIsolationProperties());
+        WindowCaptureEvidenceStore store = new WindowCaptureEvidenceStore(contextHolder, tempDir, writer);
+        BufferedImage source = new BufferedImage(3, 2, BufferedImage.TYPE_INT_ARGB);
+        WindowNativeBinding binding = new WindowNativeBinding(
+                "1234", "test-window", "test-class", 9L, 10, 20, 3, 2);
+        WindowRuntimeContext leader = new WindowRuntimeContext("leader-window", new GameContext());
+        leader.setRole(WindowRole.LEADER);
+
+        try {
+            contextHolder.runWith(leader, () -> {
+                // Same capture transaction: source frame plus ROI crop both persist.
+                store.persist(source, binding, "TEST", 10, 20, 13, 22);
+                store.persist(source, binding, "TEST", 11, 21, 12, 22);
+                // A concurrent capture landing inside the burst window still exceeds the
+                // per-burst file cap and is dropped.
+                store.persist(source, binding, "TEST", 10, 20, 13, 22);
+                // A separate capture inside the per-window interval is dropped as well.
+                try {
+                    Thread.sleep(300L);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+                store.persist(source, binding, "TEST", 10, 20, 13, 22);
+            });
+        } finally {
+            store.shutdownExecutors();
+            source.flush();
+        }
+
+        assertEquals(2, filesWithExtension(tempDir, ".png").size(),
+                "one burst persists its frame pair; follow-ups inside the interval are dropped");
     }
 
     @Test

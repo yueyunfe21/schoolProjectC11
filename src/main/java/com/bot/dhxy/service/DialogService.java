@@ -2,6 +2,7 @@ package com.bot.dhxy.service;
 
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.model.dialog.DialogFingerprintWashMode;
 import com.bot.dhxy.model.dialog.DialogOperation;
 import com.bot.dhxy.model.dialog.DialogType;
@@ -67,6 +68,9 @@ public class DialogService {
 
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
+    /** G102 收口：全站唯一 Dialog presence 判定（结构化上下边框检测，无状态）。 */
+    private final com.bot.dhxy.window.observation.DialogFramePresenceMechanics dialogFramePresence =
+            new com.bot.dhxy.window.observation.DialogFramePresenceMechanics();
     public DialogService(GameClientTracker tracker, CoordinateHelper coordinateHelper) {
         this.tracker = Objects.requireNonNull(tracker, "tracker");
         this.coordinateHelper = Objects.requireNonNull(coordinateHelper, "coordinateHelper");
@@ -97,49 +101,12 @@ public class DialogService {
      * Verifies the post-NPC-click option dialog with the baseline generic/raw/green precedence.
      * This method never clicks an option.
      */
-    /**
-     * Reads whether the standard option-dialog area currently shows a dialog, without any input.
-     *
-     * @param source diagnostic source only; the probe never clicks or sends hotkeys
-     * @return {@code TRUE} when an option dialog is visible, {@code FALSE} after a clean scan,
-     *         or {@code null} when capture evidence is unavailable
+    /*
+     * G102 收口（2026-08-24）：旧的第二套 Dialog presence 判定（固定 mask 区域灰度方差门 +
+     * 绿像素计数，probeOptionDialogPresent/isOptionDialog）整体删除。全站唯一 presence 判定 =
+     * DialogFramePresenceMechanics 的结构化上下边框检测；框内是什么、点哪个选项归
+     * demanded-frame 后置分类。禁止在生产代码重新引入 isOptionDialog 或 Dialog 方差门。
      */
-    public Boolean probeOptionDialogPresent(String source) {
-        int[] rect = coordinateHelper.getScaledRect(
-                DIALOG_LEFT, DIALOG_TOP, DIALOG_WIDTH, DIALOG_HEIGHT);
-        BufferedImage raw = tracker.captureToMemory(
-                "dialog-probe:" + safeDebugName(source), rect[0], rect[1], rect[2], rect[3]);
-        if (raw == null) {
-            log.warn("Option-dialog read-only probe unavailable: source={} cause=capture-failed", source);
-            return null;
-        }
-        try {
-            return isOptionDialog(raw, rect);
-        } finally {
-            raw.flush();
-        }
-    }
-
-    /**
-     * Same read-only option-dialog check fed from a caller-owned frame cropper (e.g. the
-     * observation cycle's shared in-memory frame) — no fresh capture. The cropper receives the
-     * scaled absolute dialog rect and must return that region's pixels or {@code null}.
-     */
-    public Boolean probeOptionDialogPresent(
-            java.util.function.Function<int[], BufferedImage> regionCropper, String source) {
-        int[] rect = coordinateHelper.getScaledRect(
-                DIALOG_LEFT, DIALOG_TOP, DIALOG_WIDTH, DIALOG_HEIGHT);
-        BufferedImage raw = regionCropper.apply(rect);
-        if (raw == null) {
-            log.debug("Option-dialog read-only probe unavailable: source={} cause=region-unavailable", source);
-            return null;
-        }
-        try {
-            return isOptionDialog(raw, rect);
-        } finally {
-            raw.flush();
-        }
-    }
 
     public NpcClickVerification verifyNpcArrivalExpectedDialog(
             List<String> expectedGreenTemplatePaths,
@@ -158,7 +125,8 @@ public class DialogService {
             return new NpcClickVerification(false, false, "CAPTURE_FAILED", DialogType.NONE);
         }
         try {
-            boolean optionVisible = isOptionDialog(raw, rect);
+            // G102 收口：presence 判定统一走结构化边框检测（老方差门对多行框必误判）。
+            boolean optionVisible = dialogFramePresence.isPresent(raw);
             if (!optionVisible) {
                 return new NpcClickVerification(false, false, "NO_DIALOG", DialogType.NONE);
             }
@@ -199,7 +167,10 @@ public class DialogService {
             return false;
         }
         try {
-            return ImageFinder.find(image, template, threshold) != null;
+            double[] match = ImageFinder.find(image, template, threshold);
+            // 用户铁律（2026-08-18 全量清扫）：模板匹配点落盘判定原图。
+            MatchEvidenceStore.save("dialog-npc-expected-template", null, image, template, match);
+            return match != null;
         } finally {
             template.flush();
         }
@@ -227,7 +198,8 @@ public class DialogService {
 
     Optional<LocalPreparedDialogMatch> prepareWubeiEnterBattleFromFrame(
             BufferedImage raw, int[] rect, String source) {
-        if (raw == null || rect == null || rect.length < 4 || !isOptionDialog(raw, rect)) {
+        // G102 收口：五倍进战准备的前置 presence 同样统一走结构化边框检测。
+        if (raw == null || rect == null || rect.length < 4 || !dialogFramePresence.isPresent(raw)) {
             return Optional.empty();
         }
         BufferedImage washed = ImagePreprocessor.washDialogOptionTemplateTextToBlackAndWhite(raw);
@@ -239,6 +211,7 @@ public class DialogService {
                 }
                 try {
                     double[] result = ImageFinder.find(washed, template, 0.85);
+                    MatchEvidenceStore.saveOnChange("dialog-wubei-enter-battle", null, washed, template, result);
                     if (result == null || result.length < 2) {
                         continue;
                     }
@@ -300,31 +273,6 @@ public class DialogService {
             return Optional.empty();
         } finally {
             washed.flush();
-        }
-    }
-
-    private boolean isOptionDialog(BufferedImage raw, int[] dialogRect) {
-        int[] maskArea = coordinateHelper.getScaledRect(411, 403, 368, 85);
-        BufferedImage mask = ImagePreprocessor.cropAbsoluteRect(raw, dialogRect, maskArea);
-        if (mask == null) {
-            return false;
-        }
-        try {
-            if (ImagePreprocessor.getImageStandardDeviation(mask, null) >= 30.0) {
-                return false;
-            }
-        } finally {
-            mask.flush();
-        }
-        int[] optionArea = coordinateHelper.getScaledRect(250, 387, 529, 101);
-        BufferedImage option = ImagePreprocessor.cropAbsoluteRect(raw, dialogRect, optionArea);
-        if (option == null) {
-            return false;
-        }
-        try {
-            return ImagePreprocessor.countGreenPixelsHSV(option, null) > 150;
-        } finally {
-            option.flush();
         }
     }
 
@@ -413,6 +361,8 @@ public class DialogService {
         }
         try {
             double[] result = ImageFinder.find(roi, template, XIULUO_ENTER_BATTLE_LOCAL_MATCH_RATE);
+            MatchEvidenceStore.saveOnChange(
+                    "dialog-enter-battle-kanda-" + taskType.name().toLowerCase(), null, roi, template, result);
             if (result == null || result.length < 3) {
                 return Optional.empty();
             }

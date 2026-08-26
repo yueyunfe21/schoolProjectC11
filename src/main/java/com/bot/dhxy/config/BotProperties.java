@@ -44,6 +44,13 @@ public class BotProperties {
     private boolean xiuluoSkipBossEnabled = false;
 
     /**
+     * 队长死亡恢复出口（用户 2026-08-17 定的两条线路）：CONTINUE_TASK=归队后继续做这个任务
+     * （先验任务 title 还在，不在则自动降级重接）；REACCEPT_TASK=放弃本次任务走回起点重新接。
+     * 随每次启动的运行时设置快照发给云端，按窗口生效。
+     */
+    private String leaderDeathRecoveryMode = "CONTINUE_TASK";
+
+    /**
      * CR120 通用盒子开关。
      *
      * 队长默认处理盒子；队员默认不处理，避免首次接入时成员战后抢输入。

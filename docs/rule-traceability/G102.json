@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "card": "G102",
+  "changeType": "business",
+  "status": "SOURCE_DELIVERED_FRESH_REQUIRED",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "5e05a9578a1b6116331def92ec255c27f490b68b",
+    "pushedReference": "origin/dev",
+    "cloudBranch": "dev",
+    "cloudCommit": "ac398141139a375a07561777f46b3d4c705a70b0",
+    "cloudPushedReference": "origin/dev",
+    "businessReference": "552539d"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-WUHAN-001", "BR-WUHAN-002"],
+  "affectedPaths": [
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/ACTIVE_WORK.md",
+    "docs/rule-traceability/G102.json",
+    "docs/cr-dashboard-data.js",
+    "src/main/java/com/bot/dhxy/cloud/turn/local/NpcArrivalFrameFifoLocalExecutor.java",
+    "src/main/java/com/bot/dhxy/window/observation/SpringObservationRunnerFactory.java",
+    "src/main/java/com/bot/dhxy/window/observation/WindowObservationSampler.java",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wuhuan/v3/FiveRingTaskV3.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "迁移新增的三个 DELEGATED_WUHUAN_* 只有产出和日志、没有消费者；FIFO 又把已弹 Option 框解释为点击失败，Runner 还会在给鞋终态前主动清掉业务 Dialog。",
+    "userDecision": "删除假 delegation，恢复旧版的对话已开即直入五环分类；defer-to-task 的 DIALOG_OPEN_UNVERIFIED 结束 NPC 点击腿；删除五环 terminal-frame 清业务框副作用。",
+    "decisionRecordedAt": "2026-08-24",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G102-五环-NPC-Dialog-交接断链与给鞋终态清屏2026-08-24"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-WUHAN-001",
+      "producer": "Client Runner publishes exact-window WUHUAN_DIALOG_PRESENCE; NPC FIFO preserves DIALOG_OPEN_UNVERIFIED after a real click.",
+      "transport": "G017 only acknowledges startup lineage; FiveRingTaskV3 reads the fresh exact-HWND dialog fact and arms its existing demanded-frame interest.",
+      "consumer": "FiveRingTaskV3.interactAcceptDialog consumes the classified accept Option/Story action.",
+      "ordering": "fresh dialog present OR deferred click opens option dialog -> stop NPC clicking -> arm demanded-frame classifier -> consume accept option."
+    },
+    {
+      "rule": "BR-WUHAN-002",
+      "producer": "Runner observes pathing terminal and dialog presence without closing visible business UI.",
+      "transport": "Terminal frame and dialog fact retain the exact intent/window/run lineage.",
+      "consumer": "FiveRingTaskV3 HANDLE_DIALOG owns give-item dialog classification and execution.",
+      "ordering": "terminal plus dialog present -> preserve dialog -> HANDLE_DIALOG -> give shoes; no terminal cleanup and no tracker reclick."
+    }
+  ],
+  "verification": [
+    {
+      "name": "client-production-compile",
+      "result": "PASS",
+      "evidence": "mvn -q -DskipTests compile in D:/mavenProject/DHXY-cr271"
+    },
+    {
+      "name": "cloud-production-compile",
+      "result": "PASS",
+      "evidence": "mvn -q -DskipTests compile in D:/mavenProject/dhxy-cloud-brain"
+    },
+    {
+      "name": "g102-source-contract",
+      "result": "PASS",
+      "evidence": "node scripts/g102-wuhuan-dialog-handoff-contract.js: 8/8 PASS (2026-08-24 closeout: bans hardcoded defer=false, bans variance-gate reintroduction, enforces DialogFramePresenceMechanics as sole presence check; defer handoff item rewritten to real control flow DEFERRED_TO_TASK)"
+    },
+    {
+      "name": "diff-check",
+      "result": "PASS",
+      "evidence": "git diff --check passed in both repositories; line-ending warnings only"
+    },
+    {
+      "name": "fresh-dialog-handoff",
+      "result": "PASS",
+      "evidence": "11:32:33 DIALOG_OPEN_UNVERIFIED was handed to task classifier; ACCEPT_TASK interest armed; demanded generations 18-21 uploaded."
+    },
+    {
+      "name": "fresh-accept-option-variant",
+      "result": "WITHDRAWN",
+      "evidence": "Conclusion retracted 2026-08-24: the first-click raw frame (P90_g102_3465_accept_dialog_20260824.png) shows the STANDARD accept page where the existing template scores ~1.0. The recovery page was opened by a SECOND duplicate NPC click after the FIFO verifier falsely returned VERIFICATION_FAILED (defer hardcoded to false re-enabled the legacy variance gate). No second template is needed or permitted."
+    },
+    {
+      "name": "g102-closeout-defer-restored-and-legacy-presence-deleted",
+      "result": "PASS",
+      "evidence": "FIFO main click path passes spec.deferDialogVerificationToTask(); isOptionDialog, both probeOptionDialogPresent, getImageStandardDeviation (both repos) and the maintainScenePresenceCache dead chain physically deleted; presence unified on DialogFramePresenceMechanics (non-defer FIFO verify + wubei pre-gate switched)."
+    },
+    {
+      "name": "p90-isolated-replay",
+      "result": "PASS",
+      "evidence": "P90 raw frame in corpus judged present=true; narrow service ROI (250,312,529,208) matches wide runner ROI verdicts across the full positive/negative corpus (narrowServiceRoiMatchesWideRunnerRoiVerdicts); marked image at images/test-cases/dialog-frame-classification/marked/P90_g102_3465_accept_dialog_20260824_marked.png with topEdge=(51,509,y=69) bottomEdge=(40,585,y=265) panelH=196."
+    },
+    {
+      "name": "fresh-five-window-run",
+      "result": "REQUIRED",
+      "evidence": "Real five-window fresh run after restart is the remaining acceptance gate: one accept click with no duplicate NPC click, and give-shoes entering HANDLE_DIALOG."
+    }
+  ]
+}

@@ -254,7 +254,10 @@ public class InputActionWorker {
                 actionIndex++;
                 if (!waitIfPaused(request, "action-" + actionIndex)
                         || Thread.currentThread().isInterrupted()
-                        || !isPlayerIdentityEpochCurrent(request, "action-" + actionIndex)) {
+                        || !isPlayerIdentityEpochCurrent(request, "action-" + actionIndex)
+                        // 用户拍板（2026-08-18）：停止要立即掐断本地——动作与动作之间也查一次
+                        // 停止/安全位，不再让已开始的批量串跨过停止点跑完。
+                        || !request.checkDetailedSafety("action-" + actionIndex)) {
                     return false;
                 }
                 log.info("[INPUT_TRACE] queued-action request={} windowId={} actionIndex={}/{} action={}",
@@ -275,11 +278,13 @@ public class InputActionWorker {
         });
         } finally {
             /*
-             * The single tail of every path above. It has to be the tail of the whole request, not of
-             * each action: moveAndClickLeft is MOVE then CLICK, so sweeping after the MOVE would put
-             * the click itself on the park point.
+             * 2026-08-17 user decision: the per-request tail sweep is retired. It fired on every
+             * queued request against the CURRENT request's window geometry while five windows share
+             * one physical mouse, producing constant cross-window false sweeps and a very
+             * bot-looking 500px teleport into the park region. The cursor is now cleared lazily and
+             * minimally: right before a dialog-identification capture, with a short human-like
+             * glide just past the nearest zone edge (WindowObservationSampler.nudgeCursorOutOfDialogZone).
              */
-            parkPointerOutOfNoParkZone(request);
         }
     }
 
