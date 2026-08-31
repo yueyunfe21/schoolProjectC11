@@ -108,7 +108,9 @@ function Wait-PortReleased {
 }
 
 function Wait-PortListening {
-    param([int]$Port, [int]$TimeoutSeconds = 90)
+    # 2026-08-31 事故:90 秒按"无改动秒起"标定;大合并后云端启动器要先重编译,端口开出来
+    # 晚于上界,脚本超时自杀而分离的云端子进程继续起完->云端在跑、客户端永远没被启动。
+    param([int]$Port, [int]$TimeoutSeconds = 420)
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         $listener = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue

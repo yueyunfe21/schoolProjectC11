@@ -1908,9 +1908,10 @@ public final class WindowObservationSampler {
             localPathingLastChangedAtMs = observedAtMs;
         }
         /*
-         * 2026-08-23 停稳事实重设计（五环首批）：五环走数值判稳——本地字模逐位读出坐标值，
-         * 停/动在数值上判定，OCR 问答循环整个不走。其余任务仍走下方的像素差值老路，
-         * 分批迁移（设计卡 dhxy-cloud-brain/docs/2026-08-22-local-stability-fact-redesign.md）。
+         * 2026-08-23 停稳事实重设计（五环首批）→ G130（2026-08-31）全任务收口：数值判稳——
+         * 本地字模逐位读出坐标值，停/动在数值上判定，OCR 问答循环整个不走。
+         * isValueStabilityMode 恒真，下方像素差值老路已是死路（设计卡
+         * dhxy-cloud-brain/docs/2026-08-22-local-stability-fact-redesign.md）。
          */
         if (isValueStabilityMode()) {
             refreshValueStability(intent, observedAtMs);
@@ -2036,8 +2037,15 @@ public final class WindowObservationSampler {
 
     /** 数值判稳的启用面：五环先行（另含专测任务），验证后分批扩到其余任务。 */
     private boolean isValueStabilityMode() {
-        return context.getSelectedTaskType() == TaskType.WUHUAN_V3
-                || context.getSelectedTaskType() == TaskType.PATHING_TEST;
+        /*
+         * G130 用户裁定（2026-08-31）：判"停没停"必须读坐标数字，不能比图片。
+         * 08-22 重设计原计划按任务分批迁移，实际停在五环首批，其余任务一直走像素差值老路。
+         * 2026-08-31 14:17 事故（hwnd-BD0D1E 归队后站长寿村三分钟）：坐标 55,22 一个数字没变，
+         * 背景飘过一团红色让 34.9% 像素超了 5% 差值阈值，750 次判定反复判"在动"，
+         * 每次都把 2.2 秒停稳计时清零——STOPPED_AWAY 永远触发不了，Runner 无限沉默。
+         * 自此全任务走数值判稳；下方像素差值路径成死路，仅保留待 fresh 验证后清理。
+         */
+        return true;
     }
 
     /**

@@ -1,5 +1,289 @@
 # DHXY Package Architecture
 
+## G136 封妖符 while 循环重设计：浮窗解析目的地+软标记循环+分支总预算（2026-08-31 用户重设计）
+
+- **状态：`SOURCE FIXED+两轮返修 / 合同 10/10+G134v3 2/2 / 变异 5/5 全杀 / 天庭包 191绿12红=既有红 / FRESH REQUIRED`。**
+- **用户二次裁定（返修①）：** "做没做过"**只由浮窗有无判断**——坐标没动不得判"做过"。没动+浮窗出现过
+  =人本来就站在目的地上,落入到达比对:目的地一致就 Alt+A 找怪,不一致才有界重按。连带修复:格子标记
+  推迟到"到达确认"之后（原实现在终局就标记,导致"重按同格"永远按不到同一格）。
+- **用户三次指示（返修②）：** 浮窗绝不一次性截取——照抄五倍 `captureTrackerDestinationHint` 成熟写法:
+  定时多采样（500/1000/1500+2400ms 尾拍,解析到即提前返回）+ 区域复用五倍标定值 (350,370)-(679,463)。
+- **端到端实测（返修③,用户事故截图直接跑生产链）：** OCR sidecar 实跑:裁区(五倍区域,三种边框偏移
+  全部完整框住浮窗)→ **原图 OCR = "正在自动寻路前往长寿村外（103，80）" → 正则精准解析
+  地图=长寿村外 x=103 y=80 ✅**;而 `washYellowTextToBlackAndWhite` 把此浮窗字色洗成空图(OCR 剩
+  "51ר1")——**生产链改为原图优先,洗黄字仅作未命中的第二次机会兜底**(合同门⑧钉死顺序)。
+  中间图留存 `g136-verify-crop/washed-*.png`。全部时点耗尽才允许"浮窗缺席"结论。
+- **返修⑥（最终定案，用户裁定）：洗字与五倍一模一样，不另造判据；本卡只负责把区域位置对准。**
+  找到五倍生产落盘的真·寻路浮窗（用户基线仓 `DHXY/images/temp/hwnd-*/wubei_tracker_destination_hint_*_raw.png`，
+  全仓 2609 张成对 raw/yellow，OCR 批量筛出含"寻路"者）。**端到端实证：五倍洗字 + OCR + 本卡正则
+  在三张生产真浮窗上全部解析成功——金兜洞(47,44) / 平顶山(78,97) / 平顶山(285,20)。**
+  用户转发截图洗不出的原因是聊天有损压缩把纯黄 (255,255,0) 改写成 ~(199,189,168)（蓝通道 0→168，
+  超出五倍滤波的"蓝≤110"条件，通过率 100%→3%），**非生产形态，不作为判据依据**；此前新造的
+  `isBannerYellowTextPixel`/`washBannerYellowTextToBlackAndWhite` 已从 `ImagePreprocessor` 整体删除。
+  合同门⑧改为断言必须用 `washYellowTextToBlackAndWhite` 且禁止出现浮窗专用洗字与原图路径。
+- **（历史过程记录）返修④+⑤：** 像素级对比查明五倍无 bug（生产黄字纯黄
+  (240,240,0) 滤波 100% 通过；用户截图洗挂系聊天 webp 压缩抬蓝 0→~150 所致）。但用户裁定原则:
+  **洗黄字在本浮窗上从未被验证成功过（唯一一次实测失败），未验证的方法不得混入链路——哪怕当兜底**。
+  终态=浮窗读取只走已验证的原图 OCR（用户截图实测精准解析"长寿村外(103,80)"，webp 退化都能读）;
+  合同门⑧改为断言 readFengyaofuPathingBanner 方法体内**不得出现 washYellowTextToBlackAndWhite**。
+  日后要引入洗字，必须先拿 fresh 落盘的生产浮窗原图验证通过。
+- **用户重设计（判据冻结,附事故截图）：** 四格不做一次性标记,在 while 循环里重复;点格后游戏弹
+  "正在自动寻路前往长寿村外(103,80)"浮窗——解析出目的地比对到达;浮窗没出现=该格**可能**已做过
+  (不定死);点了坐标没变化=大概率已做过,直接转下一格;一直循环直到任务框变化;超时这次没生效也要修。
+- **实现（Cloud 四文件）：** ①`NpcClickService.captureWindowRegionToMemory` 公开区域截取;
+  ②`TiantingRoundContext.withFengyaofuCoordinatesCleared` 清标记循环化;③TiantingTask:点格后立刻
+  抓浮窗区(200,375,640x70)OCR 两试、正则解析目的地(容全角/空格,行为级合同真吃文本)、每次判定
+  原图落 `g136-fengyaofu-banner` 滚动池 40(留证铁律);浮窗缺席→释放腿+软标记转下一格;到达后与
+  浮窗目的地±3 格比对,没到重按同格(上界 2)再软标记;没动=软标记转下一格(取代 G134 推进语义);
+  无近旁幻影(G135 半径过滤后)=可能已被做掉,软标记转下一格,不再回李靖;一圈无进展清空标记再循环
+  (上界 3 圈);**分支总预算 15 分钟**——85 次原地重试时没有任何超时生效,根因=此前只有单拍看门狗,
+  分支整体无预算;超预算/超圈数走既有回李靖兜底;leaveFengyaofu 清全部新状态。
+- **fresh 验收：** 封妖符应看到每次点格后 `pathing banner parsed: dest=...`;交叉消耗场景(#2 误耗 #3)
+  应表现为该格软跳过+下一圈回访,不再原地死点;全程不超 15 分钟必有终局。
+- **终态 SHA：** TiantingTask `b2d89672f0fefc3e`/6361L、RoundContext `f2cb983f3c097701`/188L、
+  NpcClickService `143562f79bff7034`/5211L、G136 合同 `91e1698f491b8493`/149L、
+  G134 合同(改判 G136 语义)`f9f84d3290855045`/46L(均白名单)。
+
+## G135 封妖符跨坐标误点：整屏找怪把隔壁坐标的怪点掉（2026-08-31 用户还原机制）
+
+- **状态：`SOURCE FIXED / 合同 3/3 / 变异 3/3 全杀 / NPC点击家族+天庭回归全绿 / FRESH REQUIRED`。**
+- **用户还原的事故机制：** 封妖符相邻坐标(#2/#3)同屏;人在 #2 按 Alt+A 找"妖王幻影"时,TOOLTIP_ONLY
+  策略在**整个可见画面**扫名牌,把 #3 的怪点掉打完;程序以为做完 #2 去做 #3——怪已被提前消耗,人打完
+  架就站在 #3 附近,点格零距离不触发移动 → 与 G130/G134 叠加成 85 次原地死点。
+- **实现：** `NpcClickRequest.maxTooltipDistanceFromScreenCenter`(默认 0=不限,既有调用方零变化);
+  点击管线 tooltip 候选按到窗口中心(人物)的欧氏距离过滤,每候选距离/去留逐条落日志
+  (`G135 distance gate`);全部太远=本区域无目标,不点最近的凑数;封妖符请求带半径 250(标定初值,
+  fresh 按距离日志校准)。
+- **终态 SHA：** NpcClickRequest `62f924cd1b8984eb`/207L、合同 `f3c6552202d3e49b`/75L
+  (Service/TiantingTask 以 G136 终态为准)。
+
+## G134 封妖符"点了没动"必须照常推进 Alt+A：没动是合法结果（2026-08-31 16:31）
+
+- **状态：`SOURCE FIXED / 合同 2/2 / 变异 2/2 全杀 / 天庭包 92绿6红=基线 / FRESH REQUIRED`。**
+- **用户拍板（判据冻结）：业务流程=点坐标→（走）到→Alt+A 找怪→打完→下一个坐标。"到了没动"是
+  正确状态；腿到终局（停稳）就该进 Alt+A,不管有没有观察到移动。**
+- **事故：** 队长天庭封妖符阶段,人停在 (103,80) 不动,同一坐标链接被点 **85 次**（每 5 秒一圈,
+  16:0x–16:31）,Alt+A 永远轮不到,用户被迫 Ctrl+Shift+F11 急停。
+- **根因（两层）：** ①代码把"Runner 观察到移动"当作坐标点击生效的必要条件,"没动"唯一处理=
+  `retry=same-coordinate` 无限重试——测错了对象（该测"到位"而不是"动过"）,且无上界;
+  ②这道门此前从未拦过人:旧像素判动被背景噪声常态化误报"动了",门形同虚设,业务跑在"坏传感器
+  恰好顶开错误的门"上;G130 数值判稳说真话后,"人已在坐标上点了本来不动"的合法情形第一次被拦死。
+- **修复（TiantingTask 封妖符终局消费,一处）：** 没动分支不再提前 return 重试——关掉挡路 STORY
+  （防点击被框吃掉的保护保留）后落到与 moved 分支同一条推进路（withClickedCoordinate → Alt+A →
+  任务框比对分流）;awaiting index 不再抹除（它是 Alt+A 链的钥匙）。
+- **合同（`G134FengyaofuNoMovementAdvanceContractTest` 2/2,变异 2/2 全杀）：** ①没动终局必须推进
+  Alt+A、禁回退无限重试、STORY 清理保留、与 moved 分支汇合;②awaiting index 在没动分支存活。
+- **fresh 验收：** 封妖符阶段人已在坐标上时,日志应现 `treated as already-at-coordinate; proceeding
+  to Alt+A` 一次,随后 Alt+A/找怪照常;不再出现连续 `no movement proof` 重试。
+- **教训（G130 波及面清单的第一例）：** 数值判稳说真话后,所有此前依赖"噪声假移动"混过去的
+  消费点都会暴露——同类"必须观察到移动才推进"的门需逐一排查（待列卡）。
+- **终态 SHA：** TiantingTask 见工具输出（含 G133 返修与 G134,同文件）。
+
+## G133 热启动绿链防过期门通用化：Alt+Q 重同步接入全部七任务（2026-08-31）
+
+- **状态：`SOURCE FIXED+返修 / 合同 7/7 / 变异 6/6 全杀 / 回归全绿 / FRESH REQUIRED`（2026-08-31 实施+同日返修）。**
+- **返修（16:01 fresh 用户抓获）：**首版把天庭的门接在同步备用分流，而热启动走的是 **G017 异步主分支**
+  （`startup terminal consumed phase=RUN_SUBTASKS`）——title 在场就直接消费了观察者 7.2 秒前备好的
+  旧链接（实测 `linkAgeMs=7252` 点了没动进恢复循环），G133 日志 0 条。修复=主分支消费 RUN_SUBTASKS 时
+  先 `refreshQuestPanelOnly` 重同步，成功后 `preparedActions.clear` 作废重同步之前备好的链接，
+  只信之后观察者重新备出的；任务真过期时链接不再出现，走无链分流去接任务。
+  新合同门⑥（钉 `if (` 完整守卫行防前缀短路，变异 E/F 全杀）。天庭包 90绿6红=基线不变。
+  终态天庭 `见下方返修 SHA`。
+- **用户拍板（判据冻结）：这道门必须接到所有任务——五环/五倍/修罗/江湖历练/抓鬼/鬼王/天庭全接。**
+- **背景：** 门 2026-08-21 首发（热启动/暂停重启时追踪面板可能是过期残影,直接点绿链=点一个不存在的
+  任务;Alt+Q 开任务面板切"当前任务"页再关,逼游戏重同步,活过重同步的绿链才可信）,**只落地了修罗**。
+  今日天庭 fresh 启动未触发,用户确认必须通用——与 G130"数值判稳只在五环落地"同款的"首发未铺开"病。
+- **实现：** 唯一实现上收到新共享类 `com.bot.dhxy.service.StartupQuestPanelResyncGate`（修罗原语义
+  三条边界原样：**无绿链不走门/刷新失败 fail-open 保留原读数/停止上抛**;新增**每 run 一次闩**——
+  按 窗口|taskRunId 上闩,尝试即闩,后续轮次零面板开合）。接线：修罗改薄委托（调用点/诊断源不变）;
+  天庭接 startup-resume 同步分流;五倍接首个带绿链读数;抓鬼/鬼王/江湖历练接 shortcut 直读分支
+  （accept-time 解析是刚接的任务不经此门）;**五环特殊**——任务本体不读面板（绿链由云端观察者备制,
+  无从判断有无）,故 execute 入口无条件重同步一次（`refreshQuestPanelOnly`）。
+- **合同门（`G133QuestPanelResyncAllTasksContractTest` 6/6,变异 4/4 全杀）：** ①共享门三条语义边界+
+  重绘 800ms 停等+走既有 QUEST_REFRESH_CURRENT_TAB 协议;②每 run 一次闩;③全仓重同步实现唯一
+  （walk 全部 main 源码计数=1）;④六读面板任务全部经 confirm+五环无条件刷新紧随入口;⑤修罗委托而非
+  第二实现,原调用点与诊断源逐字保留。
+- **回归：** 天庭 90绿6红=基线一致、修罗 40/40、五环 19/19（含 G110/G125）、鬼王 5/5、G124 36/36、
+  G131 5/5、G132 4/4 全部共存全绿。
+- **fresh 验收：** 任一任务热启动且面板有残链时,应见 `G133 startup tracker resync verdict` 日志且
+  Alt+Q 面板开合一次;过期链接重读后消失→走接任务;每 run 第二次读不再开合;五环开跑前一次开合。
+- **终态 SHA：** 共享门 `5688afdcadb7cf95`/122L、天庭 `f39843f7101a44f8`/6161L、修罗 `50c083ae3b0e16d7`/5752L、
+  五倍 `00f2d888a0a4f759`/4884L、抓鬼 `d323f24ab6ac6e83`/3695L、鬼王 `e27bd06622f742f6`/4125L、
+  江湖历练 `48207cd9517a3736`/4077L、五环 `5c6f103b9d00dc41`/3809L、合同 `2860f2262738558a`/121L
+  （白名单 check-ignore=1）。
+
+## G132 接任务入口守卫：归队门超时停任务后，下一轮不得绕过成员归队（2026-08-31）
+
+- **状态：`SOURCE FIXED / 合同 4/4 / 变异 3/3 全杀 / 六任务+归队家族回归全绿 / FRESH REQUIRED`（2026-08-31 实施）。**
+- **用户拍板（判据冻结）：队长归队门超时停任务后，恢复/下一轮自启时不能绕过成员归队。**
+- **事故（14:20:11，G130/G131 同场的第三块）：** 门等满 180s 按设计 fail-stop（"STOP the task instead of
+  accepting alone"），但新一轮任务自动启动后直接进接任务——"宁可停任务也不丢下队员"的保护被自动重启
+  抵消，用户看到"队长在队员没归队时就开始执行下次任务"。
+- **实现（Cloud：协调器 1 方法 + 六任务各 1 行）：**
+  - `LeaderTeamReturnCoordinator.awaitAllReturnedBeforeAccept`：任务正文开跑前按现实重新分流
+    （卡死恢复铁律）——复用同一个归队门 `advance` 停等：没人缺席时 HUD fresh ABSENT 走 not-needed
+    约 1-2 秒即过；有人缺席则打开同一套归队协调（能力开窗 → 成员 G131 自愈）停等。**上界沿用
+    `failIfGateWaitedTooLong` 的 180s fail-stop，超时异常不得被吞——超时照样停任务，下一轮重进守卫，
+    队长永远不会独自接任务。**仅本地组队队长会话生效；停等用 sleepOrStop 响应用户停止。
+  - 六个组队任务（天庭/修罗V2/鬼王/五倍/抓鬼/江湖历练）execute 入口各接一行守卫调用（null-safe）。
+  - **接缝论证（重要否决记录）：** 曾评估共享 seam `CloudTaskStartupPreparationService.beforeTask`,
+    但它跑在**观察者启动之前**,而归队门靠 G108 HUD 采样（观察者兴趣驱动）——接那儿会 AWAIT_HUD_EVIDENCE
+    永等 → 180s fatal 死循环。任务 execute 入口在观察者启动之后,是正确接缝;六任务均不走 BaseTaskTemplate,
+    故一处模板接线不存在,只能各接一行。
+- **合同门（`G132LeaderAcceptEntryReturnGuardContractTest` 4/4,变异 3/3 全杀）：** ①守卫复用 advance 停等、
+  sleepOrStop、方法内禁 catch（超时不得被吞）;②六任务全部接线且紧随 execute 入口（<3000 字符）;
+  ③超时语义钉死"release 后紧跟裸 throw 整行顶格"（防 `if(false)` 前缀短路——变异 C 两轮逃逸后收紧,
+  第一轮还踩了测试没编译过导致旧字节码假跑的老坑）;④队长/组队会话双谓词限定。
+- **回归：** 天庭包 90 绿 6 红与基线逐数一致（零退化）、修罗 40/40、鬼王 5/5、大理寺 16/16、
+  归队家族 4+4+21+6+7 全绿、G124 七任务接线 36/36、G131 5/5 共存全绿。
+- **fresh 验收：** 制造"上一轮归队门超时停任务"后,下一轮日志应先出现 accept-entry 守卫（成员缺席时
+  能力开窗、成员重试归队）,任务在全员归位前不得接任务;全员在位时守卫 1-2 秒通过,正常轮次无感。
+- **终态 SHA：** 协调器 `e14d53cd905ad076`/346L、天庭 `ec656e1ccb46ef75`/6154L、修罗 `37120d612d22c955`/5777L、
+  鬼王 `74aa932120f0ef96`/4119L、五倍 `542a97d16d9d35ce`/4881L、抓鬼 `1922d21212c26409`/3689L、
+  江湖历练 `fdc7cb42f74aefca`/4071L、合同 `c9d2f5aa88b52c45`/96L（白名单 check-ignore=1）。
+
+## G131 归队接入绿链停下恢复链：清障→重按,停在半路不再永久安静（2026-08-31）
+
+- **状态：`SOURCE FIXED / 合同 5/5 / 变异 4/4 全杀 / 归队家族回归全绿 / FRESH REQUIRED`（2026-08-31 实施）。**
+- **用户设计（判据冻结）：归队与绿链同构——都触发长时间走路；点了之后中途停下,必须走绿链停下的
+  同一套"清障→重按"处理,遇到对话框怎么处理都用现成逻辑,不另造一套。**
+- **事故（与 G130 同场,补的是"停下之后谁来管"）：** 14:17 成员归队走到长寿村半路停住,OPTION 框挡脸;
+  成员归队链路**零清障**（TeamReturnService 全文无 dialog 调用）,探针 5 轮烧完即"安静到下次队长广播",
+  框不点掉下轮照样白点;队长归队门 180s 超时被迫停任务。
+- **实现（Cloud 两文件）：**
+  1. **重按前清障**（TeamReturnService.attemptReturnTeam 入口）：调用绿链同一条清障链
+     `clearBlockingDialogBeforeGreenRepress(null, "team-return:"+source)`——inspect-first 无框零输入;
+     成员窗口无任务业务目录,null 任务码走维护目录+末位兜底。**触发点仍唯一="重按前"**,不是自由跑
+     （自由跑清障已被用户废除）。DialogService 走可缺省字段注入,四处既有手工构造零破坏。
+  2. **半路停下续探**（AutoBattleTask.openTeamReturnProbeWindowIfDue）：新增与死亡登记同构的轮次豁免——
+     归队腿停在半路（G130 数值判稳终局 STOPPED_AWAY,且 intentId 精确配对自己的腿）且队长归队门还开着,
+     继续按既有节拍探测（每轮先清障再重按）,直到按钮消失（归位）或门关闭;上界天然由队长 180s 门兜住。
+     配套:点击落地时登记本腿 intentId（`lastReturnIntentIdByWindow`）,新公开判定
+     `isReturnLegStoppedMidway` 只认自己的腿。
+- **改后闭环：** 框挡脸→点归队白点→1 秒内判停(G130)→清障点掉框→按钮还在再点→走到队长身边→
+  按钮消失循环退出;完成判据仍归队长两道门,零改动。
+- **合同门（`G131ReturnLegGreenChainRecoveryContractTest` 5/5,变异 4/4 全杀）：** ①重按前必走绿链清障
+  入口且全仓触发点唯一（含 null-safe）;②半路停下判定只认自己登记的 intentId+STOPPED_AWAY;③续探守卫
+  完整行钉死（`if (capabilityOpen && ...` 起头,防 `false &&` 短路——变异 C 第一轮逃逸后收紧）且位于
+  轮次上界之前;④既有语义零改动（G065 pending 先于点击/10s 观察窗/死亡豁免原样）。
+- **回归：** MemberReturnInFlightTiming 4/4、LeaderTeamReturnGateVeto 4/4、TeamReturnZhaoWatch 21/21、
+  G107 成员 6/6+队长 7/7 全绿;`TeamReturnTurnContractTest` 编译失败=**基线既有**（桩类撞上另一会话
+  incense SCOPE1 对 PlayerStateService 的半途改造,错误指向其新文件 CloudPlayerStateIncenseStatusPort,
+  本卡未触 PlayerStateService）。
+- **fresh 验收：** 复现场景（成员归队途中弹 OPTION 框）应看到:停下 1s 内被判出→清障日志→重按归队→
+  最终归位;队长门不再 180s 超时。
+- **终态 SHA：** TeamReturnService `eafb918384a7d17a`/839L、AutoBattleTask `0b1e11998032b8c3`/799L、
+  合同 `4216eb00e1053888`/123L（.gitignore 已白名单,check-ignore=1）。
+
+## G130 停稳判定全任务统一为数值判稳：像素比对误把背景当移动，Runner 无限沉默（2026-08-31 14:17）
+
+- **状态：`SOURCE FIXED / 合同 4/4 / 变异 3/3 全杀 / 回归红=基线既有零退化 / FRESH REQUIRED`（2026-08-31 实施）。**
+- **用户裁定（判据冻结）：判"停没停"必须读坐标数字，不能比图片。**
+- **事故：** 14:17 成员 `黑皮体育生`（hwnd-BD0D1E）归队传送到长寿村后站着不动三分钟；Runner 判定 750 次
+  却始终不触发 STOPPED_AWAY；队长归队门等满 180s 上界被迫停任务，随即新一轮自启，用户看到"没归队就开始下次任务"。
+- **铁证（判定原图三联图 `images/temp/g129-strip-diff-proof.png`）：** 14:20:17→14:20:18 两帧坐标条都写
+  **55,22（一个数字没变）**，但数字背后飘过一团红色（路人/特效透过半透明条子），两帧差异像素 **34.9%**，
+  远超像素差值判"动"的 **5%** 阈值→判"在动"→2.2 秒停稳计时清零。长寿村人来人往，此干扰每一两秒一次，
+  计时永远攒不满，终局判定永远不触发。
+- **根因：** 08-22 停稳事实重设计（数值判稳=字模读坐标值，"撤稳只认有效变值"）只落地了五环首批
+  （源码注释原文"其余任务仍走下方的像素差值老路，分批迁移"），迁移此后停摆。判稳因此存在两套实现，
+  归队腿等其余任务全在旧像素路上。
+- **修复（一行开关+注释收口，客户端 `WindowObservationSampler`）：** `isValueStabilityMode()` 恒真——
+  全任务走数值判稳；像素差值老路成死路（保留待 fresh 验证后清理，防止本卡改动面扩大）。
+  云端翻译层经查**本就任务无关**且已含归队所需的关键映射：无目标腿（UNTARGETED_TRACKER）数值停稳
+  → STOPPED_AWAY，云端零改动。
+- **合同门（`G130ValueStabilityAllTasksContractTest` 4/4，变异 3/3 全杀）：**
+  ①模式恒真且禁止 TaskType 参与判稳方式选择（防退回白名单）；②三条像素老路必须仍被模式门锁死
+  （防悄悄复活）；③数值核心两条铁律在位（第三态不撤稳/陈帧不作证）；④云端 UNTARGETED_TRACKER→
+  STOPPED_AWAY 映射存在（跨仓源码断言）。
+- **回归：** PathingPolicy 5/5、MemberReturnLegSharedFrame(E70) 5/5、Pace 16/16、G122FreshArrival 8/8、
+  WuhuanV3SceneGuard 1/1 全绿；Kanda 1绿11红、TerminalFrame 2绿5红与 git-HEAD 基线**逐数一致**（既有
+  环境性失败，非本卡引入）。
+- **fresh 验收：** 重启后任一非五环任务（归队腿最佳）站住≥3s 须出现 STABLE→云端译 STOPPED_AWAY/相应终局；
+  长寿村这类人流图不得再出现"判定反复横跳、计时清零"；五环行为不变。
+- **遗留（拍板后另卡）：** 像素差值死代码清理；队长归队门超时停任务后下一轮自启是否要冷却（本次事故的次因）。
+- **终态 SHA：** Sampler `5d9659e4b26ff313`/4023L、合同 `827e9b544ad717e5`/103L（client 仓不受
+  .gitignore 白名单约束，check-ignore 已验=1）。
+
+## G127 抓鬼/江湖历练暗雷漏判：任务栏换行拆开"暗雷"二字，模板必瞎（2026-08-31 10:47）
+
+- **状态：`SOURCE FIXED / 合同 14/14 / 变异 5/5 全杀 / 天庭包与基线逐条一致零退化 / FRESH REQUIRED`（2026-08-31 实施）。**
+- **交付记录（只改 Cloud 一个文件，天庭一行未动）：**
+  - **接法：**在共用的 `TaskTrackerPanelService.analyzePanel` 暗雷 switch 里，把 `catch_ghost` 与
+    `xinshou_training` 从 `matchDarkThunderMonster` 换成新增的 `matchDarkThunderWithOcrFallback`；
+    `tianting` 分支原样不动（它有自己的异步 OCR 管线，本卡不碰）。**判据直接复用天庭现成的
+    `isDarkThunderOcrText`（全仓仍只此一份，合同钉死），未另造第二套。**
+  - **三条安全性质：**① 只在模板判 false 时才跑 OCR（模板命中直接采信，正常任务零开销）；
+    ② `CompletableFuture` 包一层 **2 500ms 硬上界**——`LocalOcrClient` 自身超时是全局 10s，同步等它会在
+    sidecar 卡死时把 turn 占住（五开叠加更糟）；③ **fail-open**：超时/中断/异常/非 definitive
+    一律沿用模板结论，绝不抛异常、绝不阻塞导航（漏判只是回到今天行为，卡死会打挂任务）。
+    改判时分数仍保留模板腿的真实分数，不得被 OCR 结论伪造成“高分命中”（分数是标定用的物理量）。
+  - **取证补齐（卡文第 5 条，措辞已根据实测修正）：**事故当时并非“没有落盘机制”，而是
+    `dumpMatchMiss` 每个位点硬限 20 张、自 07-31 累积早已耗尽，**7 次判定一张原图都没留**，
+    只能靠恰好存在的整窗截图对质。新增独立滚动池 `images/temp/match-miss/g127-darkthunder-verdict/<site>/`
+    （容量 40，与那个 20 张限额互不影响），每次兜底判定都落盘被判的 task box。
+  - **实现中的重要发现（影响待拍板项）：**变异测试暴露——事故文字的“换行免疫”**主要靠单字
+    “暗”兜底，而不是去空白**：去掉 `replaceAll("\\s+","")` 后，事故文字依然 `contains("暗")` 为真。
+    去空白真正不可替代的场景只有一个：“雷战”被换行拆开**且**“暗”已被 OCR 读坏。已专门补
+    `whitespaceStrippingIsWhatRescuesAWrappedLeiZhanWhenTheAnGlyphIsCorrupted` 钉住这一步（没它时变异 A 杀不掉）。
+    **由此得出拍板所需的硬数据：若收紧为只认“雷战”，本次事故仍能修好**（去空白后“雷战”完整），
+    且“含暗地名误判”风险消失；代价是失去对 `暗富坊战斗` 这类腿蚀的兜底。两者不可兼得，请用户拍板。
+  - **验证（均隔离跑，未启停任何进程）：**生产隔离编译 exit 0；新合同
+    `G127DarkThunderOcrFallbackContractTest` **14/14**；**变异 5/5 全杀**（去空白/抓鬼退回纯模板/
+    江湖历练退回纯模板/非 definitive 也改判/去取证落盘）；回归：**天庭包 90 绿 6 红，与
+    git-HEAD 基线版生产代码复跑结果逐条一致（零退化）**、G115 6/6、G111 5/5、
+    `CatchGhostCombatConsumedStateContractTest` 2/2；`CatchGhostDarkThunderPatrolDialogContractTest`
+    在**基线上同样 ClassNotFound**（既有构造器漂移，非本卡引入）。
+  - **OCR 真实推理未验：**本地 OCR sidecar（127.0.0.1:18761）未运行且铁律禁启进程，合同由文本判据与
+    源码接线断言驱动；“OCR 能否从事故帧读出这行字”留待 fresh 验证。
+  - **终态 SHA：**`TaskTrackerPanelService.java` `6b93b199026737aa`/1881L；合同
+    `ca9df34576292b62`/192L；`.gitignore` `606375687b4ead60`/97L（已白名单，`git check-ignore -q` 退出码 1）。
+    天庭/抓鬼/江湖历练任务文件本卡零改动。
+- **原卡文（判据冻结，实现依据）：**用户 2026-08-31
+  批准实施并明确要求"江湖历练一起接"。汇报不得只说 G127，必须同时写"抓鬼/江湖历练暗雷漏判"。
+- **事故：** 角色 `黑皮体育生`，`windowId=hwnd-BD0D1E`，运行 `remote-turn-7ae45084-d865-4209-a3bc-0053185ac2c7`，
+  `10:37–10:47` 抓鬼任务栏明确是暗雷任务，系统却每轮都判"不是暗雷"，走普通打怪分支 → 看打探针耗尽 →
+  重接任务 → `10:47:13` 导航去地府 `MAP_NOT_REACHED` → 用户手动停止。**空转约十分钟。**
+- **现场铁证：** `images/temp/hwnd-BD0D1E/latest_vision.png`（`10:45:33`，整窗原图）任务追踪面板逐字为
+  `抓鬼任务[常规玩法] / 请速到傲来国进行巡查。(暗 / 雷战斗) / 目前次数[7/7]`——游戏把 `暗雷` 二字
+  **换行拆开**：`(暗` 收在行尾，`雷战斗)` 落到下一行。
+- **根因：** `TaskTrackerPanelService.matchDarkThunderMonster` 用的 `images/template/zhuagui/anlei.png`
+  是"暗雷"**两字相连**的一张小图；屏幕上该图案已被换行撕成两半，模板匹配必然失败。七次判定分数
+  `0.322/0.359/0.319/0.392/0.391/0.332/0.336`，阈值 `0.65`——全部落在代码注释记录的"非暗雷帧 ≤0.4643"
+  区间，是"要找的图案压根不在画面上"，不是差一点。**换行位置随文案长度浮动，任意两字之间都可能断开，
+  加模板变体堵不住。**
+- **天庭为什么没这个病（用户 2026-08-31 指出，已实测确认）：** 天庭是**两条腿**——模板腿之外还有
+  `TaskTrackerPanelService.isDarkThunderOcrText`：`text.replaceAll("\s+","")` 先去掉全部空白（换行一并去掉）
+  再判 `contains("雷战") || contains("暗")`，**天生免疫换行**；模板判 false 时由天庭任务侧
+  `TiantingTask.applyDarkThunderOcrCorrection` 消费 OCR 结论纠正为暗雷。抓鬼与江湖历练**只有模板一条腿**
+  （`CatchGhostTask`/`XinshouTrainingTask` 全类无 OCR 兜底，已 grep 证实）。
+- **评审方隔离实测（2026-08-31，纯逻辑，未启任何进程）：** 用天庭判据吃抓鬼事故文字：
+  事故原文（换行拆开）→ **true**；普通抓鬼任务文案 → false；OCR 腐蚀形态 `暗富坊战斗` → true；
+  含"暗"的地名（构造样例 `黑暗森林`）→ **true（既有误判风险，天庭自 2026-08-14 起同样带此风险运行）**。
+  结论：**天庭现成判据可直接修好本漏判**，无需发明新判据。
+- **实施边界（冻结）：**
+  1. 判据复用天庭既有 `isDarkThunderOcrText`，**不得另造第二套暗雷判据**；不得修改天庭现有行为、
+     模板文件、阈值 `0.65` 或模板腿本身（模板腿仍是第一腿，OCR 只在模板判 false 时兜底）。
+  2. **管线泛化是本卡难点**：判据函数任务无关，但整条异步 OCR 管线是天庭专属——
+     `CloudWholeTaskObserver.runTiantingDarkThunderOcrAttempt` 带天庭 cycle generation、
+     `TiantingTrackerBranch` 类型、ready 事件状态机，消费点在 `TiantingTask`。实施方须比较
+     "泛化该管线（任务无关的 cycle/事件/消费）"与"给抓鬼/江湖历练走各自更简单的同步 OCR 路径"两案，
+     在报告中说明选择理由；**无论哪案，慢 OCR 都不得阻塞导航或抢占 turn**（天庭异步化的原始理由）。
+  3. 抓鬼的判定点在 `CatchGhostTask.analyseDarkThunderAfterGreenClick`（绿链点击后、寻路进行中），
+     江湖历练同类点须自行核实；OCR 兜底必须落在同一 task box 像素上，不得新增截图。
+  4. 单字"暗"兜底的误判风险按天庭现状原样继承；**如需收紧为只认"雷战"，属业务判据变更，须先报用户**。
+- **合同门：**
+  1. 事故帧回放：用本卡固化的事故任务框 fixture，模板腿判 false 而 OCR 腿判 true，最终结论=暗雷；
+  2. 换行不敏感：`(暗
+雷战斗)`、`(暗
+雷战斗)`、`暗 雷战斗` 三种断开形态均须判暗雷；
+  3. 负回归：普通抓鬼/江湖历练任务文案不得判暗雷；天庭既有暗雷合同全绿不得退化；
+  4. 非阻塞：OCR 不可用/超时/sidecar 无响应时，行为退回当前模板腿结论并 fail-open 记日志，
+     **不得卡住导航、不得抛异常打挂任务**；
+  5. 落盘补齐：暗雷判定必须落盘判定原图（事故时 `detail=null`，无原图可对质，违反"匹配点必须留证"铁律）。
+- **fresh 验收：** 重启后跑抓鬼与江湖历练，遇暗雷任务须出现"模板 false → OCR 判暗雷 → 进入暗雷流程"，
+  且导航不被 OCR 拖慢；普通任务不得误入暗雷分支。
+
 ## G126 通用 UI 清理恢复 `quxiao` 末位兜底（2026-08-30）
 
 - **状态：`SOURCE COMPILED / AWAITING USER FRESH`。** 用户明确裁决：G117 的事故根因是 `quxiao.png` 在目录字典序中排在 `x*.png` 前，不能以永久删掉 `quxiao` 代替排序修复。
@@ -12789,6 +13073,14 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 
 | Card | Owner | Status | Files | Goal |
 | --- | --- | --- | --- | --- |
+| G135 | Claude | **SOURCE FIXED / 合同 3/3 / 变异 3/3 全杀 / 回归全绿 / FRESH REQUIRED** | Cloud NpcClickRequest+NpcClickService+TiantingTask | **封妖符跨坐标误点(用户还原:同屏整屏找怪把 #3 的怪在 #2 点掉)**:tooltip 候选加"到人物(屏幕中心)最大距离"约束,默认不限零影响;封妖符半径 250 标定初值,距离逐条落日志供校准。 |
+| G136 | Claude | **SOURCE FIXED / 合同 9/9 / 变异 3/3 全杀 / 天庭回归一致 / FRESH REQUIRED** | Cloud TiantingTask+RoundContext+NpcClickService(公开区域截取) | **封妖符 while 循环重设计(用户判据:格子非一次性;浮窗解析目的地比对到达;缺席/没动=可能已做过软跳;一圈无进展清标记再循环;圈数3+分支预算15min 兜底——85次重试无超时生效=此前无分支级预算)**。 |
+| G134 | Claude | **SOURCE FIXED / 合同 2/2 / 变异 2/2 全杀 / 天庭 92绿6红=基线 / FRESH REQUIRED** | Cloud `TiantingTask` 封妖符终局消费一处 | **封妖符"点了没动"照常推进 Alt+A（用户拍板:没动是合法结果,人可能已在坐标上）**:旧逻辑没动=无限重试同一坐标(85次/Alt+A 永不执行),此前靠像素噪声假报"动了"顶开门;G130 说真话后合法情形被拦死。修=没动分支与 moved 汇合推进,STORY 保护保留。教训:G130 后所有依赖噪声假移动的消费点会陆续暴露,需排查。 |
+| G133 | Claude | **SOURCE FIXED / 合同 6/6 / 变异 4/4 全杀 / 七任务回归全绿 / FRESH REQUIRED** | Cloud 新 `StartupQuestPanelResyncGate`（唯一实现）+ 七任务接线（修罗改薄委托） | **热启动绿链防过期门通用化（用户拍板:所有任务全接）**:门 08-21 只落地修罗,天庭 fresh 未触发暴露"首发未铺开"。语义原样(无绿链不走/失败 fail-open/停止上抛)+新增每 run 一次闩;五环不读面板故入口无条件重同步一次。 |
+| G132 | Claude | **SOURCE FIXED / 合同 4/4 / 变异 3/3 全杀 / 回归全绿 / FRESH REQUIRED** | Cloud `LeaderTeamReturnCoordinator`（accept-entry 守卫）+ 六组队任务 execute 入口各 1 行 | **接任务入口守卫（用户拍板:归队门超时停任务后,下一轮不得绕过成员归队）**:此前 fail-stop 被自动重启抵消,新一轮直接接任务。守卫复用归队门 advance 按现实分流:全员在位 1-2 秒过;有人缺席重开协调(成员 G131 自愈)停等,180s 超时照停,下一轮重进守卫,队长永不独自接任务。接缝否决记录:beforeTask 在观察者启动前,接那儿会 HUD 采样永等死循环。 |
+| G131 | Claude | **SOURCE FIXED / 合同 5/5 / 变异 4/4 全杀 / 归队家族回归全绿 / FRESH REQUIRED** | Cloud `TeamReturnService`（重按前清障+腿登记+半路停下判定）+ `AutoBattleTask`（停下续探豁免） | **归队接入绿链停下恢复链（用户设计:归队与绿链同构,都是长时间走路）**:归队链路零清障+探针5轮烧完永久安静,OPTION框挡脸时白点到队长门超时。修=重按前走绿链同一条清障链(null任务码,触发点仍唯一)+停在半路(G130终局,intentId精确配对)且队长门开着即继续探到归位。完成判据仍归队长两道门。 |
+| G130 | Claude | **SOURCE FIXED / 合同 4/4 / 变异 3/3 全杀 / 回归零退化 / FRESH REQUIRED** | Client `WindowObservationSampler`（isValueStabilityMode 恒真=全任务数值判稳） | **停稳判定全任务统一读坐标数字（用户裁定：不能比图片）**：归队腿等非五环任务还在像素差值老路，背景飘红使 34.9% 像素超 5% 阈值被判"在动"，停稳计时永远清零、STOPPED_AWAY 永不触发（55,22 三分钟没变判 750 次）。云端翻译层本就通用零改动。遗留：像素死代码清理、归队门超时后下一轮自启冷却（待拍板）。 |
+| G127 | Claude | **SOURCE FIXED / 合同 14/14 / 变异 5/5 全杀 / 天庭零退化 / FRESH REQUIRED** | Cloud `TaskTrackerPanelService`（抓鬼与江湖历练暗雷判定接天庭现成 OCR 兜底腿） | **抓鬼/江湖历练暗雷漏判**：任务栏换行把"暗雷"二字拆开致模板必瞎（七次 0.319–0.392，阈值 0.65），任务空转十分钟。模板腿仍为第一腿，判 false 时以 2.5s 有界、fail-open 的 OCR 兜底改判；判据复用天庭现成的一份，天庭一行未动。待拍板：单字"暗"兜底是否收紧为只认"雷战"（收紧则本事故仍可修且消除含"暗"地名误判，代价是失去对 OCR 腐蚀的兜底）。 |
 | G125 | Codex + Claude(实施/复核) | **SOURCE FIXED / 合同 16/16 / 五环19+修罗40+G124-81 未退化 / FRESH REQUIRED** | Cloud `FiveRingTaskV3.java`；稳定事实塑形仅在证明必要时触及 `CloudObservationHttpHandler.translateStabilityFact`；事故时序/跨图进店/清 intent/普通导航负回归合同 | **五环买鞋：战斗中误开快捷购买 + 自动进牛记布店后遗留 `STOPPED_AWAY`。** 旧 V2 会先认真实地图“牛记布店”，V3 却在地图检查和 terminal 清理前先跑快捷买鞋并可提前返回；8 月 26 日停稳判定上云又将 `牛记布店(10,7)` 与旧目标 `长安(130,130)` 比成 `STOPPED_AWAY`。修复须同时建立战斗硬门，并让本业务跨图进店事实先结算、清掉旧 intent，禁止泛化普通 `STOPPED_AWAY`。 |
 | G124 | Claude | **SOURCE FIXED / Cloud 生产编译 exit 0 / 新合同 86/86 / 变异 7/7 全杀 / 修罗整包 40/40 未退化 / 待外部 Review / FRESH REQUIRED** | Cloud 新增框架包 `com.bot.dhxy.runner.progress`（`TaskRunProgressLedger`/`TaskProgressReport`/`TaskProgressGuard`）、`CloudWholeTaskRuntimeLocalServiceClient.updateProgress` 唯一出口、七个任务 `XiuluoTaskV2`/`GhostKingTask`/`CatchGhostTask`/`WubeiTask`/`XinshouTrainingTask`/`FiveRingTaskV3`/`TiantingTask`；三个 G124 合同 + 两个既有合同刷新 | G077 覆盖漏项的**通用**修复：暂停恢复带回的累计次数此前只有天庭消费，其余六任务硬编码 `0`，22:02 修罗把 UI 从 13/90 覆盖成 0/90。轮次收成框架唯一真源，累计次数与“本进程第一轮”拆成两个独立字段（不再由 `completedRuns == 0` 兼任），上限按累计值比 maxRuns（13/90 恢复后只再跑 77 轮）。防复发双门：裸整数上报重载从 API 删除（编译期杜绝），唯一出口再过纯函数护栏，低于基线时抬回基线 + ERROR 留痕（不抛不丢）。天庭改用同一账本，全仓 `getInitialCompletedRuns()` 只剩一个解析面，杜绝双计。 |
 | G123 | Codex | **用户已重写方案 / NO CODE / 仅允许 Git 旧版最小回迁 / 待实施** | Cloud `CloudUiCleanerPort.java`、`DialogService.java`；G123 定向合同与事故 marked 图 | 逐分支恢复 `9aa987d1` 的 `forceCloseDialog`：NO_DIALOG、受旧角色门保护的 STORY、OPTION `fallbackLastOption`。唯一适配是直接消费 Runner 同帧快照并让 fallback 使用 supplied `DialogDetection`，force-close 内零 CAPTURE；禁止修改 Client、Runner、修罗、NPC/CTRL 或协议。 |

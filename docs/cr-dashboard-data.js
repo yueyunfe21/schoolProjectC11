@@ -1,5 +1,93 @@
 window.CR_DASHBOARD_DATA = [
   {
+    "id": "G135",
+    "number": 135,
+    "owner": "Claude",
+    "status": "**SOURCE FIXED / 合同 3/3 / 变异 3/3 全杀 / 回归全绿 / FRESH REQUIRED**",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Cloud NpcClickRequest+NpcClickService+TiantingTask",
+    "summary": "**封妖符跨坐标误点(用户还原:同屏整屏找怪把 #3 的怪在 #2 点掉)**:tooltip 候选加\"到人物(屏幕中心)最大距离\"约束,默认不限零影响;封妖符半径 250 标定初值,距离逐条落日志供校准。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G136",
+    "number": 136,
+    "owner": "Claude",
+    "status": "**SOURCE FIXED / 合同 9/9 / 变异 3/3 全杀 / 天庭回归一致 / FRESH REQUIRED**",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Cloud TiantingTask+RoundContext+NpcClickService(公开区域截取)",
+    "summary": "**封妖符 while 循环重设计(用户判据:格子非一次性;浮窗解析目的地比对到达;缺席/没动=可能已做过软跳;一圈无进展清标记再循环;圈数3+分支预算15min 兜底——85次重试无超时生效=此前无分支级预算)**。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G134",
+    "number": 134,
+    "owner": "Claude",
+    "status": "**SOURCE FIXED / 合同 2/2 / 变异 2/2 全杀 / 天庭 92绿6红=基线 / FRESH REQUIRED**",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Cloud `TiantingTask` 封妖符终局消费一处",
+    "summary": "**封妖符\"点了没动\"照常推进 Alt+A（用户拍板:没动是合法结果,人可能已在坐标上）**:旧逻辑没动=无限重试同一坐标(85次/Alt+A 永不执行),此前靠像素噪声假报\"动了\"顶开门;G130 说真话后合法情形被拦死。修=没动分支与 moved 汇合推进,STORY 保护保留。教训:G130 后所有依赖噪声假移动的消费点会陆续暴露,需排查。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G133",
+    "number": 133,
+    "owner": "Claude",
+    "status": "**SOURCE FIXED / 合同 6/6 / 变异 4/4 全杀 / 七任务回归全绿 / FRESH REQUIRED**",
+    "kind": "open",
+    "domain": "修罗",
+    "files": "Cloud 新 `StartupQuestPanelResyncGate`（唯一实现）+ 七任务接线（修罗改薄委托）",
+    "summary": "**热启动绿链防过期门通用化（用户拍板:所有任务全接）**:门 08-21 只落地修罗,天庭 fresh 未触发暴露\"首发未铺开\"。语义原样(无绿链不走/失败 fail-open/停止上抛)+新增每 run 一次闩;五环不读面板故入口无条件重同步一次。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G132",
+    "number": 132,
+    "owner": "Claude",
+    "status": "**SOURCE FIXED / 合同 4/4 / 变异 3/3 全杀 / 回归全绿 / FRESH REQUIRED**",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Cloud `LeaderTeamReturnCoordinator`（accept-entry 守卫）+ 六组队任务 execute 入口各 1 行",
+    "summary": "**接任务入口守卫（用户拍板:归队门超时停任务后,下一轮不得绕过成员归队）**:此前 fail-stop 被自动重启抵消,新一轮直接接任务。守卫复用归队门 advance 按现实分流:全员在位 1-2 秒过;有人缺席重开协调(成员 G131 自愈)停等,180s 超时照停,下一轮重进守卫,队长永不独自接任务。接缝否决记录:beforeTask 在观察者启动前,接那儿会 HUD 采样永等死循环。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G131",
+    "number": 131,
+    "owner": "Claude",
+    "status": "**SOURCE FIXED / 合同 5/5 / 变异 4/4 全杀 / 归队家族回归全绿 / FRESH REQUIRED**",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Cloud `TeamReturnService`（重按前清障+腿登记+半路停下判定）+ `AutoBattleTask`（停下续探豁免）",
+    "summary": "**归队接入绿链停下恢复链（用户设计:归队与绿链同构,都是长时间走路）**:归队链路零清障+探针5轮烧完永久安静,OPTION框挡脸时白点到队长门超时。修=重按前走绿链同一条清障链(null任务码,触发点仍唯一)+停在半路(G130终局,intentId精确配对)且队长门开着即继续探到归位。完成判据仍归队长两道门。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G130",
+    "number": 130,
+    "owner": "Claude",
+    "status": "**SOURCE FIXED / 合同 4/4 / 变异 3/3 全杀 / 回归零退化 / FRESH REQUIRED**",
+    "kind": "open",
+    "domain": "五环",
+    "files": "Client `WindowObservationSampler`（isValueStabilityMode 恒真=全任务数值判稳）",
+    "summary": "**停稳判定全任务统一读坐标数字（用户裁定：不能比图片）**：归队腿等非五环任务还在像素差值老路，背景飘红使 34.9% 像素超 5% 阈值被判\"在动\"，停稳计时永远清零、STOPPED_AWAY 永不触发（55,22 三分钟没变判 750 次）。云端翻译层本就通用零改动。遗留：像素死代码清理、归队门超时后下一轮自启冷却（待拍板）。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G127",
+    "number": 127,
+    "owner": "Claude",
+    "status": "**SOURCE FIXED / 合同 14/14 / 变异 5/5 全杀 / 天庭零退化 / FRESH REQUIRED**",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Cloud `TaskTrackerPanelService`（抓鬼与江湖历练暗雷判定接天庭现成 OCR 兜底腿）",
+    "summary": "**抓鬼/江湖历练暗雷漏判**：任务栏换行把\"暗雷\"二字拆开致模板必瞎（七次 0.319–0.392，阈值 0.65），任务空转十分钟。模板腿仍为第一腿，判 false 时以 2.5s 有界、fail-open 的 OCR 兜底改判；判据复用天庭现成的一份，天庭一行未动。待拍板：单字\"暗\"兜底是否收紧为只认\"雷战\"（收紧则本事故仍可修且消除含\"暗\"地名误判，代价是失去对 OCR 腐蚀的兜底）。",
+    "verification": "需复核"
+  },
+  {
     "id": "G125",
     "number": 125,
     "owner": "Codex + Claude(实施/复核)",

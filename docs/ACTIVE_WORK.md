@@ -1,5 +1,13 @@
 # DHXY Active Work
 
+## Codex - 2026-08-31 / G135「油壶壶本次天庭封妖符逐帧取证」
+
+- **目标工作树：** `D:\mavenProject\DHXY-cr271`（`dev`）；受保护基线 `D:\mavenProject\DHXY` 只读。Client 基线 `HEAD=origin/dev=8d9d2d2`；Cloud 基线 `HEAD=origin/dev=263ad1e7`。
+- **现场绑定：** 队长角色 `油壶壶`，`windowId=hwnd-6F098A`，`hwnd=7276938`，run `remote-turn-3aec3a77-880d-4088-8bd3-189d403d9b5d`。封妖符本轮关键区间 `2026-08-31 16:20:41` 至 `16:31:39`。
+- **已有脏改隔离：** Client 的治理文档、重启脚本、观察者生产文件及测试已有其它会话改动；Cloud `TiantingTask.java` 已有 G129/G132/G133，并在本次取证过程中出现另一会话的 G134 修复。G135 不修改任何生产/测试代码，不覆盖 G134，只新增取证脚本、报告和派生图片，并对治理文档作最小登记。
+- **Git/事故基线：** 最新推送 `TiantingTask` 的 no-movement 分支来自 commit `8474103`，终局无移动后固定 `retry=same-coordinate`，没有预算。现场坐标 0/1 均证明移动并完成既有后续；坐标 1 战后人物已在长寿村外 `(103,80)`，坐标 2 连续 85 次终局均 `coordinateMovementObserved=false`、`storyClosed=false`，`Alt+A` 永远未执行，最后 `16:31:39` 全局暂停。
+- **图片保真边界：** Turn CAPTURE 的原始 PNG 默认只在内存传输，日志持久化 SHA/尺寸/ROI，不保证像素落盘。报告必须逐条列出所有内存帧；仅对磁盘上真实存在且时间/窗口可绑定的图片加标记，禁止用别轮图片补帧或冒充原始截图。
+
 ## Codex - 2026-08-30 / G126「通用 UI 清理：恢复 quxiao 末位兜底」实施中
 
 - **目标工作树：** `D:\mavenProject\DHXY-cr271`（`dev`）；受保护基线 `D:\mavenProject\DHXY` 未触碰。基线为 `origin/dev` / `a6ec9d94`；`UICleanerService.java`、其既有目录合同及治理文档已有 G117 未提交脏改，本卡只在该 G117 变更上按用户最新裁决收窄改动。
