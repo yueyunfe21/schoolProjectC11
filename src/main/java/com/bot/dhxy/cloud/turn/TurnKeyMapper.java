@@ -60,6 +60,15 @@ public final class TurnKeyMapper {
      * @param key wire key spelling; nullable values are not Enter.
      * @return {@code true} only for the closed Enter spellings.
      */
+
+    /** Ctrl+Space（切输入法到英文）：只认这一个写法族，避免与普通 Ctrl 快捷键混淆。 */
+    public boolean isImeToggleKey(String key) {
+        if (key == null || key.isBlank()) {
+            return false;
+        }
+        String candidate = key.trim().toUpperCase(java.util.Locale.ROOT).replace(" ", "");
+        return "CTRL+SPACE".equals(candidate) || "CTRL_SPACE".equals(candidate);
+    }
     public boolean isEnterKey(String key) {
         if (key == null || key.isBlank()) {
             return false;

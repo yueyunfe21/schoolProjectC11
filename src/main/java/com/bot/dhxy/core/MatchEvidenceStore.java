@@ -100,7 +100,7 @@ public final class MatchEvidenceStore {
                             BufferedImage template,
                             double[] thresholdMatch) {
         write(site, windowId, frame == null ? null : () -> frame,
-                template == null ? null : () -> template, thresholdMatch, false, false);
+                template == null ? null : () -> template, thresholdMatch, null, false, false);
     }
 
     /** 高频探测节流版：latest 覆盖写；PRESENT/ABSENT 翻转时另存时间戳文件。 */
@@ -110,7 +110,7 @@ public final class MatchEvidenceStore {
                                     BufferedImage template,
                                     double[] thresholdMatch) {
         write(site, windowId, frame == null ? null : () -> frame,
-                template == null ? null : () -> template, thresholdMatch, true, false);
+                template == null ? null : () -> template, thresholdMatch, null, true, false);
     }
 
     /**
@@ -122,7 +122,25 @@ public final class MatchEvidenceStore {
                                         Supplier<BufferedImage> frame,
                                         Supplier<BufferedImage> template,
                                         double[] thresholdMatch) {
-        write(site, windowId, frame, template, thresholdMatch, true, true);
+        write(site, windowId, frame, template, thresholdMatch, null, true, true);
+    }
+
+    /**
+     * 结构化判定（无模板、无匹配坐标）落盘：如对话框边框存在性这类判据。
+     *
+     * <p>这类判定不走模板匹配，因此没有模板图也没有命中坐标——不画框、分数记 na，
+     * PRESENT/ABSENT 直接取调用方给出的业务结论（本类同样不重算、不改判）。</p>
+     *
+     * @param site 匹配点短名（kebab-case，作子目录名）
+     * @param windowId 窗口 id，未知传 null
+     * @param frame 参与判定的原帧（调用方 flush 前调用）
+     * @param present 业务判定结论
+     */
+    public static void saveStructural(String site,
+                                      String windowId,
+                                      BufferedImage frame,
+                                      boolean present) {
+        write(site, windowId, frame == null ? null : () -> frame, null, null, present, false, false);
     }
 
     private static void write(String site,
@@ -130,13 +148,19 @@ public final class MatchEvidenceStore {
                               Supplier<BufferedImage> frameSupplier,
                               Supplier<BufferedImage> templateSupplier,
                               double[] thresholdMatch,
+                              Boolean structuralPresent,
                               boolean throttled,
                               boolean ownsImages) {
         try {
-            if (frameSupplier == null || templateSupplier == null || site == null || site.isBlank()) {
+            if (frameSupplier == null || site == null || site.isBlank()) {
                 return;
             }
-            boolean present = thresholdMatch != null && thresholdMatch.length >= 3;
+            if (structuralPresent == null && templateSupplier == null) {
+                return;
+            }
+            boolean present = structuralPresent != null
+                    ? structuralPresent
+                    : thresholdMatch != null && thresholdMatch.length >= 3;
             String window = resolveWindowKey(windowId);
             String stateKey = site + "|" + window;
             Boolean previous = LAST_PRESENT.put(stateKey, present);
@@ -155,8 +179,8 @@ public final class MatchEvidenceStore {
             }
 
             BufferedImage frame = frameSupplier.get();
-            BufferedImage template = templateSupplier.get();
-            if (frame == null || template == null) {
+            BufferedImage template = templateSupplier == null ? null : templateSupplier.get();
+            if (frame == null || (structuralPresent == null && template == null)) {
                 return;
             }
 
@@ -164,7 +188,8 @@ public final class MatchEvidenceStore {
              * 分数与标注框只来自业务判定自己的结果。miss（thresholdMatch==null）没有坐标，
              * 不画框、分数 na——这是忠实记录，而不是替业务再算一个它没用过的分。
              */
-            double score = present && Double.isFinite(thresholdMatch[2]) ? thresholdMatch[2] : Double.NaN;
+            double score = structuralPresent == null && present && Double.isFinite(thresholdMatch[2])
+                    ? thresholdMatch[2] : Double.NaN;
 
             // 标注图必须在调用线程合成：返回后调用方随时可能 flush 原帧。合成只是一次内存拷贝
             // + 画一个框，远比 PNG 编码便宜；昂贵的编码与写盘从这里开始交给后台线程。
@@ -173,7 +198,8 @@ public final class MatchEvidenceStore {
             Graphics2D g = marked.createGraphics();
             try {
                 g.drawImage(frame, 0, 0, null);
-                if (present && Double.isFinite(thresholdMatch[0]) && Double.isFinite(thresholdMatch[1])) {
+                if (template != null && present && thresholdMatch != null
+                        && Double.isFinite(thresholdMatch[0]) && Double.isFinite(thresholdMatch[1])) {
                     g.setColor(Color.GREEN);
                     int w = template.getWidth();
                     int h = template.getHeight();
@@ -187,7 +213,9 @@ public final class MatchEvidenceStore {
                 if (ownsImages) {
                     // 懒加载路径：解码出来的图归本类所有，标注图合成完毕即释放。
                     frame.flush();
-                    template.flush();
+                    if (template != null) {
+                        template.flush();
+                    }
                 }
             }
 

@@ -92,6 +92,17 @@ public class NpcClickSmartQueueMessage {
         YELLOW_NAME,
         PURPLE_FORMULA,
         CTRL_CANDIDATES,
+        /**
+         * G122 P1-2: an explicit, executable continuation state. The recognizer stage named by
+         * {@code strategy} needs a fresh frame (or a follow-up verification) to finish; its evidence
+         * rides {@code candidateBox}/{@code reason} and the original action rides
+         * {@code matchedText}. The consumer must NOT treat this as a miss or burn a candidate slot:
+         * it notes the request and completes the same-family continuation through the documented
+         * fresh-frame replacement attempt. Before G122 these results were silently normalized to
+         * {@code NO_ACTION/point=null} ("cloud-brain-npc-queue-normalized-legacy-action") and the
+         * whole stage's evidence was lost.
+         */
+        CONTINUATION,
         WAIT,
         END,
         INVALID

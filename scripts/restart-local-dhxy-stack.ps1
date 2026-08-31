@@ -1,10 +1,14 @@
 ﻿param(
-    [switch]$SkipClientCompile
+    [switch]$SkipClientCompile,
+    # 应急逃生口：体检照跑照报，只是不阻断启动。刻意不提供"整段跳过"——
+    # 绕过安全门时更需要看到缺了什么，静默跳过等于把换机故障推迟到停机之后才暴露。
+    [switch]$IgnorePreflightFailures
 )
 
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "lib-process-tree.ps1")
+. (Join-Path $PSScriptRoot "lib-machine-paths.ps1")
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $cloudPort = 18080
@@ -16,12 +20,22 @@ $cloudLog = Join-Path $projectRoot "logs\local-stack-cloud.out.log"
 $cloudErrorLog = Join-Path $projectRoot "logs\local-stack-cloud.err.log"
 $cloudBusinessLog = Join-Path $projectRoot "logs\cloud-brain-console.log"
 $processRegistryFile = Join-Path $projectRoot "logs\local-stack-processes.json"
+# G106 证据面（2026-08-29）：体检此前只写交互控制台，日志里零样本，"停进程前一次报全 +
+# 打印解析值"无法验收。这里给它一个落盘出口——行内时间戳与下面的"停止旧进程"标记同文件，
+# 顺序本身就是证据。只落盘，不参与任何判定。
+$preflightLog = Join-Path $projectRoot "logs\startup-preflight.log"
 $cloudLauncher = Join-Path $PSScriptRoot "run-cloud-brain-server.ps1"
-$cloudProjectRoot = "D:\mavenProject\dhxy-cloud-brain"
 $clientClasspathFile = Join-Path $projectRoot "target\client-dependency-classpath.txt"
-$javaHome = "C:\Program Files\Eclipse Adoptium\jdk-21.0.10.7-hotspot"
-$javaExe = Join-Path $javaHome "bin\java.exe"
-$javawExe = Join-Path $javaHome "bin\javaw.exe"
+# 换机契约（G106）：云端仓与 Java 运行时都不再写死在脚本里，统一走 lib-machine-paths.ps1
+# 的"环境变量 → 本机配置 → 推导默认值"三级解析。
+$cloudProjectRootResolution = Resolve-DhxyCloudProjectRoot -ClientRoot $projectRoot
+$cloudProjectRoot = $cloudProjectRootResolution.Path
+$javaRuntime = Resolve-DhxyJavaRuntime -ClientRoot $projectRoot
+$javaExe = $javaRuntime.JavaExe
+$javawExe = $javaRuntime.JavawExe
+# Maven 按 JAVA_HOME 挑 JDK，与上面的解析链是两个口径：不钉住就会出现"体检全绿、
+# 停掉旧进程之后才在 mvn compile 阶段炸"。preflight 随后会从 mvn -v 取证确认钉住了。
+$previousJavaHomeForMaven = Use-DhxyJavaHomeForMaven -JavaHome $javaRuntime.JavaHome
 $backgroundTestDirectory = Join-Path $projectRoot "logs\background-task-test"
 $backgroundTestRequestFile = Join-Path $backgroundTestDirectory "elevated-request.json"
 $backgroundTestResultFile = Join-Path $backgroundTestDirectory "elevated-request-result.json"
@@ -38,6 +52,11 @@ if (Test-Path -LiteralPath $backgroundTestRequestFile -PathType Leaf) {
         }
         $backgroundMaxRuns = [Math]::Max(1, [int]$backgroundRequest.maxRuns)
         $backgroundScript = Join-Path $PSScriptRoot "background-task-test.ps1"
+        # 提权分支也要过同一道体检：它同样会起客户端 JVM，早退会让换机缺件绕过安全门。
+        Invoke-DhxyStartupPreflight -ClientRoot $projectRoot `
+            -CloudRoot $cloudProjectRoot -CloudRootSource $cloudProjectRootResolution.Source `
+            -JavaExe $javaExe -JavaSource $javaRuntime.Source `
+            -ReportOnly:$IgnorePreflightFailures -LogPath $preflightLog
         $global:LASTEXITCODE = 0
         & $backgroundScript $backgroundAction -MaxRuns $backgroundMaxRuns -SkipCompile
         if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
@@ -152,13 +171,17 @@ function Stop-DhxyOcrSidecar {
     }
 }
 
-if (-not (Test-Path -LiteralPath $javaExe -PathType Leaf)) {
-    $javaCommand = Get-Command java.exe -ErrorAction Stop
-    $javaExe = $javaCommand.Source
-}
-
 New-Item -ItemType Directory -Force -Path (Join-Path $projectRoot "logs") | Out-Null
 
+# 体检必须跑在停止旧进程之前：换机缺件要在这里一次报全，而不是把当前运行停掉之后再逐条失败。
+Invoke-DhxyStartupPreflight -ClientRoot $projectRoot `
+    -CloudRoot $cloudProjectRoot -CloudRootSource $cloudProjectRootResolution.Source `
+    -JavaExe $javaExe -JavaSource $javaRuntime.Source `
+    -ReportOnly:$IgnorePreflightFailures -LogPath $preflightLog
+
+# 同一文件里的这一行是"体检早于任何停进程动作"的文件证据：它的时间戳必须晚于上面每一行
+# 体检记录，且早于下面任何 Stop-*。
+Add-DhxyPreflightLogLine -LogPath $preflightLog -Line "[DHXY restart] 体检完成，开始停止旧进程（此行之后才有任何 Stop-Process）。"
 Write-Stage "停止旧客户端与 Cloud Brain（不会关闭 IntelliJ、Node/8080 或其他 Java）。"
 Stop-DhxyClientWindow
 Stop-CloudBrainListener
@@ -208,6 +231,10 @@ if ([string]::IsNullOrWhiteSpace($sid)) {
 $stateRoot = Join-Path $env:LOCALAPPDATA "DHXY\cloud-brain\state"
 $cloudWrapperCommand = "& $(Quote-PowerShellLiteral $cloudLauncher) " +
     "-Port $cloudPort " +
+    # 显式传本轮已解析的绝对路径：子启动器不再自己重解析一遍，两边不可能得出不同答案。
+    "-BrainProjectPath $(Quote-PowerShellLiteral $cloudProjectRoot) " +
+    # 同一个 java.exe：子脚本不再自己解析，preflight 验过的那个就是云端真正执行的那个。
+    "-JavaExe $(Quote-PowerShellLiteral $javaExe) " +
     "-BusinessLogPath $(Quote-PowerShellLiteral $cloudBusinessLog) " +
     "-TenantId 'dhxy-local' " +
     "-UserId $(Quote-PowerShellLiteral $sid.Trim()) " +

@@ -57,6 +57,16 @@ public final class NpcArrivalFrameFifoLocalExecutor {
      * 五个窗口全部卡死在 ACCEPT_TASK。所以这个等待只对会打戳的任务开;其他任务 defer 模式
      * 恢复原语义(点完即过,验证归任务层)。
      */
+    /*
+     * G122 P1-3（2026-08-29）：这个集合是"任务侧会打 markTaskDialogOptionAnswered 戳"的注册表,
+     * **不是**"需要真实验证"的注册表——两者别再混为一谈。加进来的前提是客户端确实有一条本地
+     * 对话探针会为该任务打戳。大理寺(dalisi_quiz)**故意不在这里**:客户端唯一的打戳点是
+     * WindowObservationSampler.sampleTiantingDialogProbe,它的 TiantingOptionSet.supports() 把
+     * 任务类型硬限死在 TIANTING / GHOST_KING,而大理寺本身也从不安装 localTemplateProbeOnly 的
+     * 对话兴趣——把 dalisi_quiz 塞进来只会让每个候选等满 2.5s 再判 miss、12 个候选全烧光,
+     * 与 2026-08-23 双倍维护流那次一模一样的死法。大理寺的 accept.png 合同因此落在任务侧
+     * (DalisiQuizTask.openOfficialDialog),不在这里。
+     */
     private static final java.util.Set<String> DEFERRED_ANSWER_WAIT_TASK_CODES =
             java.util.Set.of("ghost_king", "tianting");
     /*
@@ -73,6 +83,15 @@ public final class NpcArrivalFrameFifoLocalExecutor {
     private static final int WINDOW_HEIGHT = 768;
     private static final int CANDIDATE_LIMIT = 12;
     private static final long WAIT_SLEEP_MS = 500L;
+
+    /**
+     * G125 修 A：会话静默总时限。2026-08-30 20:29:58 云端一边发布 FIFO 开会话动作、一边翻页去
+     * maintenance check（生产者与 INSPECT 互相等死），本循环收 WAIT 只睡 500ms 再问、无总时限、
+     * 零日志，turn 线程被扣 13.5 分钟，期间队长所有取图命令全部 TIMED_OUT_UNCERTAIN。
+     * 收到任何"当前会话的非 WAIT 消息"即重置；到点则上报 FINAL_FAILED 并交还 turn 线程——
+     * 宁可这次点击失败走既有恢复，也不许无声扣住整条命令通道。
+     */
+    private static final long SESSION_QUIET_LIMIT_MS = 60_000L;
     private static final int CTRL_MENU_SCAN_W = 150;
     private static final int CTRL_MENU_SCAN_H = 120;
     private static final String CTRL_TEMPLATE = "images/calibrate/npc_menu_clean_sample.png";
@@ -95,7 +114,19 @@ public final class NpcArrivalFrameFifoLocalExecutor {
     private final UICleanerService uiCleanerService;
     private final DialogService dialogService;
     private final CoordinateHelper coordinateHelper;
+    /** 真的被本地验证过的点击点。G122 P1-3 起这里只收 VERIFIED，defer 的待定点进不来。 */
     private final Map<ReplayPointKey, Point> verifiedReplayPoints = new ConcurrentHashMap<>();
+    /*
+     * G122 P1-3：defer 的**未验证**待重放点，与已验证点严格分家。
+     *
+     * 为什么要分家：defer 的点从来没被证明过（大理寺 (481,619) 就是点空的坐标），把它塞进
+     * verifiedReplayPoints 等于伪造证据，日志还会照着喊 "verified point retained"。
+     * 为什么还要留：五环的"临时不可用"重试环（FiveRingTaskV3，用户口述定案）会显式带
+     * reuseLastVerifiedPoint=true 回来重放同一个点——它要的就是"刚才点的那一下再来一次"，
+     * 前提是任务侧自己判断没发生过移动。只有显式索要重放的调用方才会读到这张表；
+     * 大理寺走 clickNpcSmart，从不索要重放，所以这张表对它是死的。
+     */
+    private final Map<ReplayPointKey, Point> deferredReplayPoints = new ConcurrentHashMap<>();
 
     public NpcArrivalFrameFifoLocalExecutor(
             TurnClient turnClient,
@@ -176,6 +207,21 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                         session == null ? null : session.getWindowId(),
                         session == null ? null : session.getTaskRunId(),
                         session == null ? null : session.getReason());
+                /*
+                 * G125 修 C：session-missing 不是终局。2026-08-30 医宝宝三连（20:12/20:16/20:19）：
+                 * demand 在云端登记成功、坐标一路刷新，但本程零停稳帧，会话从未建成；fresh
+                 * in-tolerance 瞬判到达后 38ms 强制开会话必然拒开，任务把这次点击当 exhausted 跳过，
+                 * 每轮白跑一趟巫医。人此刻就站在 NPC 前——现拍一帧走既有 replace 通道给云端当首帧
+                 * （云端放行 preparedAttempts==0 的 replacement，会话天生解锁），重开一次。
+                 * 仅限第一次尝试：第二次仍拒说明云端连 demand 都没有，按原路失败。
+                 */
+                if (attempt == 1 && isSessionMissingRejection(session)
+                        && replaceWithFreshFrame(arguments, spec, binding)) {
+                    log.warn("NPC arrival FIFO sent fresh first frame after session-missing; retrying open: "
+                                    + "windowId={} taskRunId={} intentId={}",
+                            spec.windowId(), spec.businessTaskRunId(), arguments.intentId());
+                    continue;
+                }
                 return false;
             }
             log.info("NPC arrival FIFO session opened: windowId={} taskRunId={} intentId={} sessionId={} attempt={}",
@@ -217,10 +263,24 @@ public final class NpcArrivalFrameFifoLocalExecutor {
             long storyAnchor,
             long lastConsumedStorySequence) {
         int candidateMessageCount = 0;
+        long quietSinceMs = System.currentTimeMillis();
         try {
             while (candidateMessageCount < CANDIDATE_LIMIT) {
                 TaskCheckpoint.throwIfStopRequested(
                         taskContextHolder, "NPC arrival FIFO stopped before poll");
+                long quietMs = System.currentTimeMillis() - quietSinceMs;
+                if (quietMs > SESSION_QUIET_LIMIT_MS) {
+                    // G125 修 A：见 SESSION_QUIET_LIMIT_MS。到点必须交还 turn 线程并留痕。
+                    log.warn("NPC arrival FIFO quiet limit exceeded; releasing turn thread: windowId={} "
+                                    + "taskRunId={} intentId={} sessionId={} quietMs={}",
+                            spec.windowId(), spec.businessTaskRunId(), arguments.intentId(),
+                            session.getSessionId(), quietMs);
+                    reportOutcomeAsync(
+                            arguments, spec, terminalMessage(spec, session),
+                            NpcClickSmartQueueOutcome.FINAL_FAILED,
+                            "no actionable cloud FIFO message within " + SESSION_QUIET_LIMIT_MS + "ms");
+                    return SessionResult.terminal();
+                }
                 long storySequence = freshStorySequence(
                         spec, runtime, storyAnchor, lastConsumedStorySequence);
                 if (storySequence > 0L) {
@@ -294,6 +354,7 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                             taskContextHolder, "NPC arrival FIFO stopped after WAIT");
                     continue;
                 }
+                quietSinceMs = System.currentTimeMillis();
                 log.info("NPC arrival FIFO message received: sessionId={} type={} decisionId={} strategy={} "
                                 + "point={} ctrlCandidates={} confidence={} reason={}",
                         message.getSessionId(), message.getType(), message.getDecisionId(),
@@ -313,6 +374,25 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                             NpcClickSmartQueueOutcome.FINAL_FAILED,
                             "invalid cloud FIFO queue message: " + message.getReason());
                     return SessionResult.terminal();
+                }
+                if (message.getType() == NpcClickSmartQueueMessage.Type.CONTINUATION) {
+                    /*
+                     * G122 P1-2：显式续帧状态。这不是 miss——该阶段（strategy）明确说"给我一张新帧
+                     * 或后续动作我才能出点"，证据（candidateBox/reason）原样保留在消息里。这里
+                     * 不烧候选槽、不推进 miss 计数，剩余候选级（紫名/CTRL）继续在当前帧上尝试；
+                     * 若本会话最终 END，既有的 EXHAUSTED -> replaceWithFreshFrame -> attempt 2 就是
+                     * 同族续帧闭环（同 intent、新帧、新 session、generation 随 demand.frameKey 前进）。
+                     * 此前这类结果被云端归一化成 NO_ACTION/point=null 当普通 miss 烧掉（五开事故）。
+                     */
+                    log.info("NPC arrival FIFO continuation requested by cloud stage: sessionId={} "
+                                    + "stage={} continuedAction={} candidateBox={} reason={}",
+                            message.getSessionId(), message.getStrategy(), message.getMatchedText(),
+                            message.getCandidateBox(), message.getReason());
+                    reportOutcomeAsync(
+                            arguments, spec, message,
+                            NpcClickSmartQueueOutcome.SKIPPED,
+                            "continuation noted; fresh-frame replacement completes this stage");
+                    continue;
                 }
 
                 candidateMessageCount++;
@@ -340,8 +420,10 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                         || (spec.deferDialogVerificationToTask()
                         && localOutcome == NpcClickSmartQueueOutcome.DIALOG_OPEN_UNVERIFIED)) {
                     if (localOutcome == NpcClickSmartQueueOutcome.DIALOG_OPEN_UNVERIFIED) {
-                        log.info("NPC arrival FIFO handed open dialog to task-owned classifier: "
-                                        + "windowId={} taskRunId={} intentId={} decisionId={}",
+                        // G122 P1-3：这条不是"已验证"。本地未验证（defer 第三态或框在但模板没中），
+                        // 会话按 defer 语义收工，证明责任整体在任务侧；点位不留。
+                        log.info("NPC arrival FIFO handed UNVERIFIED click to task-owned classifier: "
+                                        + "windowId={} taskRunId={} intentId={} decisionId={} retainedPoint=false",
                                 spec.windowId(), spec.businessTaskRunId(), arguments.intentId(),
                                 message.getDecisionId());
                     }
@@ -391,8 +473,10 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                 click,
                 "fifoCandidate:" + message.getType(),
                 "npc-click-smart-fifo:" + message.getType() + ":" + message.getDecisionId());
-        if (outcome == NpcClickSmartQueueOutcome.VERIFIED) {
+        if (shouldRetainVerifiedPoint(outcome)) {
             rememberVerifiedPoint(arguments, spec, click);
+        } else if (shouldRetainDeferredPoint(spec, outcome)) {
+            rememberDeferredPoint(arguments, spec, click);
         }
         return outcome;
     }
@@ -445,6 +529,10 @@ public final class NpcArrivalFrameFifoLocalExecutor {
          * 踹回旧标准差截图判断——接任务框六行绿字必爆方差门 → VERIFICATION_FAILED → 重复
          * 点 NPC 误开"恢复抽取"页（3465 实锤）。恢复 pushed 语义：defer 任务点完即过，
          * 对话验证归任务自己的 presence/分类链。
+         *
+         * G122 P1-3（2026-08-29）：这个坑没有被重新挖开——defer 依旧不在这里拍图判方差，
+         * 依旧"点完即过"。变的只有 defer 的**终态语义**：它从"假 VERIFIED"降级成
+         * DIALOG_OPEN_UNVERIFIED（非成功的待定态），因此不再留 retained point。
          */
         return queueOutcomeForVerification(dialogService.verifyNpcArrivalExpectedDialog(
                 spec.expectedDialogTemplatePaths(),
@@ -524,8 +612,10 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                     || outcomeRef.get() == NpcClickSmartQueueOutcome.DIALOG_OPEN_UNVERIFIED
                     || outcomeRef.get() == NpcClickSmartQueueOutcome.CANCELLED
                     || outcomeRef.get() == NpcClickSmartQueueOutcome.SAFETY_REJECTED) {
-                if (outcomeRef.get() == NpcClickSmartQueueOutcome.VERIFIED) {
+                if (shouldRetainVerifiedPoint(outcomeRef.get())) {
                     rememberVerifiedPoint(arguments, spec, probeRel);
+                } else if (shouldRetainDeferredPoint(spec, outcomeRef.get())) {
+                    rememberDeferredPoint(arguments, spec, probeRel);
                 }
                 return outcomeRef.get();
             }
@@ -537,12 +627,20 @@ public final class NpcArrivalFrameFifoLocalExecutor {
             TurnWholeTaskRuntimeArguments arguments,
             TurnNpcArrivalFrameFifoSpec spec,
             WindowNativeBinding binding) {
+        // G122 P1-3：已验证点优先；没有已验证点时才回落到 defer 的**未验证**待定点（五环的
+        // "临时不可用"重放要的就是它）。两张表分家，日志如实说明这次重放的是哪一种。
         Point retained = verifiedReplayPoints.get(ReplayPointKey.from(arguments, spec));
+        boolean proven = retained != null;
+        if (retained == null) {
+            retained = deferredReplayPoints.get(ReplayPointKey.from(arguments, spec));
+        }
         if (!insideAllowedRegion(retained, spec)) {
             log.warn("NPC arrival retained-point replay rejected: windowId={} taskRunId={} intentId={} point={}",
                     spec.windowId(), spec.businessTaskRunId(), arguments.intentId(), retained);
             return false;
         }
+        log.info("NPC arrival retained-point replay source: windowId={} taskRunId={} intentId={} proven={}",
+                spec.windowId(), spec.businessTaskRunId(), arguments.intentId(), proven);
         NpcClickSmartQueueOutcome outcome = executePointAndVerify(
                 arguments,
                 spec,
@@ -561,6 +659,7 @@ public final class NpcArrivalFrameFifoLocalExecutor {
     public void forgetWindowRealityMemory(String windowId) {
         if (windowId != null && !windowId.isBlank()) {
             verifiedReplayPoints.keySet().removeIf(key -> windowId.equals(key.windowId()));
+            deferredReplayPoints.keySet().removeIf(key -> windowId.equals(key.windowId()));
         }
     }
 
@@ -571,6 +670,18 @@ public final class NpcArrivalFrameFifoLocalExecutor {
         ReplayPointKey key = ReplayPointKey.from(arguments, spec);
         verifiedReplayPoints.put(key, new Point(point));
         log.info("NPC arrival verified point retained for local replay: windowId={} taskRunId={} intentId={} point={}",
+                spec.windowId(), spec.businessTaskRunId(), arguments.intentId(), point);
+    }
+
+    /** G122 P1-3：待定点单独记账，日志明确写 UNVERIFIED——不许再冒充"已验证点击点"。 */
+    private void rememberDeferredPoint(
+            TurnWholeTaskRuntimeArguments arguments,
+            TurnNpcArrivalFrameFifoSpec spec,
+            Point point) {
+        ReplayPointKey key = ReplayPointKey.from(arguments, spec);
+        deferredReplayPoints.put(key, new Point(point));
+        log.info("NPC arrival UNVERIFIED deferred point retained for explicit replay only: "
+                        + "windowId={} taskRunId={} intentId={} point={}",
                 spec.windowId(), spec.businessTaskRunId(), arguments.intentId(), point);
     }
 
@@ -659,8 +770,20 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                 "npc-click-smart-fifo:CTRL_CANDIDATES:" + message.getDecisionId()));
     }
 
-    private static NpcClickSmartQueueOutcome queueOutcomeForVerification(
+    /**
+     * G122 P1-3：三态映射。DEFERRED 是非成功的独立状态，绝不许再折叠成 VERIFIED。
+     *
+     * <p>defer 的第三态在本地什么都没看过（不拍图、不判 presence、不匹配模板），所以它只能落到
+     * {@code DIALOG_OPEN_UNVERIFIED}——"这一下点出去了，验证归任务侧，本地没有证据"。会话结论
+     * 仍由 {@code consumeOne} 的 defer 分支负责（点完即过，语义不变），但**它不再是 VERIFIED，
+     * 于是也不再触发 {@link #rememberVerifiedPoint}**：点空的坐标从此不会被存成"已验证点击点"
+     * 去污染 retained-point replay（大理寺 (481,619) 实锤）。</p>
+     */
+    static NpcClickSmartQueueOutcome queueOutcomeForVerification(
             DialogService.NpcClickVerification verification) {
+        if (verification != null && verification.deferredToTask()) {
+            return NpcClickSmartQueueOutcome.DIALOG_OPEN_UNVERIFIED;
+        }
         if (verification != null && verification.verified()) {
             return NpcClickSmartQueueOutcome.VERIFIED;
         }
@@ -668,6 +791,30 @@ public final class NpcArrivalFrameFifoLocalExecutor {
             return NpcClickSmartQueueOutcome.DIALOG_OPEN_UNVERIFIED;
         }
         return NpcClickSmartQueueOutcome.VERIFICATION_FAILED;
+    }
+
+    /**
+     * G122 P1-3：只有**真的被验证过**的点才配当 retained replay 点。
+     *
+     * <p>这是两条独立合同里的第二条（第一条=不得判 VERIFIED）。defer/待定、看见框但没验上、
+     * 验证失败——三者一律不留点。留一个没证据的点，下一轮 {@code reuseLastVerifiedPoint} 重放
+     * 就会照着同一个空坐标再点一次。</p>
+     */
+    static boolean shouldRetainVerifiedPoint(NpcClickSmartQueueOutcome outcome) {
+        return outcome == NpcClickSmartQueueOutcome.VERIFIED;
+    }
+
+    /**
+     * G122 P1-3：defer 的待定点只进 {@link #deferredReplayPoints}，永远进不了已验证表。
+     *
+     * <p>它存在的唯一理由是五环"临时不可用"重试环显式带 {@code reuseLastVerifiedPoint=true}
+     * 回来重放同一下点击（用户口述定案）。任何没有显式索要重放的调用方都读不到它。</p>
+     */
+    static boolean shouldRetainDeferredPoint(
+            TurnNpcArrivalFrameFifoSpec spec, NpcClickSmartQueueOutcome outcome) {
+        return spec != null
+                && spec.deferDialogVerificationToTask()
+                && outcome == NpcClickSmartQueueOutcome.DIALOG_OPEN_UNVERIFIED;
     }
 
     private long freshStorySequence(
@@ -792,6 +939,16 @@ public final class NpcArrivalFrameFifoLocalExecutor {
             NpcClickSmartQueueMessage message,
             NpcClickSmartQueueOutcome outcome,
             String reason) {
+        /*
+         * G122 复审返修（2026-08-29 P1）：上报编码正名。此前 wireOutcomeForCloud 把 defer 的
+         * DIALOG_OPEN_UNVERIFIED 改回 VERIFIED 上报，云端 enrichArrivalOutcome 随即派生
+         * success=true——违反卡上合同门④"无真实 accept.png 不得 VERIFIED"。现在本地终态
+         * **原样**上报：defer 待定=DIALOG_OPEN_UNVERIFIED（云端 enrichArrivalOutcome 对 defer
+         * 需求的这个编码打 verificationStrength=TASK_PHASE_DEFERRED 且 success=false，
+         * registerDeferredPending 同单改为认这套如实编码；五环/天庭
+         * confirmArrivalFrameClickMemory 的结算链不变）。天庭/鬼王打戳等待验证出的 VERIFIED
+         * 本来就是本地真实证据（任务对话答复戳），不受本次正名影响。
+         */
         CompletableFuture.runAsync(() -> {
             try {
                 turnClient.reportNpcArrivalFrameOutcome(
@@ -820,6 +977,13 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                 .decisionId("local-terminal")
                 .strategy("INVALID")
                 .build();
+    }
+
+    /** G125 修 C：只有"云端答了、但会话缺失/过期"这一种拒开才补首帧重试。 */
+    private static boolean isSessionMissingRejection(NpcClickSmartCloudSession session) {
+        return session != null
+                && session.getReason() != null
+                && session.getReason().contains("session-missing");
     }
 
     private static boolean isCurrentSession(

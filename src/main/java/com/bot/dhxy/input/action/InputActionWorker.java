@@ -975,6 +975,7 @@ public class InputActionWorker {
                 || type == InputActionType.RELEASE_CTRL
                 || type == InputActionType.PRESS_CTRL_U
                 || type == InputActionType.PRESS_CTRL_A
+                || type == InputActionType.PRESS_CTRL_SPACE
                 || type == InputActionType.TYPE_TEXT_UNICODE
                 || type == InputActionType.PRESS_ENTER
                 || type == InputActionType.PRESS_ESCAPE;
@@ -991,6 +992,8 @@ public class InputActionWorker {
             inputProvider.pressCtrlU();
         } else if (type == InputActionType.PRESS_CTRL_A) {
             inputProvider.pressCtrlA();
+        } else if (type == InputActionType.PRESS_CTRL_SPACE) {
+            inputProvider.pressCtrlSpace();
         } else if (type == InputActionType.TYPE_TEXT_UNICODE) {
             inputProvider.typeTextUnicode(action.getText());
         } else if (type == InputActionType.PRESS_ENTER) {

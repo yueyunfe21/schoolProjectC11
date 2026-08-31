@@ -1,6 +1,7 @@
 package com.bot.dhxy.cloud.turn;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -15,6 +16,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.BooleanSupplier;
+import java.util.function.UnaryOperator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -25,16 +27,32 @@ public class CloudTurnSidecarLauncher {
 
     private static final Pattern WINDOWS_SID = Pattern.compile("S-1-(?:\\d+-)+\\d+");
     private static final Duration POLL_INTERVAL = Duration.ofMillis(500L);
+    /** Same override the launch scripts read, so both entry points agree on the Cloud Brain root. */
+    static final String CLOUD_BRAIN_ROOT_ENVIRONMENT = "DHXY_CLOUD_BRAIN_ROOT";
 
     private final TurnClientProperties turnProperties;
     private final CloudTurnSidecarProperties sidecarProperties;
+    private final UnaryOperator<String> environmentReader;
     private final Object startupMonitor = new Object();
     private volatile Process ownedProcess;
 
+    /*
+     * 这个类有两个构造：生产用的两参和给测试注入 environmentReader 的三参。Spring 只在"恰好一个
+     * 构造"时才会自动选，多于一个又都没标注时它退回找默认构造 → NoSuchMethodException，整个
+     * 客户端起不来（2026-08-27 01:5x 启动失败即此因）。必须显式点名生产构造。
+     */
+    @Autowired
     public CloudTurnSidecarLauncher(TurnClientProperties turnProperties,
                                     CloudTurnSidecarProperties sidecarProperties) {
+        this(turnProperties, sidecarProperties, System::getenv);
+    }
+
+    CloudTurnSidecarLauncher(TurnClientProperties turnProperties,
+                             CloudTurnSidecarProperties sidecarProperties,
+                             UnaryOperator<String> environmentReader) {
         this.turnProperties = Objects.requireNonNull(turnProperties, "turnProperties");
         this.sidecarProperties = Objects.requireNonNull(sidecarProperties, "sidecarProperties");
+        this.environmentReader = Objects.requireNonNull(environmentReader, "environmentReader");
     }
 
     /**
@@ -111,7 +129,7 @@ public class CloudTurnSidecarLauncher {
 
     private Process startSidecar() throws IOException, InterruptedException {
         Path script = absolute(sidecarProperties.getScriptPath());
-        Path brainProject = absolute(sidecarProperties.getBrainProjectPath());
+        Path brainProject = resolveBrainProject();
         Path logPath = absolute(sidecarProperties.getLogPath());
         String tenantId = requireText(sidecarProperties.getTenantId(), "cloud.turn.sidecar.tenant-id");
         String userId = configuredOrCurrentWindowsSid();
@@ -197,6 +215,29 @@ public class CloudTurnSidecarLauncher {
         }
         String host = endpoint.getHost();
         return "127.0.0.1".equals(host) || "localhost".equalsIgnoreCase(host) || "::1".equals(host);
+    }
+
+    /**
+     * Machine-portable Cloud Brain root, resolved with the same precedence the launch scripts use:
+     * configured property, then {@code DHXY_CLOUD_BRAIN_ROOT}, then the client project root's
+     * sibling {@code dhxy-cloud-brain}. Client-side auto-start must honour the environment override
+     * the scripts publish, or the two entry points disagree about where Cloud Brain lives.
+     */
+    Path resolveBrainProject() {
+        Path configured = sidecarProperties.getBrainProjectPath();
+        if (configured != null && !configured.toString().isBlank()) {
+            return absolute(configured);
+        }
+        String fromEnvironment = environmentReader.apply(CLOUD_BRAIN_ROOT_ENVIRONMENT);
+        if (fromEnvironment != null && !fromEnvironment.isBlank()) {
+            return absolute(Path.of(fromEnvironment.trim()));
+        }
+        Path clientRoot = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
+        Path parent = clientRoot.getParent();
+        if (parent == null) {
+            throw new IllegalStateException("无法推导 Cloud Brain 目录：客户端工作目录没有上级目录 " + clientRoot);
+        }
+        return parent.resolve("dhxy-cloud-brain").normalize();
     }
 
     private static Path absolute(Path path) {

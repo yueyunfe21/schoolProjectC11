@@ -21,6 +21,8 @@ public enum InputActionType {
     /** Press Ctrl+U once. */
     PRESS_CTRL_U,
     PRESS_CTRL_A,
+    /** Ctrl+Space：切输入法到英文（用户 2026-08-21 拍板；必须真实按键+前台，后台合成键切不了输入法）。 */
+    PRESS_CTRL_SPACE,
     /** Type Unicode text through the active input provider. */
     TYPE_TEXT_UNICODE,
     /** Type lowercase ASCII letters/digits as physical HID usages. */

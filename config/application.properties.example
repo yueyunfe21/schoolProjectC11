@@ -1,0 +1,26 @@
+# 本机专属配置模板（G106 换机契约）。
+#
+# 用法：复制成同目录下的 application.properties（去掉 .example 后缀），只写你这台机器需要改的键。
+# 该文件不入 Git —— 换机不需要修改任何 Git 跟踪的文件。
+#
+# 谁在读它：
+#   1) 客户端 Spring 进程：config/ 是 Spring Boot 默认外部配置位置，这里的键自动覆盖
+#      classpath 里的 application.properties（工作目录固定为项目根，由启动脚本保证）。
+#   2) scripts/lib-machine-paths.ps1：启动脚本解析云端仓路径和 Java 运行时时读同一个文件。
+#
+# 路径写法：用正斜杠（D:/foo/bar）或双反斜杠（D:\\foo\\bar），别写单反斜杠。
+
+# ---- 云端仓位置 ----
+# 默认按客户端仓的同级目录 dhxy-cloud-brain 推导，两仓同级时整行都不用写。
+# 仅当两仓不同级时才需要覆盖（也可以改用环境变量 DHXY_CLOUD_BRAIN_ROOT）。
+#cloud.turn.sidecar.brain-project-path=D:/mavenProject/dhxy-cloud-brain
+
+# ---- Java 运行时（只有启动脚本读，Spring 忽略）----
+# 默认解析顺序：环境变量 DHXY_JAVA_HOME → 本键 → JAVA_HOME → PATH 上的 java.exe。
+# 装了多个 JDK、想钉死用哪一个时才写。需要 21+。
+#dhxy.machine.java-home=C:/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot
+
+# ---- 输入后端 ----
+# 默认 FAKER_INPUT，是 fail-closed 的：缺少 FakerInput 虚拟 HID 驱动时启动直接失败。
+# 新机器还没装驱动、想先跑起来时，在这里换成 SEND_INPUT。
+#bot.input.backend=SEND_INPUT

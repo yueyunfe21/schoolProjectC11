@@ -22,6 +22,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
@@ -462,11 +463,11 @@ public class UICleanerService {
     }
 
     private boolean clickCloseButtonOnce(String description, CleanupPass cleanupPass) {
-        Point closeBtnPoint = findGenericCloseButtonPoint(description, cleanupPass);
-        if (closeBtnPoint == null) {
+        GenericCloseHit hit = findGenericCloseButtonPoint(description, cleanupPass);
+        if (hit == null) {
             return false;
         }
-        return inputSequences.submitExclusiveAndWait(description, () -> clickCloseButtonOnceDirect(description, closeBtnPoint));
+        return inputSequences.submitExclusiveAndWait(description, () -> clickCloseButtonOnceDirect(description, hit));
     }
 
     /**
@@ -508,7 +509,8 @@ public class UICleanerService {
 
         int clickX = closeBtnPoint.x + 4 + random.nextInt(5);
         int clickY = closeBtnPoint.y + 4 + random.nextInt(5);
-        log.info("UI cleanup x2-only close matched: description={} click=({}, {})", description, clickX, clickY);
+        log.info("UI cleanup x2-only close matched: description={} template={} click=({}, {})",
+                description, "images/template/cancel/x2.png", clickX, clickY);
         if (!InputActionScope.checkpoint()) {
             return false;
         }
@@ -519,42 +521,59 @@ public class UICleanerService {
         return TaskSleep.sleep(250) && InputActionScope.checkpoint();
     }
 
-    private Point findGenericCloseButtonPoint(String description, CleanupPass cleanupPass) {
+    /**
+     * G117 attributability: a generic-close hit is the pair (which template matched, where it matched).
+     *
+     * <p>Incident 3519 could not be attributed from the logs because the click line carried only the
+     * coordinate: 34 {@code close button matched} lines existed and not one of them named the template
+     * that produced them, so the root cause (a stray {@code quxiao.png} in the scan directory) had to be
+     * recovered by hand from evidence PNGs. Carrying the template all the way to the click log makes
+     * this class of accident greppable and countable.</p>
+     */
+    private record GenericCloseHit(String templatePath, Point point) {
+    }
+
+    private GenericCloseHit findGenericCloseButtonPoint(String description, CleanupPass cleanupPass) {
         String screenPath = cleanupPass.screenPath(tracker);
         if (screenPath == null || screenPath.isBlank()) {
             log.warn("UI cleanup close button scan skipped: capture failed description={}", description);
             return null;
         }
-        Point closeBtnPoint = null;
         List<String> closeButtonTemplates = genericCloseButtonTemplates();
         for (String templatePath : closeButtonTemplates) {
-            closeBtnPoint = coordinateHelper.findImageAbsoluteCoordinateByImagePath(templatePath, screenPath, 0.8);
+            Point closeBtnPoint =
+                    coordinateHelper.findImageAbsoluteCoordinateByImagePath(templatePath, screenPath, 0.8);
             if (closeBtnPoint != null) {
-                break;
+                return new GenericCloseHit(templatePath, closeBtnPoint);
             }
         }
 
-        if (closeBtnPoint == null) {
-            log.info("UI cleanup close button not found: description={} screenPath={} templates={}",
-                    description, screenPath, closeButtonTemplates);
-            return null;
-        }
-        return closeBtnPoint;
+        log.info("UI cleanup close button not found: description={} screenPath={} templates={}",
+                description, screenPath, closeButtonTemplates);
+        return null;
     }
 
     /**
-     * Discovers every cancel-template asset rather than hard-coding a subset of X-button skins.
+     * G126: generic cleanup closes every X-button skin before considering {@code quxiao.png}.
      *
-     * <p>The list is sorted only for reproducible logs/tests, not as a business priority. A missing
-     * directory fails closed, so cleanup performs no generic click rather than guessing a point.</p>
+     * <p>Incident 3519 (2026-08-29 00:34) was an ordering defect: alphabetical discovery put
+     * {@code quxiao.png} ahead of every {@code x*.png}, so cleanup cancelled a task while a
+     * top-right X was available. Keep the cancellation template as the final fallback, but never
+     * derive its priority from directory order. {@code npc_busy_cancel.png} remains excluded because
+     * it is not the user-approved generic fallback.</p>
      */
     static List<String> genericCloseButtonTemplates() {
         try (var paths = Files.list(GENERIC_CLOSE_TEMPLATE_DIR)) {
-            return paths.filter(Files::isRegularFile)
-                    .filter(path -> path.getFileName().toString().toLowerCase().endsWith(".png"))
+            List<String> templates = new ArrayList<>(paths.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().toLowerCase().matches("x\\d*\\.png"))
                     .sorted(Comparator.comparing(path -> path.getFileName().toString()))
                     .map(Path::toString)
-                    .toList();
+                    .toList());
+            Path cancelFallback = GENERIC_CLOSE_TEMPLATE_DIR.resolve("quxiao.png");
+            if (Files.isRegularFile(cancelFallback)) {
+                templates.add(cancelFallback.toString());
+            }
+            return List.copyOf(templates);
         } catch (IOException directoryUnavailable) {
             log.warn("UI cleanup generic close-template directory is unavailable: dir={} message={}",
                     GENERIC_CLOSE_TEMPLATE_DIR, directoryUnavailable.getMessage());
@@ -562,10 +581,12 @@ public class UICleanerService {
         }
     }
 
-    private boolean clickCloseButtonOnceDirect(String description, Point closeBtnPoint) {
+    private boolean clickCloseButtonOnceDirect(String description, GenericCloseHit hit) {
+        Point closeBtnPoint = hit.point();
         int clickX = closeBtnPoint.x + 4 + random.nextInt(5);
         int clickY = closeBtnPoint.y + 4 + random.nextInt(5);
-        log.info("UI cleanup close button matched: description={} click=({}, {})", description, clickX, clickY);
+        log.info("UI cleanup close button matched: description={} template={} click=({}, {})",
+                description, hit.templatePath(), clickX, clickY);
 
         if (!InputActionScope.checkpoint()) {
             return false;

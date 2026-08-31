@@ -41,6 +41,9 @@ public interface InputProvider {
     /** Press Ctrl+A once. */
     void pressCtrlA();
 
+    /** 按一次 Ctrl+Space：把输入法切回英文（用户 2026-08-21 拍板，地图名输入重试前用）。 */
+    void pressCtrlSpace();
+
     /** Press Alt+1. */
     void pressAlt1();
 

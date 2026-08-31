@@ -16,6 +16,8 @@ final class UnknownPhasePresenceLocalMechanics {
     static final String TITLE_INTEREST = "unknown-phase-title-presence";
     static final String DIALOG_INTEREST = "unknown-phase-dialog-presence";
     static final String DIALOG_FRAME_ROI = "unknown-phase-dialog-frame";
+    /** Fact value format published alongside the presence word: {@code left,top,right,bottom}. */
+    static final String FRAME_BOUNDS_FORMAT = "left,top,right,bottom";
     static final long SAMPLE_PERIOD_MS = 500L;
     private static final double TITLE_THRESHOLD = 0.82D;
     private static final String TIANTING_TITLE_TEMPLATE = "images/template/tianting/tianting_title.png";
@@ -45,11 +47,19 @@ final class UnknownPhasePresenceLocalMechanics {
         BufferedImage dialog = crop(DIALOG_RECT);
         try {
             String title = presence(tracker, titleTemplate());
-            boolean dialogFramePresent = dialog != null && dialogPresence.isPresent(dialog);
+            DialogFramePresenceMechanics.FramePresence frame = dialogPresence.analyze(dialog);
+            boolean dialogFramePresent = dialog != null && frame.present();
             String dialogValue = dialog == null
                     ? "unknown"
                     : dialogFramePresent ? "unknown" : "none";
-            return new Sample(title, dialogValue,
+            /*
+             * 框在时把矩形一起报上去：presence 归本地判，云端只消费，不许再对同一张图做第二次
+             * 视觉判断（2026-08-28 实锤：云端那套 DialogFrameClassifier 与本地结论相反）。
+             */
+            String bounds = dialogFramePresent
+                    ? frame.left() + "," + frame.top() + "," + frame.right() + "," + frame.bottom()
+                    : null;
+            return new Sample(title, dialogValue, bounds,
                     dialogFramePresent ? encodePng(dialog) : null);
         } finally {
             if (tracker != null) tracker.flush();
@@ -98,7 +108,7 @@ final class UnknownPhasePresenceLocalMechanics {
         }
     }
 
-    record Sample(String titlePresence, String dialogPresence, byte[] dialogPng) {
+    record Sample(String titlePresence, String dialogPresence, String dialogFrameBounds, byte[] dialogPng) {
         Sample {
             dialogPng = dialogPng == null ? null : dialogPng.clone();
         }

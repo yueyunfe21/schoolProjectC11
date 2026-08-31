@@ -110,6 +110,10 @@ public class InputAction {
         return simple(InputActionType.PRESS_CTRL_A);
     }
 
+    public static InputAction pressCtrlSpace() {
+        return simple(InputActionType.PRESS_CTRL_SPACE);
+    }
+
     /**
      * @param text Unicode text to type through the input provider. Null handling is provider-specific.
      * @return text typing action.

@@ -42,6 +42,13 @@ public enum ObservationFactType {
     UNKNOWN_PHASE_TITLE_PRESENCE,
     /** BR-DIALOG-001 dialog state paired with the title fact from the same observation cycle. */
     UNKNOWN_PHASE_DIALOG_PRESENCE,
+    /**
+     * ROI-relative dialog frame rectangle as {@code left,top,right,bottom}, published in the same
+     * sample as {@link #UNKNOWN_PHASE_DIALOG_PRESENCE} whenever a frame is present. Presence is
+     * judged locally; publishing the rectangle keeps the cloud from re-judging the same picture
+     * with a second detector that can disagree.
+     */
+    UNKNOWN_PHASE_DIALOG_FRAME_BOUNDS,
     /** On-demand local saturation classification for one confirmed 天庭暗雷 attempt. */
     TIANTING_DARK_THUNDER_FLIGHT_STATE,
     /**
@@ -49,5 +56,13 @@ public enum ObservationFactType {
      * the local click executed, so the Cloud learns what its window just answered without ever
      * receiving a screen point.
      */
-    TIANTING_DIALOG_ACTION
+    TIANTING_DIALOG_ACTION,
+    /**
+     * G108: mechanical leader-HUD 召 watch sample published only while the Cloud keeps the
+     * {@code team-return-zhao-watch} interest open. The value carries the sampled state
+     * (PRESENT/ABSENT/UNKNOWN), the local combat generation, a per-run monotonic sequence, a folded
+     * per-generation seen-marker and the match score; no ROI pixels travel with it. Cloud owns every
+     * latch and gate decision built on top of this fact.
+     */
+    TEAM_RETURN_ZHAO_WATCH
 }

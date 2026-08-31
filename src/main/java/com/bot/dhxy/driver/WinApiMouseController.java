@@ -55,6 +55,8 @@ public class WinApiMouseController implements InputProvider {
     private static final int SCAN_6 = 0x07;
     private static final int SCAN_8 = 0x09;
     private static final int SCAN_A = 0x1E;
+    /** 键盘扫描码：空格。 */
+    private static final int SCAN_SPACE = 0x39;
     private static final int SCAN_B = 0x30;
     private static final int SCAN_C = 0x2E;
     private static final int SCAN_E = 0x12;
@@ -172,6 +174,12 @@ public class WinApiMouseController implements InputProvider {
     public void pressCtrlA() {
         traceInput("pressCtrlA", "shortcut=CTRL+A");
         inputCoordinator.runInput("pressCtrlA", () -> pressCtrlScan(SCAN_A, "CTRL+A"));
+    }
+
+    @Override
+    public void pressCtrlSpace() {
+        traceInput("pressCtrlSpace", "shortcut=CTRL+SPACE");
+        inputCoordinator.runInput("pressCtrlSpace", () -> pressCtrlScan(SCAN_SPACE, "CTRL+SPACE"));
     }
 
     @Override

@@ -1,4 +1,4 @@
-# 共享进程树收尾helper。两个启动脚本都 dot-source 它，避免各写一份产生漂移。
+﻿# 共享进程树收尾helper。两个启动脚本都 dot-source 它，避免各写一份产生漂移。
 
 function Stop-ProcessTreeSafely {
     <#
@@ -43,17 +43,32 @@ function Stop-ProcessTreeSafely {
     }
 
     # 倒序 = 最深的先杀：先杀父再杀子等于把孙子辈重新变成孤儿。
+    #
+    # 2026-08-27 01:45 事故：这里原本是空 catch。旧 OCR sidecar 是提权进程，非提权的启动
+    # 会话 Stop-Process 收到 "Access is denied"，被空 catch 整个吞掉；脚本若无其事往下走，
+    # 20 秒后才以"端口 18762 在 20 秒内未释放"的面目报错——真正的原因（权限不足）一个字
+    # 都没有出现，人只能对着端口超时瞎猜。杀不掉必须当场说清是谁、为什么。
     $killed = 0
+    $failures = New-Object System.Collections.Generic.List[string]
     for ($index = $descendants.Count - 1; $index -ge 0; $index--) {
+        $target = $descendants[$index]
         try {
-            Stop-Process -Id $descendants[$index].ProcessId -Force -Confirm:$false -ErrorAction Stop
+            Stop-Process -Id $target.ProcessId -Force -Confirm:$false -ErrorAction Stop
             $killed++
-        } catch { }
+        } catch {
+            $failures.Add("pid=$($target.ProcessId) ($($target.Name)): $($_.Exception.Message)")
+        }
     }
     try {
         Stop-Process -Id $ProcessId -Force -Confirm:$false -ErrorAction Stop
         $killed++
-    } catch { }
+    } catch {
+        $failures.Add("pid=$ProcessId ($($root.Name)): $($_.Exception.Message)")
+    }
+    if ($failures.Count -gt 0) {
+        $failureText = $failures -join "; "
+        Write-Warning "[process-tree] 有进程没能终止，后续的端口等待会因此超时，真正原因在这里：$failureText"
+    }
 
     if ($descendants.Count -gt 0) {
         Write-Host "[process-tree] 关闭 pid=$ProcessId 连同 $($descendants.Count) 个后代进程（共终止 $killed 个）"

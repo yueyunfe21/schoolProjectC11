@@ -89,12 +89,52 @@ public class DialogService {
             int matchBottom) {
     }
 
-    /** Typed result used by the restored NPC smart-click queue safety shell. */
+    /**
+     * Typed result used by the restored NPC smart-click queue safety shell.
+     *
+     * <p>G122 P1-3（2026-08-29 大理寺答题 NPC 入口假成功）：这个 record 现在有**三**个终态，
+     * 不再是两个布尔硬凑的两个。三态与两个布尔的对应关系是唯一权威，禁止再用"翻一个布尔让
+     * 编译过"的方式表达新状态：</p>
+     *
+     * <ul>
+     *   <li>已验证：{@code verified=true}——真的拍了图、真的判了 presence、真的匹配上了期望模板。</li>
+     *   <li>看见框但没验上：{@code verified=false, optionDialogVisible=true}——拍了图、框在，
+     *       但期望模板没命中。</li>
+     *   <li>待定（{@link #deferredPending()}）：{@code verified=false, optionDialogVisible=false,
+     *       deferredToTask=true}——本地**一眼都没看**（不拍图、不判 presence、不匹配模板），
+     *       验证的归属整体交给任务侧。它既不是成功也不是"看见了框"，两个布尔都必须是 false。</li>
+     * </ul>
+     *
+     * @param verified 期望对话框被本地判定确实证实；defer 第三态永远是 false。
+     * @param optionDialogVisible 本地确实拍过图并判定框在；defer 第三态永远是 false。
+     * @param status 诊断用状态词。
+     * @param dialogType 已判定的对话框类型；未判定时是 {@link DialogType#NONE}。
+     * @param deferredToTask 第三态标记：本地未验证，验证归任务侧。
+     */
     public record NpcClickVerification(
             boolean verified,
             boolean optionDialogVisible,
             String status,
-            DialogType dialogType) {
+            DialogType dialogType,
+            boolean deferredToTask) {
+
+        /** 旧四元构造保持原语义：非 defer 的本地判定路径一律 {@code deferredToTask=false}。 */
+        public NpcClickVerification(
+                boolean verified, boolean optionDialogVisible, String status, DialogType dialogType) {
+            this(verified, optionDialogVisible, status, dialogType, false);
+        }
+
+        /**
+         * 第三态的唯一构造入口：未验证/待定。
+         *
+         * <p>G122 P1-3 根因：这里以前返回的是 {@code new NpcClickVerification(true, false,
+         * "DEFERRED_TO_TASK", NONE)}——第一个 {@code true} 就是硬编码的假成功。defer 的语义是
+         * "验证交给任务"，不是"验证已通过"；借用成功态会让 NPC 点空也被记成点中，并把那个空点
+         * 存成"已验证点击点"污染后续 retained-point replay（大理寺 (481,619) 实锤）。</p>
+         */
+        public static NpcClickVerification deferredPending() {
+            return new NpcClickVerification(false, false, "DEFERRED_TO_TASK", DialogType.NONE, true);
+        }
     }
 
     /**
@@ -114,7 +154,9 @@ public class DialogService {
             boolean deferToTask,
             String reason) {
         if (deferToTask) {
-            return new NpcClickVerification(true, false, "DEFERRED_TO_TASK", DialogType.NONE);
+            // G122 P1-3：DEFERRED 是**非成功的独立状态**。本地在这条分支上什么都没看，
+            // 所以它不许报 verified，也不许报 optionDialogVisible。见 NpcClickVerification 注释。
+            return NpcClickVerification.deferredPending();
         }
         int[] rect = coordinateHelper.getScaledRect(
                 DIALOG_LEFT, DIALOG_TOP, DIALOG_WIDTH, DIALOG_HEIGHT);

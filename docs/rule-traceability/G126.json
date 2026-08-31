@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "card": "G126",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "a6ec9d941b780591693f7c3ce80a25818755d08b",
+    "pushedReference": "origin/dev"
+  },
+  "rules": ["BR-UICLEAN-001"],
+  "affectedPaths": [
+    "docs/业务逻辑.md",
+    "docs/business-rules.json",
+    "docs/rule-traceability/G126.json",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/ACTIVE_WORK.md",
+    "docs/cr-dashboard-data.js",
+    "images/template/cancel/quxiao.png",
+    "src/main/java/com/bot/dhxy/service/UICleanerService.java",
+    "src/test/java/com/bot/dhxy/service/UICleanerServiceTemplateCatalogTest.java"
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "G117 把 quxiao.png 完全排除，修复了其排在 X 前的误点，却丢失了没有 X 时的通用关闭兜底。",
+    "userDecision": "保留 quxiao.png，但让全部 x*.png 先匹配；npc_busy_cancel.png 继续排除。",
+    "decisionRecordedAt": "2026-08-30",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G126-通用-UI-清理恢复-quxiao-末位兜底2026-08-30"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-UICLEAN-001",
+      "producer": "UICleanerService.genericCloseButtonTemplates builds the ordered local template list.",
+      "transport": "findGenericCloseButtonPoint scans one current-window screenshot in that list order.",
+      "consumer": "clickCloseButtonOnceDirect submits the first matched exact-window click.",
+      "ordering": "all x*.png candidates precede quxiao.png; npc_busy_cancel.png is absent."
+    }
+  ],
+  "verification": [
+    {
+      "name": "client-production-compile",
+      "result": "PASS",
+      "evidence": "mvn -q -DskipTests compile in D:/mavenProject/DHXY-cr271 exited 0 on 2026-08-30; automated tests and replay remain unapproved."
+    }
+  ]
+}

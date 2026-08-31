@@ -26,6 +26,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -66,6 +67,16 @@ public class LocalTeamRolePreflightService {
     private static final int TEAM_ANCHOR_X = 644;
     private static final int TEAM_ANCHOR_Y = 91;
     private static final int TEAM_ANCHOR_SIZE = 10;
+    /**
+     * 模板标定基线：全仓所有定尺寸模板都是在游戏窗口 1036x783 下截的，匹配过程不做缩放。
+     * ROI 会跟着窗口缩放（见 {@link Rect#scale}），模板不会——窗口一旦偏离这个尺寸，全部模板同时失配。
+     */
+    private static final int CALIBRATED_WINDOW_WIDTH = 1036;
+    private static final int CALIBRATED_WINDOW_HEIGHT = 783;
+
+    /** UI 侧据此把尺寸漂移从普通失败里认出来并弹告警；改文案时必须同步 MainWindowController。 */
+    public static final String WINDOW_SIZE_DRIFT_MARKER = "游戏窗口尺寸已偏离模板标定基线";
+
     private static final double TEMPLATE_THRESHOLD = 0.85D;
     private static final long PANEL_PROBE_TIMEOUT_MS = 5_000L;
     private static final long PANEL_PROBE_INTERVAL_MS = 500L;
@@ -221,6 +232,12 @@ public class LocalTeamRolePreflightService {
                 targetsByGroup.computeIfAbsent(groupHash, ignored -> new java.util.ArrayList<>()).add(target);
             }
 
+            String windowSizeDrift = describeWindowSizeDrift(
+                    targets.values().stream().map(ProbeTarget::binding).toList());
+            if (windowSizeDrift != null) {
+                log.warn("local team-role preflight sees drifted game window size: {}", windowSizeDrift);
+            }
+
             Map<String, AtomicReference<String>> leaderByGroup = new LinkedHashMap<>();
             targetsByGroup.keySet().forEach(groupHash ->
                     leaderByGroup.put(groupHash, new AtomicReference<>()));
@@ -255,7 +272,9 @@ public class LocalTeamRolePreflightService {
                         groupHash, winner, roles.size() - 1);
             }
             if (!leaderResolved) {
-                throw new PreflightTimeoutException("本地队伍菜单在 5 秒内未命中队长按钮，未启动任务");
+                String reason = "本地队伍菜单在 5 秒内未命中队长按钮，未启动任务";
+                throw new PreflightTimeoutException(
+                        windowSizeDrift == null ? reason : reason + "。" + windowSizeDrift);
             }
             return Map.copyOf(results);
         } finally {
@@ -603,6 +622,49 @@ public class LocalTeamRolePreflightService {
         graphics.setColor(color);
         graphics.drawOval(x - 12, y - 12, 24, 24);
         graphics.drawString(label + String.format(" %.3f", match[2]), x + 14, y);
+    }
+
+    /**
+     * 量一遍窗口尺寸，偏离标定基线就给出可直接展示给用户的告警文案。
+     *
+     * <p>2026-08-30 01:55 游戏客户端自行把五个窗口从 1036x783 改成 1117x840（放大 7.8%）：位置一动没动、
+     * 进程从 08-26 起就没重启过、Windows 事件日志里没有任何显示模式/GPU/驱动/电源事件，纯粹是游戏自己抽了
+     * 一下，两小时后又自行变了回来。后果是全部定尺寸模板一起失配，而最先撞上的就是本类的队长按钮探测，
+     * 五个窗口全部失败、整批不启动。当时报给用户的却只有"队伍菜单在 5 秒内未命中队长按钮"——完全没指向
+     * 真因，看上去像接线断了或云端没起来，最后是靠翻落盘证据图（按钮明明在画面里却没有命中框）再从证据 PNG
+     * 的尺寸反推窗口大小才定的案。</p>
+     *
+     * <p>尺寸是这里唯一免费就能量到的量（绑定里现成的），所以宁可每轮都量一遍，也不要再让人做一次图像取证。
+     * 注意这里只诊断、不拦截：游戏偶发抽风时把用户锁死在启动门外，比让他带着告警去试一次更糟。</p>
+     *
+     * @return 全部窗口都在标定尺寸上时返回 {@code null}，否则返回告警文案（以 {@link #WINDOW_SIZE_DRIFT_MARKER} 开头）。
+     */
+    static String describeWindowSizeDrift(Collection<WindowNativeBinding> bindings) {
+        Map<String, Integer> drifted = new LinkedHashMap<>();
+        for (WindowNativeBinding binding : bindings) {
+            if (binding == null || !binding.hasGeometry()) {
+                continue;
+            }
+            if (binding.getWidth() == CALIBRATED_WINDOW_WIDTH
+                    && binding.getHeight() == CALIBRATED_WINDOW_HEIGHT) {
+                continue;
+            }
+            drifted.merge(binding.getWidth() + "x" + binding.getHeight(), 1, Integer::sum);
+        }
+        if (drifted.isEmpty()) {
+            return null;
+        }
+        StringBuilder observed = new StringBuilder();
+        drifted.forEach((size, count) -> {
+            if (observed.length() > 0) {
+                observed.append("、");
+            }
+            observed.append(size).append('(').append(count).append("个窗口)");
+        });
+        return WINDOW_SIZE_DRIFT_MARKER + "：实测 " + observed + "，标定基线 "
+                + CALIBRATED_WINDOW_WIDTH + "x" + CALIBRATED_WINDOW_HEIGHT
+                + "。所有定尺寸模板都会失配（队长按钮、对话框、绿链、追踪器、战斗面板等），"
+                + "请把游戏窗口调回 " + CALIBRATED_WINDOW_WIDTH + "x" + CALIBRATED_WINDOW_HEIGHT + " 后重试。";
     }
 
     private BufferedImage capture(WindowNativeBinding binding, Rect rect) {

@@ -156,6 +156,9 @@ public final class WindowObservationSampler {
     private final XinshouAnchorLocalMechanics xinshouAnchorMechanics;
     private final WuhuanPresenceLocalMechanics wuhuanPresenceMechanics;
     private final UnknownPhasePresenceLocalMechanics unknownPhasePresenceMechanics;
+    private final TeamReturnZhaoWatchLocalMechanics teamReturnZhaoWatchMechanics;
+    private final TeamReturnZhaoWatchLocalMechanics.Duty teamReturnZhaoWatchDuty =
+            new TeamReturnZhaoWatchLocalMechanics.Duty();
     private final FlyingSaturationLocalMechanics flyingSaturationMechanics;
     private final DialogFramePresenceMechanics dialogFramePresenceMechanics = new DialogFramePresenceMechanics();
     /** Last Cloud-acknowledged content per new-player ROI key; sampler-thread confined. */
@@ -362,12 +365,14 @@ public final class WindowObservationSampler {
         this.xinshouAnchorMechanics = new XinshouAnchorLocalMechanics(tracker, coordinateHelper);
         this.wuhuanPresenceMechanics = new WuhuanPresenceLocalMechanics(coordinateHelper);
         this.unknownPhasePresenceMechanics = new UnknownPhasePresenceLocalMechanics(coordinateHelper);
+        this.teamReturnZhaoWatchMechanics = new TeamReturnZhaoWatchLocalMechanics(coordinateHelper);
         this.flyingSaturationMechanics = new FlyingSaturationLocalMechanics(coordinateHelper);
         this.returnHomeReplayCoordinator = returnHomeReplayCoordinator;
         this.combatSignalMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
         this.xinshouAnchorMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
         this.wuhuanPresenceMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
         this.unknownPhasePresenceMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
+        this.teamReturnZhaoWatchMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
         this.flyingSaturationMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
     }
 
@@ -660,13 +665,25 @@ public final class WindowObservationSampler {
      * it; every other tick skips the PrintWindow redraw entirely and leaves no stale frame behind.
      * Leaders, solo and role-unresolved windows keep the per-cycle shared frame, as does a member
      * whenever the Cloud republishes its combat interest (leader gone -> self-detection resumes).
+     *
+     * <p>E70 (2026-08-29): a live pathing leg is the third exemption. The member's team-return leg
+     * is registered through {@link WindowRuntimeContext#markPathingStarted} exactly like any other
+     * route, and {@link #refreshLocalPathingTerminal} decides movement by diffing consecutive crops
+     * of {@link #sharedPositionStripFrame} — a frame written ONLY by
+     * {@link #refreshSharedPositionStripFrame}, i.e. downstream of this gate. Suppressing the frame
+     * while the leg is live froze that strip, so every diff compared a stale crop against itself and
+     * the verdict was structurally always "no movement" (2026-08-28: 0 movement facts across 39
+     * CLICKED_NO_MOVEMENT team-return legs on member windows). {@link WindowObservationRunner}
+     * already accelerates the loop to {@link #LOCAL_PATHING_SAMPLE_PERIOD_MS} off this very
+     * predicate, so before the fix the member paid the fast cadence and then threw the frame away.
+     * Both decisions now read the same signal; no new state is introduced.
      */
-    private void refreshSharedFramesIfNeeded(long now) {
+    void refreshSharedFramesIfNeeded(long now) {
         boolean memberQuiet = context.getRole() == WindowRole.MEMBER && !combatSignalInterestActive;
         boolean panelWatchWantsFrame = autoPanelMechanics != null
                 && context.isLocalCombatVisible()
                 && isDue(AUTO_PANEL_WATCH_KEY, AUTO_PANEL_WATCH_PERIOD_MS, now);
-        if (memberQuiet && !panelWatchWantsFrame) {
+        if (isQuietMemberFrameSuppressed(memberQuiet, panelWatchWantsFrame, hasActivePathingIntent())) {
             clearSharedCycleFrame();
             return;
         }
@@ -683,6 +700,26 @@ public final class WindowObservationSampler {
         }
         refreshSharedCycleFrame();
         refreshSharedPositionStripFrame(now);
+    }
+
+    /**
+     * G002/E70 shared-frame gate, as a pure decision: {@code true} = this tick must drop the shared
+     * whole-window frame and skip the PrintWindow redraw entirely.
+     *
+     * <p>Suppression requires a quiet member AND that no consumer needs the frame. Three consumers
+     * exempt it: the member is not quiet at all (Cloud republished the combat interest), the
+     * auto-panel watch is due, or a pathing leg is live — the last one being E70, without which a
+     * member's team-return leg can never observe its own movement.</p>
+     *
+     * @param memberQuiet member window whose combat-signal interest the Cloud suppressed.
+     * @param panelWatchWantsFrame the in-combat auto-panel watch is due to consume the frame.
+     * @param pathingLegActive a pathing/team-return leg is registered and still live on this window.
+     * @return whether the shared frame must be cleared for this tick.
+     */
+    static boolean isQuietMemberFrameSuppressed(boolean memberQuiet,
+                                                boolean panelWatchWantsFrame,
+                                                boolean pathingLegActive) {
+        return memberQuiet && !panelWatchWantsFrame && !pathingLegActive;
     }
 
     /**
@@ -1180,6 +1217,7 @@ public final class WindowObservationSampler {
         sampleWuhuanPresence(interests, dialogInterests, pathingFacts, events, observerSeq, now, facts, rois,
                 startupWuhuanPresence);
         sampleUnknownPhasePresence(interests, now, facts, rois);
+        sampleTeamReturnZhaoWatch(interests, now, facts);
         for (ObservationInterest interest : interests) {
             // The two 天庭 daily-count interests are fulfilled exactly by the shared/fresh frames
             // retained in sampleTiantingDialogProbe. Sampling them again here would add captures
@@ -1189,7 +1227,8 @@ public final class WindowObservationSampler {
                     || WuhuanPresenceLocalMechanics.TITLE_INTEREST.equals(interest.interestKey())
                     || WuhuanPresenceLocalMechanics.DIALOG_INTEREST.equals(interest.interestKey())
                     || UnknownPhasePresenceLocalMechanics.TITLE_INTEREST.equals(interest.interestKey())
-                    || UnknownPhasePresenceLocalMechanics.DIALOG_INTEREST.equals(interest.interestKey())) {
+                    || UnknownPhasePresenceLocalMechanics.DIALOG_INTEREST.equals(interest.interestKey())
+                    || TeamReturnZhaoWatchLocalMechanics.INTEREST_KEY.equals(interest.interestKey())) {
                 continue;
             }
             if (!isDue(interest.interestKey(), interest.samplePeriodMs(), now)) {
@@ -1433,6 +1472,12 @@ public final class WindowObservationSampler {
                 ObservationFactType.UNKNOWN_PHASE_TITLE_PRESENCE, sample.titlePresence(), now));
         facts.add(new ObservationFact(
                 ObservationFactType.UNKNOWN_PHASE_DIALOG_PRESENCE, sample.dialogPresence(), now));
+        // 框在时同批发布矩形，云端据此取几何，不再自己 analyze 一遍（presence 全站唯一权威）。
+        String dialogFrameBounds = sample.dialogFrameBounds();
+        if (dialogFrameBounds != null) {
+            facts.add(new ObservationFact(
+                    ObservationFactType.UNKNOWN_PHASE_DIALOG_FRAME_BOUNDS, dialogFrameBounds, now));
+        }
         byte[] dialogPng = sample.dialogPng();
         if (dialogPng != null) {
             rois.add(new ObservationRoi(
@@ -1441,8 +1486,47 @@ public final class WindowObservationSampler {
         }
         markSampled(UnknownPhasePresenceLocalMechanics.TITLE_INTEREST, now);
         markSampled(UnknownPhasePresenceLocalMechanics.DIALOG_INTEREST, now);
-        log.info("G017 paired presence queued: windowId={} taskRunId={} title={} dialog={}",
-                context.getWindowId(), taskRunId, sample.titlePresence(), sample.dialogPresence());
+        log.info("G017 paired presence queued: windowId={} taskRunId={} title={} dialog={} frameBounds={}",
+                context.getWindowId(), taskRunId, sample.titlePresence(), sample.dialogPresence(),
+                dialogFrameBounds == null ? "-" : dialogFrameBounds);
+    }
+
+    /**
+     * G108: samples the leader-HUD 召 template once per second while the Cloud keeps the
+     * {@code team-return-zhao-watch} interest open. The client stays mechanical: the Cloud alone
+     * opens/closes the window (combat exit, gate start, recovery) and interprets the latch; this
+     * duty only crops the shared frame, matches locally and publishes the typed value. Combat hides
+     * the HUD scene entirely, so an in-combat cycle publishes nothing rather than a fake ABSENT.
+     * The 1s cadence is clamped locally: neither a faster interest period nor a fast Runner tick or
+     * Cloud response can accelerate it (G108 contract (9)).
+     */
+    private void sampleTeamReturnZhaoWatch(List<ObservationInterest> interests,
+                                           long now,
+                                           List<ObservationFact> facts) {
+        ObservationInterest interest = interests.stream()
+                .filter(i -> TeamReturnZhaoWatchLocalMechanics.INTEREST_KEY.equals(i.interestKey()))
+                .findFirst()
+                .orElse(null);
+        if (interest == null || localCombatVisible) {
+            return;
+        }
+        long periodMs = Math.max(
+                TeamReturnZhaoWatchLocalMechanics.SAMPLE_PERIOD_MS, interest.samplePeriodMs());
+        if (!isDue(TeamReturnZhaoWatchLocalMechanics.INTEREST_KEY, periodMs, now)) {
+            return;
+        }
+        markSampled(TeamReturnZhaoWatchLocalMechanics.INTEREST_KEY, now);
+        try {
+            TeamReturnZhaoWatchLocalMechanics.Sample sample =
+                    teamReturnZhaoWatchMechanics.sample(localCombatGeneration);
+            facts.add(new ObservationFact(
+                    ObservationFactType.TEAM_RETURN_ZHAO_WATCH,
+                    teamReturnZhaoWatchDuty.fold(sample.state(), localCombatGeneration, sample.score()),
+                    now));
+        } catch (RuntimeException sampleFailure) {
+            log.debug("Team-return zhao watch failed (no fact fabricated): windowId={} message={}",
+                    context.getWindowId(), sampleFailure.getMessage());
+        }
     }
 
     private boolean observeWuhuanTerminal(List<ObservationPathingFact> pathingFacts) {
@@ -1758,6 +1842,8 @@ public final class WindowObservationSampler {
         xinshouAnchorMechanics.reset();
         wuhuanPresenceMechanics.reset();
         unknownPhasePresenceMechanics.reset();
+        teamReturnZhaoWatchMechanics.reset();
+        teamReturnZhaoWatchDuty.reset();
         flyingSaturationMechanics.reset();
         observedWuhuanTitlePresent = null;
         observedWuhuanDialogPresent = null;
@@ -2376,6 +2462,43 @@ public final class WindowObservationSampler {
             WindowPathingSnapshot snapshot = context.getPathingSnapshot();
             WindowPathingIntent intent = snapshot == null ? null : snapshot.getIntent();
             /*
+             * G122 P1-1（2026-08-29 五开事故）：同一 exact intent 的 fresh 坐标已经落入目标容差，
+             * 这个位置事实本身就证明到达——不得要求角色先发生移动，不得要求静止配平，也不得因为
+             * 像素条翻转清了 pending/请求戳就丢弃它。事故帧里 (225,223)/(224,221) 对目标 (225,222)
+             * 容差 5 反复命中，却因 walking-baseline 只 continue、终局门戳不齐而 67 秒不 ARRIVED。
+             * 这里在两条旧消费路径之前先裁：命中即终局。旧 intent、错地图、超容差、腿已终局、
+             * UNTARGETED_TRACKER 腿依旧 fail-closed 落回旧链。
+             */
+            if (freshCoordinateProvesArrival(
+                    intent,
+                    snapshot == null ? null : snapshot.getState(),
+                    result.intentId(), result.mapName(),
+                    result.coordinateX(), result.coordinateY())) {
+                updateWindowPlayerLocation(result, "pathing fresh in-tolerance arrival");
+                long arrivedAtMs = System.currentTimeMillis();
+                context.updatePathingSnapshot(snapshot.toBuilder()
+                        .state(WindowPathingState.ARRIVED)
+                        .currentMapName(result.mapName())
+                        .currentX(result.coordinateX())
+                        .currentY(result.coordinateY())
+                        .message("local runner confirmed arrival from fresh in-tolerance coordinate (G122)")
+                        .coordinateMovementObserved(localPathingCoordinateMovementObserved)
+                        .updatedAtMs(arrivedAtMs)
+                        .probeFinishedAtMs(arrivedAtMs)
+                        .probeInProgress(false)
+                        .build());
+                terminalCoordinateAcknowledgedIntentId = result.intentId();
+                localPathingBaselinePending = false;
+                localPathingCoordinatePending = false;
+                invalidateTerminalFrameEvidence();
+                log.info("Local pathing arrival by fresh in-tolerance coordinate: windowId={} intentId={} "
+                                + "map={} coord=({}, {}) target=({}, {}) tolerance={}",
+                        context.getWindowId(), result.intentId(), result.mapName(),
+                        result.coordinateX(), result.coordinateY(),
+                        intent.getTargetX(), intent.getTargetY(), intent.getTolerance());
+                continue;
+            }
+            /*
              * 走路基线预热旁路(用户批准 2026-08-20):只更新识别坐标基线,不做终局分类,
              * 也不受"请求时刻静止戳"门约束(走路中戳必然前移)。
              */
@@ -2617,6 +2740,31 @@ public final class WindowObservationSampler {
                 result.mapName(), result.coordinateX(), result.coordinateY(), observedAtMs, source);
         log.info("Window player location memory updated from {}: windowId={} map={} coord=({}, {})",
                 source, context.getWindowId(), result.mapName(), result.coordinateX(), result.coordinateY());
+    }
+
+    /**
+     * G122 P1-1: the pure arrival-by-fresh-coordinate decision. A recognized coordinate of the SAME
+     * exact intent that already sits inside the target tolerance proves arrival by itself — no
+     * movement prerequisite, no stationary settle, no dependency on the pixel-strip request stamps.
+     *
+     * <p>Fail-closed rows: no intent / intent id mismatch (old leg), leg no longer live (already
+     * terminal), an untargeted tracker leg (it has no coordinate target to prove), wrong map or a
+     * coordinate outside tolerance — all fall back to the legacy classification paths.</p>
+     */
+    static boolean freshCoordinateProvesArrival(WindowPathingIntent intent,
+                                                WindowPathingState snapshotState,
+                                                String resultIntentId,
+                                                String mapName,
+                                                int coordinateX,
+                                                int coordinateY) {
+        return intent != null
+                && Objects.equals(intent.getIntentId(), resultIntentId)
+                && intent.getType() != com.bot.dhxy.window.model.WindowPathingIntentType.UNTARGETED_TRACKER
+                && intent.getTargetX() != null
+                && intent.getTargetY() != null
+                && (snapshotState == WindowPathingState.ACTIVE
+                        || snapshotState == WindowPathingState.UNKNOWN)
+                && hasArrived(intent, mapName, coordinateX, coordinateY);
     }
 
     static WindowPathingState classifyRecognizedPathingState(WindowPathingIntent intent,

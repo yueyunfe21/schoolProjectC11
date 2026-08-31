@@ -22,6 +22,9 @@ __pycache__/
 # JavaFX UI 本机偏好设置，不上传到 Git
 config/ui-game-settings.properties
 
+# 本机专属配置（换机时改这里，不改 Git 跟踪的文件）。模板 .example 要保留在 Git 里。
+config/application.properties
+
 # 运行时配置备份，不上传 Git
 config/backup/
 config/*.backup-*
@@ -55,6 +58,14 @@ images/test-cases/*
 !images/test-cases/npc/**
 !images/test-cases/dialog/
 !images/test-cases/dialog/**
+!images/test-cases/team-return/
+!images/test-cases/team-return/**
+!images/test-cases/task-tracker/
+!images/test-cases/task-tracker/**
+!images/test-cases/g113/
+!images/test-cases/g113/**
+!images/test-cases/g117/
+!images/test-cases/g117/**
 images/temp/
 images/failure-cases/
 images/img.png

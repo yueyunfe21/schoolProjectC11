@@ -263,6 +263,15 @@
       "status": "active"
     },
     {
+      "id": "BR-UICLEAN-001",
+      "title": "通用 UI 清理先点全部 X，quxiao 仅作末位兜底",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-UICLEAN-001] 通用 UI 清理的关闭模板优先级",
+      "domains": ["ui-cleanup", "dialog", "template", "input"],
+      "crossBoundary": false,
+      "status": "active"
+    },
+    {
       "id": "BR-RUNNER-001",
       "title": "绿链单一移动判据与同帧位置缓存",
       "source": "docs/业务逻辑.md",

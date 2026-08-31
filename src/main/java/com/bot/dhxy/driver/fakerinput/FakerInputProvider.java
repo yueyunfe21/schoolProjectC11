@@ -46,6 +46,8 @@ public class FakerInputProvider implements InputProvider {
     private static final byte KEY_Q = 0x14;
     private static final byte KEY_T = 0x17;
     private static final byte KEY_U = 0x18;
+    /** HID 用法码：空格。Ctrl+Space 用于把输入法切回英文（用户 2026-08-21 拍板）。 */
+    private static final byte KEY_SPACE = 0x2C;
     private static final byte KEY_V = 0x19;
     private static final byte KEY_1 = 0x1E;
     private static final byte KEY_2 = 0x1F;
@@ -119,6 +121,11 @@ public class FakerInputProvider implements InputProvider {
     @Override
     public void pressCtrlA() {
         pressShortcut("Ctrl+A", MODIFIER_LEFT_CTRL, KEY_A);
+    }
+
+    @Override
+    public void pressCtrlSpace() {
+        pressShortcut("Ctrl+Space", MODIFIER_LEFT_CTRL, KEY_SPACE);
     }
 
     @Override

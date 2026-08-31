@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("start-wuhuan", "start-tianting", "start-catch-ghost", "start-ghost-king", "status", "pause", "resume", "stop", "shutdown", "monitor")]
     [string]$Action,
@@ -13,13 +13,18 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "lib-machine-paths.ps1")
+
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $controlDirectory = Join-Path $projectRoot "logs\background-task-test"
 $hostFile = Join-Path $controlDirectory "host.properties"
 $classpathFile = Join-Path $projectRoot "target\client-dependency-classpath.txt"
 $businessLog = Join-Path $projectRoot "logs\dhxy-console.log"
-$javaHome = "C:\Program Files\Eclipse Adoptium\jdk-21.0.10.7-hotspot"
-$javaExe = Join-Path $javaHome "bin\java.exe"
+# 换机契约（G106）：这里曾是第五处写死的 JDK 补丁版本，与主启动链走同一条解析链。
+$javaRuntime = Resolve-DhxyJavaRuntime -ClientRoot $projectRoot
+$javaExe = $javaRuntime.JavaExe
+# 本脚本自己也会 mvn compile：Maven 必须与运行 JVM 同一个 JDK。
+[void](Use-DhxyJavaHomeForMaven -JavaHome $javaRuntime.JavaHome)
 
 function Read-PropertiesFile {
     param([string]$Path)
@@ -86,8 +91,9 @@ function Start-ControlHost {
         throw "Existing DHXY Client detected; refusing to start a second window owner: $($descriptions -join '; ')"
     }
 
-    if (-not (Test-Path -LiteralPath $javaExe -PathType Leaf)) {
-        $javaExe = (Get-Command java.exe -ErrorAction Stop).Source
+    # PATH 兜底已并入 Resolve-DhxyJavaRuntime 的逐级下探；这里只做最终存在性断言。
+    if ([string]::IsNullOrWhiteSpace($javaExe) -or -not (Test-Path -LiteralPath $javaExe -PathType Leaf)) {
+        throw "没有解析到可用的 java.exe [$($javaRuntime.Source)]"
     }
     New-Item -ItemType Directory -Force -Path $controlDirectory | Out-Null
 

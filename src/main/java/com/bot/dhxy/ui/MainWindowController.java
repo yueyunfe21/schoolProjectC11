@@ -32,6 +32,7 @@ import com.bot.dhxy.window.runtime.WindowTitleIdentityParser;
 import com.bot.dhxy.cloud.turn.protocol.TurnMapSurveyCommand;
 import com.bot.dhxy.cloud.turn.protocol.TurnMapSurveyResult;
 import com.bot.dhxy.cloud.turn.protocol.TurnTaskRuntimeSettings;
+import com.bot.dhxy.cloud.turn.local.LocalTeamRolePreflightService;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.beans.property.ReadOnlyObjectWrapper;
@@ -41,6 +42,7 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Parent;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
@@ -3050,6 +3052,57 @@ public class MainWindowController {
         mapSurveyButtons.forEach(button -> button.setDisable(disabled));
     }
 
+    /** 复用同一个告警窗，反复启动不会叠出一堆弹窗。 */
+    private Alert windowSizeDriftAlert;
+
+    /**
+     * 把"游戏窗口尺寸漂移"从普通失败里挑出来。
+     *
+     * <p>2026-08-30 01:55 五个窗口全部启动失败时，UI 上其实已经逐窗写了失败原因——"本地队伍菜单在 5 秒内
+     * 未命中队长按钮"。用户照样无从判断：那句话指向队伍面板，真因却是游戏客户端自行把窗口从 1036x783 改成
+     * 了 1117x840，全仓定尺寸模板一起失配，队长按钮只是最先撞上的那一个。现在探测服务会把真因追加进同一条
+     * 消息，这里负责让它不至于淹没在滚动日志里。</p>
+     */
+    private String findWindowSizeDriftNotice(WindowTaskCommandResult result) {
+        if (result.hasDetails()) {
+            for (WindowTaskCommandDetail detail : result.getDetails()) {
+                String notice = extractWindowSizeDriftNotice(detail.getMessage());
+                if (notice != null) {
+                    return notice;
+                }
+            }
+        }
+        return extractWindowSizeDriftNotice(result.getMessage());
+    }
+
+    private static String extractWindowSizeDriftNotice(String message) {
+        if (message == null) {
+            return null;
+        }
+        int at = message.indexOf(LocalTeamRolePreflightService.WINDOW_SIZE_DRIFT_MARKER);
+        return at < 0 ? null : message.substring(at);
+    }
+
+    /**
+     * 用 {@code show()} 而不是 {@code showAndWait()}：告警只是通知，不该把 FX 线程冻在这里。
+     */
+    private void showWindowSizeDriftAlert(String notice) {
+        try {
+            if (windowSizeDriftAlert == null) {
+                windowSizeDriftAlert = new Alert(Alert.AlertType.WARNING);
+                windowSizeDriftAlert.setTitle("游戏窗口尺寸异常");
+                windowSizeDriftAlert.setHeaderText("任务未启动：游戏窗口尺寸不是模板标定的尺寸");
+            }
+            windowSizeDriftAlert.setContentText(notice);
+            if (!windowSizeDriftAlert.isShowing()) {
+                windowSizeDriftAlert.show();
+            }
+        } catch (RuntimeException failure) {
+            // 弹窗失败绝不能反过来打断命令结果渲染——同一条文案在窗口日志里已经有了。
+            log.warn("Window size drift alert failed to show", failure);
+        }
+    }
+
     private void handleWindowCommandResult(WindowTaskCommandResult result) {
         if (result == null) {
             requestDashboardRefresh("command-null-result");
@@ -3068,6 +3121,11 @@ public class MainWindowController {
             for (WindowTaskCommandDetail detail : result.getDetails()) {
                 addWindowLog(formatCommandDetail(detail));
             }
+        }
+        String windowSizeDrift = findWindowSizeDriftNotice(result);
+        if (windowSizeDrift != null) {
+            addWindowLog("⚠ " + windowSizeDrift);
+            showWindowSizeDriftAlert(windowSizeDrift);
         }
         requestDashboardRefresh("command-result");
         applyPendingAutoSelection();

@@ -10,7 +10,11 @@ public class CloudTurnSidecarProperties {
 
     private boolean autoStartEnabled = true;
     private Path scriptPath = Path.of("scripts", "run-cloud-brain-server.ps1");
-    private Path brainProjectPath = Path.of("D:/mavenProject/dhxy-cloud-brain");
+    /**
+     * Unset means "derive from the client project root's sibling {@code dhxy-cloud-brain}".
+     * A hardcoded machine path here would silently resurface whenever the property is absent.
+     */
+    private Path brainProjectPath;
     private Path logPath = Path.of("logs", "cloud-decision-dev-sidecar.log");
     private String tenantId = "dhxy-local";
     private String userId;

@@ -2,7 +2,10 @@
     [int]$Port = 18080,
     [string]$Path = "/api/cloud/decision",
     [string]$Token = "local-dev-token",
-    [string]$BrainProjectPath = "D:\mavenProject\dhxy-cloud-brain",
+    # 空值 = 走 lib-machine-paths.ps1 的三级解析（环境变量 → 本机配置 → 客户端仓同级目录）。
+    [string]$BrainProjectPath = "",
+    # 由 restart 传入 preflight 已验证的那一个 java.exe；空值 = 独立/IDE 调用，自行解析。
+    [string]$JavaExe = "",
     [string]$BusinessLogPath = "",
     [string]$TenantId = "",
     [string]$UserId = "",
@@ -17,13 +20,39 @@
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "lib-process-tree.ps1")
+. (Join-Path $PSScriptRoot "lib-machine-paths.ps1")
 
 if ($Path -ne "/api/cloud/decision") {
     throw "External dhxy-cloud-brain currently serves /api/cloud/decision; unsupported Path=$Path"
 }
 
+$clientProjectRoot = Split-Path -Parent $PSScriptRoot
+$brainProjectResolution = Resolve-DhxyCloudProjectRoot -ClientRoot $clientProjectRoot -Explicit $BrainProjectPath
+$BrainProjectPath = $brainProjectResolution.Path
+Write-Host "Cloud Brain project root: $BrainProjectPath [$($brainProjectResolution.Source)]"
+
+# Cloud JVM 必须用与 preflight 同一条解析链得到的 JDK。裸 `java` 会拿 PATH 上的任意 JVM——
+# 体检全绿而云端跑在另一个（甚至不兼容的）Java 上，是换机时最难查的一类故障。
+if (-not [string]::IsNullOrWhiteSpace($JavaExe)) {
+    # 上游已经解析并体检过：直接用同一个，不再二次解析（两次解析之间配置可能变化）。
+    $cloudJavaExe = $JavaExe.Trim()
+    $cloudJavaSource = "由启动入口传入（与 preflight 同一个）"
+    $cloudJavaHome = Split-Path -Parent (Split-Path -Parent $cloudJavaExe)
+} else {
+    $cloudJavaRuntime = Resolve-DhxyJavaRuntime -ClientRoot $clientProjectRoot
+    $cloudJavaExe = $cloudJavaRuntime.JavaExe
+    $cloudJavaSource = $cloudJavaRuntime.Source
+    $cloudJavaHome = $cloudJavaRuntime.JavaHome
+}
+if ([string]::IsNullOrWhiteSpace($cloudJavaExe) -or -not (Test-Path -LiteralPath $cloudJavaExe -PathType Leaf)) {
+    throw "cloud-brain-launch-failed: 没有解析到可用的 java.exe [$cloudJavaSource]"
+}
+Write-Host "Cloud Brain java runtime: $cloudJavaExe [$cloudJavaSource]"
+# 本脚本自己也 mvn compile 云端仓：Maven 必须与真正运行的 JVM 是同一个 JDK。
+[void](Use-DhxyJavaHomeForMaven -JavaHome $cloudJavaHome)
+
 if (-not (Test-Path -LiteralPath $BrainProjectPath -PathType Container)) {
-    throw "External dhxy-cloud-brain project not found: $BrainProjectPath"
+    throw "External dhxy-cloud-brain project not found: $BrainProjectPath [$($brainProjectResolution.Source)]"
 }
 
 if ([string]::IsNullOrWhiteSpace($TenantId) -or
@@ -331,7 +360,16 @@ if (Get-Command "py" -ErrorAction SilentlyContinue) {
 } else {
     throw "ocr-sidecar-launch-failed: neither 'py' nor 'python' is available for the OCR sidecar"
 }
-$ocrFingerprintCode = "import rapidocr; print('rapidocr-' + getattr(rapidocr, '__version__', 'unknown'))"
+# G106: must stay equivalent to ocr/local_ocr_server.py model_fingerprint(). The old form read
+# rapidocr.__version__, which the package does not define, so BOTH sides produced the literal
+# "rapidocr-unknown" and the identity gate matched everything on every machine. Distribution
+# metadata is the authority; a missing one fails closed (exit 3/4) instead of degrading to a
+# placeholder that would compare equal to the sidecar's placeholder.
+$ocrFingerprintCode = "import importlib.metadata as m, sys" +
+    "`ntry: v = m.version('rapidocr')" +
+    "`nexcept m.PackageNotFoundError: sys.exit(3)" +
+    "`nif not v or not v.strip(): sys.exit(4)" +
+    "`nprint('rapidocr-' + v.strip())"
 # Collect the full output BEFORE taking the first line: piping a native command straight into
 # Select-Object -First 1 truncates the pipeline and leaves $LASTEXITCODE unset ($null), which
 # falsely fails the -ne 0 check even when the import succeeded.
@@ -339,7 +377,8 @@ $ocrExpectedModelRaw = & $ocrPythonLauncher @($ocrPythonBaseArgs + @("-c", $ocrF
 $ocrDeriveExit = $LASTEXITCODE
 $ocrExpectedModel = [string](@($ocrExpectedModelRaw) | Select-Object -First 1)
 if ($ocrDeriveExit -ne 0 -or [string]::IsNullOrWhiteSpace($ocrExpectedModel)) {
-    throw "ocr-model-fingerprint-unknown: cannot derive the expected model fingerprint (rapidocr not importable via $ocrPythonLauncher, exit=$ocrDeriveExit); install it: $ocrPythonLauncher $($ocrPythonBaseArgs -join ' ') -m pip install -r $BrainProjectPath\ocr\requirements.txt"
+    throw "ocr-model-fingerprint-unknown: cannot derive the expected model fingerprint from the rapidocr distribution metadata via $ocrPythonLauncher (exit=$ocrDeriveExit; 3=metadata missing, 4=empty version); reinstall it: $ocrPythonLauncher $($ocrPythonBaseArgs -join ' ') -m pip install -r $BrainProjectPath\ocr
+equirements.txt"
 }
 $ocrExpectedModel = $ocrExpectedModel.Trim()
 
@@ -516,7 +555,7 @@ if ($null -ne $ocrHealth) {
 Write-Host "Starting external DHXY cloud brain from fresh classpath on port $Port"
 Write-Host "devArtifactMode=classpath launchUtc=$launchUtc projectPath=$BrainProjectPath classesPath=$classesPath classpathFile=$classpathFile sourceMaxUtc=$(Format-Utc $state.SourceMaxUtc) classesMaxUtc=$(Format-Utc $state.ClassesMaxUtc) classpathUtc=$(Format-Utc $state.ClasspathUtc) classpathSha256=$($state.ClasspathSha256)"
 Write-Host "Cloud business log: $BusinessLogPath"
-& java `
+& $cloudJavaExe `
     "-Dorg.slf4j.simpleLogger.logFile=$BusinessLogPath" `
     "-Ddhxy.cloud.brain.localOcrEndpoint=$ocrEndpoint" `
     "-Ddhxy.cloud.brain.localOcrTimeoutMs=10000" `

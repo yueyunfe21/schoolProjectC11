@@ -126,6 +126,12 @@ public final class TurnInputStepExecutor {
                     "turn:input:keyboard:" + ctrl.name(),
                     List.of(action));
         }
+        // 用户拍板（2026-08-21）：Ctrl+Space 把输入法切回英文。必须真实按键+前台，
+        // 后台合成键改不了输入法状态，所以不走 ControlShortcut 的后台通道。
+        if (keyMapper.isImeToggleKey(key)) {
+            return submitKeyboardActions(window, "turn:input:keyboard:CTRL_SPACE",
+                    List.of(InputAction.pressCtrlSpace()));
+        }
         if (keyMapper.isEnterKey(key)) {
             return submitKeyboardActions(window, "turn:input:keyboard:ENTER", List.of(InputAction.pressEnter()));
         }
