@@ -32,20 +32,98 @@ public class CoordinateHelper {
         this.windowScopedTempPath = windowScopedTempPath;
     }
 
-    private double systemScaleRatio = 1.0;
+    /** 本程序只支持 100% 显示缩放；其他比例下点击落点与截图区域都不成立。 */
+    private static final double SUPPORTED_SCALE_RATIO = 1.0D;
+    private static final double SCALE_RATIO_EPSILON = 1e-6D;
+    /**
+     * 两次确认之间的间隔。JVM 刚起来那一瞬 AWT 的显示环境可能还没稳：同一台 100% 缩放的
+     * 机器先后读出过 1.0 / 1.25 / 1.5，而错值会被缓存整个进程生命周期。
+     */
+    private static final long SCALE_PROBE_GAP_MS = 500L;
+    /** 连续两次读数一致才采信；最多试这么多轮。 */
+    private static final int SCALE_PROBE_MAX_ATTEMPTS = 5;
+    /** Windows 下 96 DPI 即 100% 缩放。 */
+    private static final int UNSCALED_SCREEN_DPI = 96;
+
+    private double systemScaleRatio = SUPPORTED_SCALE_RATIO;
 
     @PostConstruct
     public void initScaleRatio() {
-        try {
-            GraphicsConfiguration config = GraphicsEnvironment.getLocalGraphicsEnvironment()
-                    .getDefaultScreenDevice().getDefaultConfiguration();
-            AffineTransform transform = config.getDefaultTransform();
-            this.systemScaleRatio = transform.getScaleX();
-            log.info("System scale ratio: {}", this.systemScaleRatio);
-        } catch (Exception e) {
-            log.error("Failed to detect system scale, fallback to 1.0", e);
-            this.systemScaleRatio = 1.0;
+        if (GraphicsEnvironment.isHeadless()) {
+            this.systemScaleRatio = SUPPORTED_SCALE_RATIO;
+            log.info("System scale ratio: headless environment, use {}", this.systemScaleRatio);
+            return;
         }
+        double confirmed = confirmScaleRatio();
+        int screenDpi = probeScreenDpi();
+        if (Math.abs(confirmed - SUPPORTED_SCALE_RATIO) > SCALE_RATIO_EPSILON) {
+            throw new IllegalStateException(unsupportedScaleMessage(confirmed, screenDpi));
+        }
+        this.systemScaleRatio = SUPPORTED_SCALE_RATIO;
+        log.info("System scale ratio confirmed: {} screenDpi={}", this.systemScaleRatio, screenDpi);
+    }
+
+    /**
+     * 连续两次读到相同值才算数。单次采样会把启动瞬间的错值钉死一整轮运行，
+     * 而 {@code @PostConstruct} 只跑一次，之后没有任何自愈机会。
+     */
+    private double confirmScaleRatio() {
+        double previous = probeScaleRatio();
+        for (int attempt = 2; attempt <= SCALE_PROBE_MAX_ATTEMPTS; attempt++) {
+            sleepBetweenScaleProbes();
+            double current = probeScaleRatio();
+            if (Math.abs(current - previous) <= SCALE_RATIO_EPSILON) {
+                log.info("System scale ratio double-confirmed: value={} attempts={}", current, attempt);
+                return current;
+            }
+            log.warn("System scale ratio unstable between probes: previous={} current={} attempt={}/{}",
+                    previous, current, attempt, SCALE_PROBE_MAX_ATTEMPTS);
+            previous = current;
+        }
+        throw new IllegalStateException(
+                "显示缩放读数始终不稳定：连续 " + SCALE_PROBE_MAX_ATTEMPTS
+                        + " 次采样没有两次一致，最后一次=" + previous
+                        + "。请重启客户端；若反复出现，检查启动期是否有显示器热插拔或分辨率切换。");
+    }
+
+    private double probeScaleRatio() {
+        GraphicsConfiguration config = GraphicsEnvironment.getLocalGraphicsEnvironment()
+                .getDefaultScreenDevice().getDefaultConfiguration();
+        AffineTransform transform = config.getDefaultTransform();
+        return transform.getScaleX();
+    }
+
+    private int probeScreenDpi() {
+        try {
+            return Toolkit.getDefaultToolkit().getScreenResolution();
+        } catch (RuntimeException ex) {
+            log.warn("Screen DPI probe failed; report as unknown: {}", ex.toString());
+            return -1;
+        }
+    }
+
+    private void sleepBetweenScaleProbes() {
+        try {
+            Thread.sleep(SCALE_PROBE_GAP_MS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("显示缩放二次确认被中断", interrupted);
+        }
+    }
+
+    /**
+     * 把两种截然不同的成因分开告诉使用者：真的设了缩放（screenDpi 也不是 96），
+     * 还是 JVM 读错了（screenDpi=96 却测出非 1.0，两者自相矛盾）。
+     */
+    private String unsupportedScaleMessage(double detected, int screenDpi) {
+        String head = "不支持的显示缩放：检测到 " + detected
+                + "（约 " + Math.round(detected * 100) + "%），本程序只支持 100%。screenDpi="
+                + screenDpi + "（96 = 100%）。";
+        if (screenDpi == UNSCALED_SCREEN_DPI) {
+            return head + " screenDpi 说是 100%、缩放比却不是 1.0，两者矛盾，"
+                    + "这是 JVM 启动瞬间的异常读数——直接重启客户端即可。";
+        }
+        return head + " 请把 Windows 显示设置的缩放改回 100% 后重启客户端。";
     }
 
     public Point getRandomizedPoint(int baseX, int baseY, int maxRadiusX, int maxRadiusY) {
