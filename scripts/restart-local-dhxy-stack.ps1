@@ -237,6 +237,8 @@ $cloudWrapperCommand = "& $(Quote-PowerShellLiteral $cloudLauncher) " +
     "-BrainProjectPath $(Quote-PowerShellLiteral $cloudProjectRoot) " +
     # 同一个 java.exe：子脚本不再自己解析，preflight 验过的那个就是云端真正执行的那个。
     "-JavaExe $(Quote-PowerShellLiteral $javaExe) " +
+    # 同一个模板根：preflight 刚做过存在性与可写探针的那一个，就是云端 JVM 真正读写的那一个。
+    "-TemplateRoot $(Quote-PowerShellLiteral (Join-Path $projectRoot 'images\template')) " +
     "-BusinessLogPath $(Quote-PowerShellLiteral $cloudBusinessLog) " +
     "-TenantId 'dhxy-local' " +
     "-UserId $(Quote-PowerShellLiteral $sid.Trim()) " +

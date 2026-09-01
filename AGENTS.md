@@ -110,6 +110,8 @@ Use the `dev` branch unless the user explicitly says otherwise.
 
 The user is actively debugging and expects direct, practical changes. Do not hide behind vague explanations. When making changes, explain exactly which file and logic changed.
 
+> **编号必须带简介(2026-08-31 用户裁定):** 向用户提及任何 G 卡号、任务编号、契约测试名或提交时,必须同句附一行人话简介说明它是什么(例:`G130(停稳判定改为全任务本地读坐标数字)`)。禁止裸编号、裸哈希;指代提交用日期(`8月31日 19:08 那次提交`),不用 commit 哈希。用户不记编号,裸编号等于没说。
+
 > **Current no-test override (2026-08-11):** Do not create or run any test of any kind unless the user later explicitly authorizes that specific test or test family. This includes unit, integration, contract, replay, image/testcase, runtime, application, UI, capture, and input tests. This override suspends every standing or automatic test exception below, including the G016 exception. A request to fix, compile, review, or hand off code is not test authorization. State plainly that the change is untested when handing it off.
 
 Important behavior constraints:

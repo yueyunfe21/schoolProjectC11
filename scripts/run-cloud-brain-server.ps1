@@ -6,6 +6,9 @@
     [string]$BrainProjectPath = "",
     # 由 restart 传入 preflight 已验证的那一个 java.exe；空值 = 独立/IDE 调用，自行解析。
     [string]$JavaExe = "",
+    # 运行时可写的模板根（G106 定为客户端仓的 images\template）。云端 JVM 用它解析大理寺题库
+    # 这类必须留在磁盘、且要写回的资产。空值 = 独立/IDE 调用，按客户端仓推导。
+    [string]$TemplateRoot = "",
     [string]$BusinessLogPath = "",
     [string]$TenantId = "",
     [string]$UserId = "",
@@ -30,6 +33,20 @@ $clientProjectRoot = Split-Path -Parent $PSScriptRoot
 $brainProjectResolution = Resolve-DhxyCloudProjectRoot -ClientRoot $clientProjectRoot -Explicit $BrainProjectPath
 $BrainProjectPath = $brainProjectResolution.Path
 Write-Host "Cloud Brain project root: $BrainProjectPath [$($brainProjectResolution.Source)]"
+
+# G106：运行时可写的模板根。云端 JVM 的工作目录不可依赖（实测落在云端仓，而启动链的意图是
+# 客户端仓），所以这里解析成绝对路径显式传给 JVM，Java 侧只认这一个来源。
+if ([string]::IsNullOrWhiteSpace($TemplateRoot)) {
+    $TemplateRoot = Join-Path $clientProjectRoot "images\template"
+    $templateRootSource = "client-repo-derived"
+} else {
+    $templateRootSource = "explicit"
+}
+$TemplateRoot = [System.IO.Path]::GetFullPath($TemplateRoot)
+if (-not (Test-Path -LiteralPath $TemplateRoot -PathType Container)) {
+    throw "模板根不存在：$TemplateRoot [$templateRootSource]（运行时资产真源，不能缺）"
+}
+Write-Host "Template root (writable assets): $TemplateRoot [$templateRootSource]"
 
 # Cloud JVM 必须用与 preflight 同一条解析链得到的 JDK。裸 `java` 会拿 PATH 上的任意 JVM——
 # 体检全绿而云端跑在另一个（甚至不兼容的）Java 上，是换机时最难查的一类故障。
@@ -564,6 +581,7 @@ Write-Host "Cloud business log: $BusinessLogPath"
     "-Ddhxy.cloudbrain.devArtifactMode=classpath" `
     "-Ddhxy.cloudbrain.launchUtc=$launchUtc" `
     "-Ddhxy.cloudbrain.projectPath=$BrainProjectPath" `
+    "-Ddhxy.cloudbrain.templateRoot=$TemplateRoot" `
     "-Ddhxy.cloudbrain.classesPath=$classesPath" `
     "-Ddhxy.cloudbrain.classpathFile=$classpathFile" `
     "-Ddhxy.cloudbrain.launchSourceMaxUtc=$(Format-Utc $state.SourceMaxUtc)" `
