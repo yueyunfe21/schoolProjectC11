@@ -89,8 +89,29 @@ public class QuestManagerService {
             return false;
         }
         closePanel("quest:refreshCurrentTabClose");
-        log.info("quest panel refresh done: open -> current-task tab -> close (no task activation)");
-        return true;
+        /*
+         * 2026-09-01 20:49 事故:关面板是 Alt+Q 盲按,从不验证。一次关闭失手后面板留在屏上,
+         * 追踪面板绿链的点击坐标正好落在面板列表区——点击变成"在任务列表里选中任务"(实测
+         * 截图:鬼王任务被选中、详情已加载),走路永远不开始,整轮在等寻路终点里烧死。
+         * 关闭必须闭环:验证锚点消失,还在就重按;连补两次仍关不掉按失败上报,让 G133 门
+         * fail-open 保原读数,绝不能"报告已刷新"却把面板留在屏上。
+         */
+        for (int attempt = 0; attempt < 3; attempt++) {
+            if (!TaskSleep.sleep(MID)) {
+                return false;
+            }
+            if (findAnchor() == null) {
+                log.info("quest panel refresh done: open -> current-task tab -> close verified (no task activation)");
+                return true;
+            }
+            log.warn("quest panel refresh: panel still open after close press; retry Alt+Q: attempt={}", attempt + 1);
+            closePanel("quest:refreshCurrentTabCloseRetry" + (attempt + 1));
+        }
+        boolean closed = findAnchor() == null;
+        if (!closed) {
+            log.warn("quest panel refresh: panel could not be closed after retries; report failure");
+        }
+        return closed;
     }
 
     public boolean activateTaskIfPresent(String task) { return activateTaskIfPresent(task, false); }

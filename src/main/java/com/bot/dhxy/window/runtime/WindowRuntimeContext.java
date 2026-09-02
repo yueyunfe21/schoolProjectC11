@@ -2226,10 +2226,18 @@ public class WindowRuntimeContext {
             WindowPathingSnapshot terminal = currentIntent != null
                     ? current : lastKnownPathingLocation.get();
             WindowPathingIntent terminalIntent = terminal == null ? null : terminal.getIntent();
+            /*
+             * G130(2026-08-31,停稳判定全任务数值判稳)通用回归修复:数值判稳的本地终态是
+             * STABLE——客户端侧从此不再产出 ARRIVED/STOPPED_AWAY(那是云端翻译层的词),这张
+             * 早于 G130 的白名单便永远放不行,"模板始终未出现"的看打耗尽上报全任务断供,
+             * 云端"清障+重按绿链"恢复链因此整条失火(2026-09-01 修罗 13:03 起、鬼王 19:4x 起
+             * 全天等待烧穿看门狗)。STABLE 语义上就是旧世界的"停下了",一并放行。
+             */
             if (terminalIntent == null
                     || !Objects.equals(expected.getAttemptId(), terminalIntent.getIntentId())
                     || (terminal.getState() != WindowPathingState.ARRIVED
                     && terminal.getState() != WindowPathingState.STOPPED_AWAY
+                    && terminal.getState() != WindowPathingState.STABLE
                     && terminal.getState() != WindowPathingState.UNKNOWN)) {
                 return false;
             }
