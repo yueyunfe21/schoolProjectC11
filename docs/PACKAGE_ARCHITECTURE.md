@@ -1,5 +1,198 @@
 # DHXY Package Architecture
 
+## G143 新任务重扫窗口后仍沿用旧角色缓存（2026-09-02 用户批准修复）
+
+- **状态：`SOURCE FIXED / G143 4/4 / OWNER FAMILY 26/26 / REVIEW REQUIRED / FRESH REQUIRED`。**
+- **用户合同：** 用户停止后重新点“开始”就是一轮新任务；无论客户端进程是否重启，都必须重新读取全部游戏
+  窗口，并以当前活标题中的角色 ID 建立这一轮任务归属。不得用上一次任务、上一次 HWND/角色对应关系替代。
+- **现场证据：** `10:49:19.793` 原生扫描正确读到 3473“黑精的皮牛。”位于 `hwnd-1900A7E`、3511
+  “乌龟的黑头。”位于 `hwnd-6E0B72`，五个 HWND 均记录 `native title/player drift`；但任务失败后恢复门分别
+  报 `expectedOwner=3511 visible=3473` 与 `expectedOwner=3473 visible=3511`。因此不是“没有扫描”，而是
+  扫描后的当前身份没有成为本次 run 的恢复权威。
+- **影响：** 3473 的大理寺任务 `10:49:52` 返回 FAILED 后每 3 秒被 switch-away 门拒绝，物理输入停止；同批
+  至少三个窗口出现对称错绑，属于批量新任务启动的通用缺陷，不是五环单卡缺陷。
+- **批准修复：** 正常新任务提交前再从 exact HWND 活标题抓取 owner，并将该 owner 固化进本 run 的不可变
+  `RemoteTerminalRecoveryPlan`；失败／续跑恢复先认计划内 owner，只有老计划缺字段时才允许沿用 G142 的
+  current-owner → last-owner 兜底。运行过程中临时换角色仍不得改写计划 owner，也不得迁移输入到别的 HWND。
+- **实现：** `WindowTaskControlService` 在 NORMAL／`AFTER_COMBAT_EXIT_STARTUP` 的新任务边界完成 reality reset
+  后，再次 `refreshAndCommit(exact HWND)` 并抓 owner；计划保存 owner ID/名称且队列后缀恢复原样携带。
+  `WindowRuntimeContext.markStarted` 不再在 ACK 到达时覆盖已冻结 owner；若 ACK 往返期间标题切换，则按原
+  identity-suspension 合同暂停。`PAUSE_RESUME` 不进入强制抓取分支。
+- **隔离验证：** G143 **4/4**（3473/3511 对调、五窗整体轮换、ACK 前切号不换 owner、生产接线／计划优先级）；
+  G142 **2/2**、native-binding generation **5/5**、identity/refresh/registration **14/14**、冷启动顺序
+  **4/4**、可恢复终局 replacement **1/1**，合计 **30/30**。修改类编译成功且共享 `target/classes` 未写。
+  仍需独立 Review 与真实 fresh。
+
+## G142 五环失败后自动重启误用上一轮角色，导致 3473 永久卡死（2026-09-02 用户批准修复）
+
+- **状态：`SOURCE FIXED / G142 CONTRACT 2/2 / IDENTITY CONTEXT 5/5 / REVIEW REQUIRED / FRESH REQUIRED`。**
+- **现场：** `08:55:19` 五环 cold start 扫描确认 `hwnd-6E0B72` 当前为 3473“黑精的皮牛。”，并明确记录
+  同 HWND 从上一角色 3519“火鸡味锅巴。”漂移到 3473。本轮正常运行约 26 分 42 秒，`09:22:02` 因
+  `completion undecidable: title gone but no local finished verdict within 12000ms` 返回 FAILED。
+- **永久卡死证据：** Client 随即进入可恢复自动重启，但从 `09:22:02` 起每 3 秒打印
+  `expectedOwner=3519 visible=3473`；取证时累计 156 次拒绝，失败后该窗口物理输入为 0。
+- **根因：** 可恢复 FAILED/SKIPPED 分支在 replacement 接管前会保留当前 runner，所以
+  `taskOwnerPlayerId=3473` 仍是本次失败 run 的权威主人；`lastTaskOwnerPlayerId=3519` 则属于更早一轮。
+  `holdRestartUntilTaskOwnerReturns` 却跳过当前 owner，只读 last owner，因而永久等待与本轮无关的 3519。
+- **用户合同：** 临时切到别的角色时必须暂停且不发送输入；切回**本次任务主人**后自动恢复。临时切窗不得
+  改写任务主人，也不得让别的角色接着跑；上一轮角色更不能扣住本轮的自动重启。
+- **修复：** 自动重启守门先读当前保留 run 的 `taskOwner*`；只有当前 run 已被真正清理、owner 为空时，
+  才回退 `lastTaskOwner*`。日志里的 owner 名称与 ID 使用同一来源，避免 ID 已修正但名字仍报上一轮。
+- **合同：** `G142RecoverableRestartOwnerContractTest` 复现“上一轮 3519／当前轮 3473”并钉住 current-first；
+  另钉临时切到 3519 时 suspension=true、切回 3473 后 suspension=false，防串号合同不放宽。
+- **隔离验证：** 两个修改后的生产类编译到独立 `%TEMP%` 目录通过，共享 `target/classes` 未写；G142 合同
+  **2/2**，`WindowRuntimeContextNativeBindingGenerationTest` **5/5**。既有
+  `WindowRemoteTurnControlContractTest` 的本卡相关 recovery 用例通过；整类仍有 6 条与本卡无关的基线红，
+  用 `origin/dev` 两个生产类重编后得到同一 6 条红，故没有把它们冒充本卡回归。
+- **边界：** 本卡只修 Client 自动重启 owner 选择；不修改五环业务、窗口扫描、身份漂移检测，也不处理本轮
+  `completion undecidable` 的独立失败原因。未操作桌面、未重启、未发送游戏输入。
+
+## G141 五环买鞋：商品面板延迟打开导致误判无鞋（2026-09-02 用户批准立卡）
+
+- **状态：`SOURCE ALREADY PRESENT / CONTRACTS PRESENT BUT NOT INDEPENDENTLY RUN / REVIEW REQUIRED / FRESH REQUIRED`。**
+- **事故不是“五窗全部买鞋失败”：** `00:41:05.921` 用户点击暂停前，五窗中三窗已完成买鞋验证；
+  `hwnd-6F098A` 与 `hwnd-410E6A` 仍在反复重开店主对话，随后被暂停正常中断。
+- **G125 前置链已通过：** 五窗均记录真实地图 `牛记布店(10,7)`，并在购买前完成旧 pathing intent 与
+  云端 mirror 清理。因此本卡不重开 G125「战斗硬门／自动进店后 `STOPPED_AWAY`」的业务修复。
+- **根因证据：** 点击店主选项“我想买点东西”后，旧流程固定等待约 `600ms`，只截一帧便搜索鞋模板；
+  两个失败窗的物理点击与聚焦均成功，但取证帧仍是店内货架场景、商品面板尚未出现，匹配分数分别为
+  `0.276` 与 `0.288`。成功帧中商品面板已出现、鞋在第二行第二格，分数为 `1.000`。所以失败事实是
+  **截图拍早了**，不是鞋模板过时，也不是“确认鞋不存在”。
+- **用户批准的修复边界：** 不新增一套商店面板模板；将“固定等 `600ms` 后单帧定案”改为使用现有视觉证据
+  做**有上界、多帧、响应停止**的只读等待。只有等到商品面板确实出现后才搜索／点击鞋；到达上界仍未出现，
+  才允许关闭面板并重开 NPC。必须区分“商品面板没开”与“面板已开但鞋没找到”两类日志与失败原因。
+- **当前源码事实（立卡时发现，并非本轮编写）：** Cloud `FiveRingTaskV3.java` 已存在一份标为 G141 的实现：
+  用既有“购买”按钮模板作为商品面板锚点，以 `400ms` 间隔等待、`4s` 硬上界，锚点出现后再执行既有鞋模板
+  匹配；另有 `G141ShoeShopGoodsPanelGateContractTest.java` 3 条源码合同及 `.gitignore` 白名单。
+  **此前没有 G141 治理卡，也没有独立 Review／执行记录，因此不得把“代码已存在”等同于“已完成”。**
+- **Review／测试门：** ①核对“购买”按钮锚点不会在非商品面板场景误命中，且不发送输入；②用 `00:39:23`
+  成功帧和 `00:40:17`、`00:40:40` 失败帧做生产算法 replay，输出标记图；③验证延迟到第 2～N 帧出现时不再
+  关窗重开；④验证 4 秒内始终不出现会有界失败、停止请求能立即退出；⑤面板已开但鞋不存在必须走独立原因；
+  ⑥回归 G125 战斗硬门、跨图进店结算及三窗既有成功购买路径。完成独立 Review 与隔离合同前状态保持 Review。
+- **本轮动作边界：** 只补治理卡与 dashboard；未修改 Cloud 生产／测试源码，未编译、未重启、未控制桌面、
+  未发送任何游戏输入。
+
+## G140 全库视觉判定落盘补装（2026-09-01 用户命令）
+
+- **状态：`IMPLEMENTED / 13 FILES 30 SITES / FRESH RESTART REQUIRED`。**
+- **背景：** G139 单窗误判 SOLO 无图可查后用户下令："扫描哪些地方还没截图的，全部加上，
+  每次 debug 都没有图。" 全库审计两仓所有 `ImageFinder.find/bestMatchScore` 生产调用点，
+  交叉已有落盘（MatchEvidenceStore/专用 persist），裸点全部接入 MatchEvidenceStore
+  （一次性判定=save；高频巡逻=saveOnChange，自带 5s 节流+翻转存档）。
+- **客户端 7 文件 12 处：** UICleanerService（地图探针 title/checkbox、清障 ROI 扫描、
+  generic-close 只读探针）；WuhuanPresence（title 判定）；UnknownPhasePresence（G017 title +
+  wancheng 遮版）；TaskTrackerCapture（cached ROI + 全窗命中侧）；XinshouCombat（战斗 stage +
+  auto-remaining 面板）；TeamReturnPanel（leader signal）；NpcArrivalFifo（Ctrl 验证 +
+  鬼王完成故事，均在 flush 前落盘）。
+- **云端 6 文件 18 处：** DalisiQuizTask 全链 8 点（入口 accept / accept 硬门 / known-answer /
+  wrong 排除命中 / correct+wrong hint / 正式+暂存题库命中）；PlayerStateService 摄妖香双探针；
+  NpcClickService flying-status；NavigationService 模板点击点+面板探针；DialogService 统一
+  in-memory 匹配 helper（一处覆盖全部白字匹配调用方）；TaskTrackerPanelService（anchor 命中侧
+  两处 + 天庭暗雷 + wancheng 遮版）。
+- **审计后确认已有落盘、未重复补装：** zhao-watch(saveEdgeEvidence)、五环 completion
+  (saveCompletionEvidence)、归队 not-returned(saveEvidence)、tracker 全窗 miss
+  (dumpMatchMiss/persistAbsentEvidence)、团灭招/归信号(saveSignalEvidence，08-18 铁律点)、
+  role-preflight 面板(persistPanelProbeEvidence)。
+- **一处遵旧裁决未动：** LeftTopStatus open/closed 探测——用户 2026-08-21 亲自拍板移除落盘
+  （每 3s×每窗巡逻曾是最大写入方，代码注释在案）；如需翻案由用户明示。
+- **验证：** 双仓 13 文件隔离编译 exit=0；未写 target/classes（双 JVM 运行中）；重启后生效。
+  落盘统一在 `images/temp/match-evidence/<site>/`，格式=原帧+模板+命中框+分数标注。
+
+## G139 单窗 role-preflight 放大镜判据误判队长为 SOLO（2026-09-01）
+
+- **状态：`IMPLEMENTED / CONTRACTS 7/7 / FRESH RESTART REQUIRED`（用户裁决实施）。**
+- **现场：** 用户单选一窗（油壶壶，hwnd-410E6A）启动 TIANTING，该号为队长（单人队，业务合法）。
+  role-preflight 判 `role=SOLO` → `role preflight produced no effective task` → SKIPPED；SKIPPED 被当
+  可恢复终态**每 ~280ms 无限自动重启**（次生缺陷，本卡未修，见遗留），界面呈现"未知任务"。
+- **根因：** 单窗独立探测路径（08-07 引入，与五窗锚组路径不同源）用"Alt+T 后小地图放大镜可见=有队"
+  的**间接遮挡判据**。放大镜语义=小地图可见（战斗/遮挡检测），与队伍无关——活动图标、残留窗口、
+  切号后 UI 未就绪、战斗中，任何遮挡都把队长误判成无队。误判当拍帧未落盘，无法归因（第二缺陷）。
+  实测：误判后同窗实况帧上放大镜模板 0.8 阈值命中 (206,76)——判据前提成立时它照样错过，瞬态敏感。
+  五窗路径（锚组+面板按钮+落盘）一直正确，故"以前全对、单窗才错"。
+- **用户裁决：放大镜与队伍半毛钱关系没有，删除。** 判定改为与五窗路径同源的**直接语义证据**：
+  Alt+T 后轮询队伍面板 ROI 至超时——解散(jiesan)/转让队长按钮命中=LEADER；成员标志
+  member_marker（"暂时离队"，TeamTaskProperties 官方注册语义）命中=MEMBER；超时零命中=SOLO。
+  每拍判定帧走 waitForLeaderMatch 同款 persistPanelProbeEvidence 落盘。`waitForPanelState` 与
+  `isLeaderPanel` 删除；`classifyPanel` 改纯语义签名 (leaderVisible, memberVisible)，队长证据优先。
+  放大镜仅保留在 SOLO 收尾"关组队平台后界面恢复"确认（其本职语义），判定链中零参与。
+  顺带修"首帧即判"：轮询到超时才定 SOLO，命中即刻返回。
+- **合同：** `LocalTeamRolePreflightServiceContractTest` 更新，classifyPanel 四向真值表（队长按钮
+  单独=LEADER / 队长压过成员 / 成员标志单独=MEMBER / 单帧零证据=SOLO 且注明由轮询定局）+ 既有
+  锚组/哈希合同不变，**7/7**。隔离编译 exit=0，未写 target/classes（双 JVM 在跑）。
+- **遗留（未修待拍板）：** ①SKIPPED 无限热重启无上限；②vision_memory.json 旧字段 npcName 反序列化
+  失败整库弃用（ClickPolicy 缺 @JsonIgnoreProperties，点击记忆清零重学）。
+
+## G137 抓鬼暗雷点完绿链停在半路就开跑：到达判据只认「坐标停稳」，不看地图（2026-09-01 用户契约）
+
+- **状态：`SOURCE FIXED / 新合同 11/11、连同既有 G127 与抓鬼战斗态共 27/27 连跑两次 / 变异 6/7 杀（1 条等价）
+  / 全树隔离编译 0 错 / 共享 target 未写 / 未重启 / FRESH REQUIRED`。**
+- **用户契约（2026-09-01）：** 抓鬼任务如果是暗雷怪，点了绿色链接停下以后，先和当前地图做一次对比；
+  确认一致才执行暗雷操作，不一致就再点击一次绿色链接。
+- **用户定案两项（实施前提问确认）：**
+  ① 重点绿链**最多 3 次**，之后回钟馗重接整轮——无上限会在过图慢或绿链指错时变成热循环；
+  ② 目的图名读不到时 **fail-open**，照旧执行暗雷只打 WARN。目的图名只能从任务框整框 OCR 取，
+  当天实测 398 次里 124 次有界等待超时（约三成）；若把“读不到”当成“没到”，OCR 抽风时会连点绿链
+  直到用尽上限再整轮重接，把本来能跑的一轮洗掉。
+- **事故现场（2026-09-01，队长 `hwnd-170E36` / 黑皮体育生，两轮完全对称）：** 任务追踪器写的是
+  `抓鬼任务[常规玩法] 请速到大雁塔五层进行巡查（暗雷战斗） 目前次数[1/7]`，但两轮都在半路的图上开始跑暗雷：
+  `10:11:25` 截图左上角显示人在 **长安 [412,234]**、`10:16:27` 在 **地府 [35,55]**，五分钟里次数始终 `[1/7]`。
+  原图：`images/captures/20260901/hwnd-170E36/20260901_101125_499_161_*.png` 与 `..._101627_650_163_*.png`。
+- **根因链（四步，每步都有日志铁证）：**
+  ① 绿链腿注册成 `UNTARGETED_TRACKER / targetMap=null`
+     （`CatchGhostTask.registerTrackerShortcutPathingIntent` 写死），**整条腿没有到达判据**；
+  ② 客户端 `WindowObservationSampler` 的 `VALUE_STABLE_ENTER_MS = 900ms`，坐标 0.9 秒不变即上报 STABLE；
+  ③ 云端 `CloudObservationHttpHandler.translateStabilityFact` 对 `UNTARGETED_TRACKER` 的分支把
+     **任何一次停稳无条件映射成 `STOPPED_AWAY`（终局）**，不看停了多久、不看在哪张图
+     （该分支原本是给五环绿链写的——五环是同图短距，“停下=到了”成立；抓鬼暗雷是跨图长途，前提失效）；
+  ④ `CatchGhostTask.waitTrackerShortcutPathing` 的暗雷分支拿到终局就直接进 `RUN_DARK_THUNDER`。
+  跨图加载时角色本来就静止约一秒，于是两轮在**完全相同的三个过图点**
+  `(415,235) → (374,16) → (31,19)` 上被判成“走完了”。实测停稳后 0.5–1.6 秒坐标又变了
+  （`10:17:34.110` 停稳 915ms → `10:17:35.765` 变成 `(31,19)`），**角色根本没停，是在过图**。
+- **排除项（用户先问的两种可能，均已证伪）：** 不是我们自己点的——从绿链那一下
+  （`10:17:26.235 CLICK_LEFT(645,436)`）到腿被清（`10:17:35.873`），对该窗口零点击零按键，
+  其间只有 `LOCAL_SERVICE` / `CAPTURE`（截图，不发输入）；也不是游戏 bug——寻路从未被取消，
+  角色停顿后继续走完并过了图（坐标跳变 `(374,16) → (31,19)` 即过图），真被点一下自动寻路会当场取消。
+- **绿链原文规律（08-30→09-01 全部归档日志，15 种 OCR 变体）：** 暗雷行恒为
+  `请速到<地图名>进行巡查（暗雷战斗）`，**绿链就是图名、整行不带坐标**（见过 大雁塔五层 / 狮驼岭 / 普陀山）；
+  抓小鬼子任务行则是 `请速到<地图名>（x,y）附近尝试抓住小鬼……`，带坐标。图名本来一直写在屏幕上，
+  代码却只拿它判了个是非题（`isDarkThunderOcrText` 只问“含不含 暗/雷战”），**把图名读出来就扔了**。
+- **修复（只在抓鬼暗雷这条路上加门，停稳判据本身不动）：**
+  - `TaskTrackerPanelService`（cloudbrain）：新增 `parseDarkThunderTargetMap` 从
+    `请速到……进行巡查` 取图名；解析前把空白**和行分隔符一并去掉**——绿链在画面上会被换行拆成两段
+    （实测 `大雁塔五层` 就是 `大雁塔` + `五层` 两段绿字），不去分隔符拼不回来。
+    仅在本次任务框确实判成暗雷、且 `taskCode=catch_ghost` 时才解析，正常抓小鬼子任务零额外 OCR；
+    江湖历练与天庭的暗雷分支不受影响。
+  - `PanelAnalysis` / `TaskTrackerPanelReadResult` / `CatchGhostRoundContext`：新增
+    `darkThunderTargetMap`，随每条绿链腿重读（`withShortcutTrackerClick` 一并清空，
+    避免上一腿的图名把下一条子任务判到旧目的地）。
+  - `CatchGhostTask`：新增纯判据 `classifyDarkThunderMapGate(targetMap, currentMap, retryCount)`
+    → 四态 `PROCEED_ARRIVED / PROCEED_TARGET_UNREADABLE / REPRESS_GREEN_LINK / REACCEPT_AT_NPC`，
+    副作用留在 `gateDarkThunderOnTargetMap`，挡在进 `RUN_DARK_THUNDER` 之前。
+    **当前图名读不出算“没到”**，不算到达——否则图名一识别不出就等于放行，正是本次要堵的口子。
+    重点前清掉旧寻路腿与看打兴趣，避免旧终局把下一次点击立刻假唤醒成“又停稳了”。
+- **为什么可以直接字符串相等：** 两侧同源——目的图名来自任务框绿链，当前图名来自云端对停稳帧的图名识别，
+  用的是同一套游戏图名词表；`大雁塔五层` 本身就是一个正式图名（近两天云端解析出 21 次），
+  不需要特判楼层。事故中读到的 `大雁塔顶` 是塔里另一层，判“没到”正确。
+- **写集与终态哈希（sha256 前 16 位）：**
+  `CatchGhostTask.java=e20b091bffc04056`、`CatchGhostRoundContext.java=e78f93732c21299a`、
+  `cloudbrain/TaskTrackerPanelService.java=96920ea876b8a581`、
+  `service/TaskTrackerPanelService.java=defb659b8e2faff8`、
+  `TaskTrackerPanelReadResult.java=d0df9191f87bfdc7`；新合同
+  `CatchGhostDarkThunderTargetMapGateContractTest.java=60574c50230d5532`（已加 `.gitignore` 白名单，
+  用 `git check-ignore -q` 退出码 1 验证）；既有合同
+  `CatchGhostDarkThunderPatrolDialogContractTest.java=370dbc95dc7eb79d`（仅同步 `withDarkThunderAnalysis` 新签名）。
+- **变异验证（全部在源码树副本上做，工作树全程未动）：** 停下即到达 → 杀 3 条；重点无上限 → 杀；
+  上限 3→4 → 杀；读不到改 fail-closed → 杀；空当前图名算到达 → 杀；不去行分隔符 → 杀
+  （`aGreenLinkSplitAcrossTwoLinesStillResolvesToOneMapName`）。**存活 1 条**：正则由懒改贪婪
+  （`请速到(.{1,12}?)` → `(.{1,12})`），判为等价变异——真实文本结果相同，只有 `进行巡查` 重复出现才有差。
+- **既有缺陷（非本卡引入、未修，只登记）：** `CatchGhostDarkThunderPatrolDialogContractTest` 按 20 参构造
+  `CatchGhostTask`（生产已 21 参）、`DialogService` super 10 参（现 11 参）；
+  `YipinGuardClickPlanTest` 的 `assertTrue(result.completed())` 类型不匹配。两者**在本卡改动前就编译不过**，
+  故本卡只能隔离运行可编译的合同，不能跑整包。
+- **遗留：** OCR 超时的那约三成绿链腿仍然没有这道门（按用户定案 fail-open，行为与修复前一致）。
+  要盖住这部分需先降低 OCR 边车超时率（当天 124/398，有界 2500ms），属另一件事。
+- **未做：** 未运行 `mvn`，未写共享 `target/classes`（仍为 `09-01 02:06` 那一代），未重启，未 fresh。
+
 ## G136 封妖符 while 循环重设计：浮窗解析目的地+软标记循环+分支总预算（2026-08-31 用户重设计）
 
 - **状态：`SOURCE FIXED+两轮返修 / 合同 10/10+G134v3 2/2 / 变异 5/5 全杀 / 天庭包 191绿12红=既有红 / FRESH REQUIRED`。**
@@ -111,6 +304,25 @@
   五倍 `00f2d888a0a4f759`/4884L、抓鬼 `d323f24ab6ac6e83`/3695L、鬼王 `e27bd06622f742f6`/4125L、
   江湖历练 `48207cd9517a3736`/4077L、五环 `5c6f103b9d00dc41`/3809L、合同 `2860f2262738558a`/121L
   （白名单 check-ignore=1）。
+
+## G134 判定取证改滚动池：一次性 20 张限额写满永久沉默,一个月的事故全部无图（2026-09-01 21:20 用户暴怒）
+
+- **状态：`SOURCE FIXED / 行为合同 2/2 / 变异 1/1 杀 / G127 回归 14/14 / FRESH REQUIRED`（2026-09-01 实施）。**
+- **用户问题："为什么每次 debug 都没有图。"查实三个原因：**
+  ① **主犯=`dumpMatchMiss` 一次性限额**：每位点只存史上最早 20 张,写满永久沉默——tracker-anchor 与
+  catch-ghost-darkthunder 月初即满额,此后一整月每起事故（G127 七连判、锚点 miss）全部无图,盘里躺的是
+  一个月前的旧图;② 数字型判定（G081 飞行饱和度等）从未写过落盘——铁律字面只写了"模板匹配点",
+  数字判定整类漏掉（随 G133 修）;③ 高频探测只在结论翻转时存图=用户 08-20/G103 自己拍板的性能收紧,
+  不算病,不动。
+- **修复（Cloud `TaskTrackerPanelService.dumpMatchMiss` 单方法）：** 槽位=计数取模,写前删同槽旧文件。
+  磁盘占用不变（恒 20 张）,但语义从"史上最早 20 张"变为"**最近** 20 张"——事故取证要的是出事前后
+  那几张,不是上线头几天那几张。所有走 dumpMatchMiss 的位点（锚点/三任务暗雷模板/等）一次性全部受益。
+- **合同（`G134MatchMissRollingPoolContractTest`,行为级——真写 60 张验证）：** ①写 25 张后池=20 张,
+  第 21–25 张在、第 1–5 张被覆盖（旧语义在第 20 张后永久沉默,此合同当场变红）;②转满三圈仍恒 20 张
+  （同槽先删后写,不堆积）。变异（退回一次性限额）1/1 杀。G127 合同 14/14 回归绿。
+- **终态 SHA：** `TaskTrackerPanelService.java` `见台账`（含 G127+G134）。合同已入 .gitignore 白名单
+  （check-ignore=1）。
+- **fresh 验收：** 运行数日后 `images/temp/match-miss/<site>/` 内文件时间戳应始终是近期,不再定格月初。
 
 ## G132 接任务入口守卫：归队门超时停任务后，下一轮不得绕过成员归队（2026-08-31）
 
@@ -13073,10 +13285,15 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 
 | Card | Owner | Status | Files | Goal |
 | --- | --- | --- | --- | --- |
+| G143 | Codex | **源码已修 / G143合同4/4 + owner家族26/26 / 待 Review / 待 fresh** | Client `WindowTaskControlService.java`、`WindowRuntimeContext.java`、`G143ColdStartOwnerRebindContractTest.java` | **新任务重扫窗口后仍沿用旧角色缓存。** 启动时已正确扫描到 3473/3511 换窗，但失败恢复仍按换窗前 owner 每 3 秒拒绝；现从 exact HWND 活标题抓取本轮 owner 并固化进不可变恢复计划，ACK 前临时切号会暂停而不会改认主人。 |
+| G142 | Codex | **源码已修 / G142合同2/2 + 身份上下文5/5 / 待 Review / 待 fresh** | Client `WindowTaskControlService.java`、`WindowRuntimeContext.java`、`G142RecoverableRestartOwnerContractTest.java` | **五环失败后自动重启误用上一轮角色，导致 3473 永久卡死。** 可恢复失败时当前 run 仍保存 owner=3473，旧代码却只读上一轮 lastOwner=3519，每 3 秒永久拒绝重启；改为当前 run owner 优先、last owner 仅在当前 owner 已清空时兜底，临时切走/切回的防串号语义保持。 |
+| G141 | 待认领 | **源码已存在 / 合同已存在但未独立执行 / 待 Review / 待 fresh** | Cloud `FiveRingTaskV3.java`、`G141ShoeShopGoodsPanelGateContractTest.java` | **五环买鞋：商品面板延迟打开导致误判无鞋。** 点“我想买点东西”后旧流程固定等约 `600ms` 就用单帧定案；两个失败窗的取证帧仍是店内货架、面板尚未出现。改为有上界多帧等待，区分“面板没开”和“面板已开但无鞋”，不得因拍早一帧立即关窗重开 NPC。 |
+| G137 | Claude | SOURCE FIXED / 新合同 11/11、合计 27/27 连跑两次 / 变异 6/7 杀（1 条等价） / 全树隔离编译 0 错 / 共享 target 未写 / FRESH REQUIRED | Cloud `CatchGhostTask` 到达门 + `CatchGhostRoundContext` 目的图名、`cloudbrain/TaskTrackerPanelService` 绿链图名解析、`service/TaskTrackerPanelService` + `TaskTrackerPanelReadResult` 字段直通 | 暗雷绿链腿是 `UNTARGETED_TRACKER/targetMap=null`，云端把任何一次坐标停稳无条件当终局，跨图加载的一秒静止被判成“走完了”，于是在长安/地府等半路图上跑暗雷、次数卡 `[1/7]`；改为「当前图名 == 绿链写的目的图名」才执行暗雷，不一致最多重点绿链 3 次再回钟馗重接，目的图名读不到则 fail-open。 |
 | G135 | Claude | **SOURCE FIXED / 合同 3/3 / 变异 3/3 全杀 / 回归全绿 / FRESH REQUIRED** | Cloud NpcClickRequest+NpcClickService+TiantingTask | **封妖符跨坐标误点(用户还原:同屏整屏找怪把 #3 的怪在 #2 点掉)**:tooltip 候选加"到人物(屏幕中心)最大距离"约束,默认不限零影响;封妖符半径 250 标定初值,距离逐条落日志供校准。 |
 | G136 | Claude | **SOURCE FIXED / 合同 9/9 / 变异 3/3 全杀 / 天庭回归一致 / FRESH REQUIRED** | Cloud TiantingTask+RoundContext+NpcClickService(公开区域截取) | **封妖符 while 循环重设计(用户判据:格子非一次性;浮窗解析目的地比对到达;缺席/没动=可能已做过软跳;一圈无进展清标记再循环;圈数3+分支预算15min 兜底——85次重试无超时生效=此前无分支级预算)**。 |
 | G134 | Claude | **SOURCE FIXED / 合同 2/2 / 变异 2/2 全杀 / 天庭 92绿6红=基线 / FRESH REQUIRED** | Cloud `TiantingTask` 封妖符终局消费一处 | **封妖符"点了没动"照常推进 Alt+A（用户拍板:没动是合法结果,人可能已在坐标上）**:旧逻辑没动=无限重试同一坐标(85次/Alt+A 永不执行),此前靠像素噪声假报"动了"顶开门;G130 说真话后合法情形被拦死。修=没动分支与 moved 汇合推进,STORY 保护保留。教训:G130 后所有依赖噪声假移动的消费点会陆续暴露,需排查。 |
 | G133 | Claude | **SOURCE FIXED / 合同 6/6 / 变异 4/4 全杀 / 七任务回归全绿 / FRESH REQUIRED** | Cloud 新 `StartupQuestPanelResyncGate`（唯一实现）+ 七任务接线（修罗改薄委托） | **热启动绿链防过期门通用化（用户拍板:所有任务全接）**:门 08-21 只落地修罗,天庭 fresh 未触发暴露"首发未铺开"。语义原样(无绿链不走/失败 fail-open/停止上抛)+新增每 run 一次闩;五环不读面板故入口无条件重同步一次。 |
+| G134 | Claude | **SOURCE FIXED / 行为合同 2/2 / 变异杀 / G127 回归绿 / FRESH REQUIRED** | Cloud `TaskTrackerPanelService.dumpMatchMiss`（一次性 20 张限额 → 最近 20 张滚动池） | **判定取证改滚动池（用户:为什么每次 debug 都没图）**:旧语义存满永久沉默,锚点/暗雷位点月初满额后一整月事故全无图。改槽位取模+先删后写,磁盘占用不变,永远保留最近 N 张;全部 dumpMatchMiss 位点一次受益。数字型判定不落盘的缺口随 G133 修;翻转才存图是用户自定的性能策略不动。 |
 | G132 | Claude | **SOURCE FIXED / 合同 4/4 / 变异 3/3 全杀 / 回归全绿 / FRESH REQUIRED** | Cloud `LeaderTeamReturnCoordinator`（accept-entry 守卫）+ 六组队任务 execute 入口各 1 行 | **接任务入口守卫（用户拍板:归队门超时停任务后,下一轮不得绕过成员归队）**:此前 fail-stop 被自动重启抵消,新一轮直接接任务。守卫复用归队门 advance 按现实分流:全员在位 1-2 秒过;有人缺席重开协调(成员 G131 自愈)停等,180s 超时照停,下一轮重进守卫,队长永不独自接任务。接缝否决记录:beforeTask 在观察者启动前,接那儿会 HUD 采样永等死循环。 |
 | G131 | Claude | **SOURCE FIXED / 合同 5/5 / 变异 4/4 全杀 / 归队家族回归全绿 / FRESH REQUIRED** | Cloud `TeamReturnService`（重按前清障+腿登记+半路停下判定）+ `AutoBattleTask`（停下续探豁免） | **归队接入绿链停下恢复链（用户设计:归队与绿链同构,都是长时间走路）**:归队链路零清障+探针5轮烧完永久安静,OPTION框挡脸时白点到队长门超时。修=重按前走绿链同一条清障链(null任务码,触发点仍唯一)+停在半路(G130终局,intentId精确配对)且队长门开着即继续探到归位。完成判据仍归队长两道门。 |
 | G130 | Claude | **SOURCE FIXED / 合同 4/4 / 变异 3/3 全杀 / 回归零退化 / FRESH REQUIRED** | Client `WindowObservationSampler`（isValueStabilityMode 恒真=全任务数值判稳） | **停稳判定全任务统一读坐标数字（用户裁定：不能比图片）**：归队腿等非五环任务还在像素差值老路，背景飘红使 34.9% 像素超 5% 阈值被判"在动"，停稳计时永远清零、STOPPED_AWAY 永不触发（55,22 三分钟没变判 750 次）。云端翻译层本就通用零改动。遗留：像素死代码清理、归队门超时后下一轮自启冷却（待拍板）。 |

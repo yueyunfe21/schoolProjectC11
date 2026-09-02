@@ -31,6 +31,7 @@ public enum ObservationKeyEventType {
     TIANTING_DIALOG_CLICKED,
     /** The 鬼王 local accept probe matched and attempted its exact dialog click. */
     GHOST_KING_DIALOG_CLICKED,
+    DALISI_DIALOG_CLICKED,
     /**
      * One exact recovery-probe frame was available, but none of 天庭's seven known options matched.
      * This is the only event that authorizes the Cloud's generic dialog fallback.

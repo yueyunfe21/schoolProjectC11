@@ -787,6 +787,19 @@ public class WindowTaskControlService {
         // This is deliberately before startRemote(); markRemoteStarted() runs after ACK and must not erase the
         // newly captured startup screen state.
         runner.prepareRemoteFreshStart("new remote task start pending Cloud acknowledgement");
+        if (startupMode == TaskStartupMode.NORMAL
+                || startupMode == TaskStartupMode.AFTER_COMBAT_EXIT_STARTUP) {
+            /*
+             * G143：UI 的新任务入口虽已重扫全部窗口，但任务 owner 不能再靠 ACK 线程稍后从旧上下文补抓。
+             * 在提交本 run 前再读取一次 exact HWND 活标题，并立即固化 owner；客户端进程无需重启。
+             * PAUSE_RESUME 不走这里，避免把运行中临时切入的角色改认成任务主人。
+             */
+            bindingRefreshService.refreshAndCommit(context);
+            context.captureTaskOwnerForNewRun();
+            log.info("Remote task owner captured from live window: windowId={} startupMode={} owner={}/{}",
+                    windowId, startupMode,
+                    context.getTaskOwnerPlayerName(), context.getTaskOwnerPlayerId());
+        }
         Supplier<TurnWindowMetadata> metadataSupplier = explicitLeaderWindowId == null
                 ? new RemoteTurnMetadataSupplier(deviceId, context, bindingRefreshService,
                         teamSessionKey, teamPreflight, startupMode)
@@ -820,7 +833,8 @@ public class WindowTaskControlService {
         RemoteTerminalRecoveryPlan recoveryPlan = new RemoteTerminalRecoveryPlan(
                 deviceId, windowId, List.copyOf(taskCodes), List.copyOf(taskMaxRuns), failurePolicy, queue,
                 teamSessionKey, teamPreflight, startEpoch, roleResolutionDeadlineNanos,
-                explicitLeaderWindowId, runtimeSettings);
+                explicitLeaderWindowId, runtimeSettings,
+                context.getTaskOwnerPlayerId(), context.getTaskOwnerPlayerName());
         try {
             WindowTurnLoop loop = turnModeGuard.startRemote(deviceId, windowId, metadataSupplier, startRequest);
             if (isRemoteStartCancelled(startEpoch)) {
@@ -1070,7 +1084,23 @@ public class WindowTaskControlService {
         String windowId = recoveryPlan.windowId();
         WindowRuntimeContext context = taskManager.getRunner(windowId)
                 .map(WindowTaskRunner::getWindowContext).orElse(null);
-        String expectedOwnerId = context == null ? null : context.getLastTaskOwnerPlayerId();
+        /*
+         * G143：新任务提交时随 recovery plan 固化的 owner 是本 run 的第一权威，不受随后标题或上下文
+         * 清理影响。老计划没有该字段时才走 G142 兜底：当前保留 run 的 taskOwner* 优先，只有当前
+         * owner 已被终局真正清掉才使用 lastTaskOwner*，绝不能让更早一轮角色扣住本轮重启。
+         */
+        String expectedOwnerId = recoveryPlan.taskOwnerPlayerId();
+        String expectedOwnerName = recoveryPlan.taskOwnerPlayerName();
+        String activeOwnerId = context == null ? null : context.getTaskOwnerPlayerId();
+        if (expectedOwnerId == null && context != null) {
+            if (activeOwnerId != null) {
+                expectedOwnerId = activeOwnerId;
+                expectedOwnerName = context.getTaskOwnerPlayerName();
+            } else {
+                expectedOwnerId = context.getLastTaskOwnerPlayerId();
+                expectedOwnerName = context.getLastTaskOwnerPlayerName();
+            }
+        }
         if (expectedOwnerId == null) {
             return false;
         }
@@ -1084,7 +1114,7 @@ public class WindowTaskControlService {
         }
         log.warn("Recoverable restart held: task owner not in window (switch-away contract): windowId={} "
                         + "expectedOwner={}/{} visible={} status={} recheckMs={}",
-                windowId, context.getLastTaskOwnerPlayerName(), expectedOwnerId, visibleId,
+                windowId, expectedOwnerName, expectedOwnerId, visibleId,
                 terminal.status(), OWNER_RETURN_RECHECK_MS);
         CompletableFuture.delayedExecutor(OWNER_RETURN_RECHECK_MS, TimeUnit.MILLISECONDS).execute(
                 () -> recoverRemoteTerminal(recoveryPlan, terminal, attempt));
@@ -1779,7 +1809,9 @@ public class WindowTaskControlService {
             long startEpoch,
             long roleResolutionDeadlineNanos,
             String explicitLeaderWindowId,
-            TurnTaskRuntimeSettings runtimeSettings) {
+            TurnTaskRuntimeSettings runtimeSettings,
+            String taskOwnerPlayerId,
+            String taskOwnerPlayerName) {
 
         /**
          * Returns the monotonic queue suffix beginning at the exact failed child. Successful predecessors are
@@ -1806,7 +1838,7 @@ public class WindowTaskControlService {
             return new RemoteTerminalRecoveryPlan(
                     deviceId, windowId, remainingTaskCodes, remainingTaskMaxRuns, failurePolicy, remainingQueue,
                     teamSessionKey, teamPreflight, startEpoch, roleResolutionDeadlineNanos,
-                    explicitLeaderWindowId, runtimeSettings);
+                    explicitLeaderWindowId, runtimeSettings, taskOwnerPlayerId, taskOwnerPlayerName);
         }
     }
 

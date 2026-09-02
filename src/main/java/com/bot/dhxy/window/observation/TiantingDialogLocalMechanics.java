@@ -47,6 +47,8 @@ final class TiantingDialogLocalMechanics {
     static final String CANCEL = "images/template/dialog/tianting/quxiao.png";
     /** 在下愿为三 on 地藏王's dialog; it deliberately reuses this mature 640x300 matcher. */
     static final String GHOST_KING_ACCEPT = "images/template/dialog/guiwang/accept.png";
+    /** G133：大理寺答题入口选项「我要参加有奖问答」，与鬼王接取同管线本地匹配。 */
+    static final String DALISI_ACCEPT = "images/template/dialog/dalisi/hints/accept.png";
 
     /** 使用引妖香; checked post-combat and again in 天庭's no-movement business fallback. */
     static final String YINYAO = "images/template/dialog/tianting/yinyao.png";
@@ -54,6 +56,7 @@ final class TiantingDialogLocalMechanics {
     static final String ACTION_ACCEPT_TASK = "tianting.acceptTask";
     static final String ACTION_CANCEL_TASK = "tianting.cancelTask";
     static final String ACTION_GHOST_KING_ACCEPT_TASK = "ghostKing.acceptTask";
+    static final String ACTION_DALISI_ACCEPT_QUIZ = "dalisi.acceptQuiz";
     static final String ACTION_ENTER_BATTLE_KAIDA = "tianting.enterBattle.kaida";
     static final String ACTION_DUOXIE = "tianting.duoxie";
     static final String ACTION_FENGYAO = "tianting.fengyao";
@@ -66,6 +69,7 @@ final class TiantingDialogLocalMechanics {
             Map.entry(ACCEPT, ACTION_ACCEPT_TASK),
             Map.entry(CANCEL, ACTION_CANCEL_TASK),
             Map.entry(GHOST_KING_ACCEPT, ACTION_GHOST_KING_ACCEPT_TASK),
+            Map.entry(DALISI_ACCEPT, ACTION_DALISI_ACCEPT_QUIZ),
             Map.entry(KAIDA, ACTION_ENTER_BATTLE_KAIDA),
             Map.entry(DUOXIE, ACTION_DUOXIE),
             Map.entry(FENGYAO, ACTION_FENGYAO),
@@ -179,6 +183,16 @@ final class TiantingDialogLocalMechanics {
      */
     static Optional<OptionHit> matchGhostKingAcceptOption(BufferedImage roi) {
         return matchFirstOf(roi, List.of(GHOST_KING_ACCEPT));
+    }
+
+    /**
+     * G133：大理寺答题入口「我要参加有奖问答」，同一 640x300 对话 ROI 上本地匹配。
+     *
+     * @param roi exact-window dialog ROI crop; null yields no hit.
+     * @return the 大理寺 accept option when present.
+     */
+    static Optional<OptionHit> matchDalisiAcceptOption(BufferedImage roi) {
+        return matchFirstOf(roi, List.of(DALISI_ACCEPT));
     }
 
     /**

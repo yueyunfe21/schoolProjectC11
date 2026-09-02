@@ -1,5 +1,58 @@
 # DHXY Active Work
 
+## Codex - 2026-09-02 / G143「新任务重扫窗口后仍沿用旧角色缓存」
+
+- **目标与基线：** `D:\mavenProject\DHXY-cr271`，`dev@b19e20ce=origin/dev`；受保护基线
+  `D:\mavenProject\DHXY` 未触碰。立项前 `WindowTaskControlService.java`、`WindowRuntimeContext.java`
+  仅含已登记的 G142 脏改，`MainWindowController.java` 相对 pushed 无差异；其它工作树脏改全部保留。
+- **用户授权：** 用户确认每次停止后重新启动新任务都必须重新读取当前窗口，并批准按该方向修改；不要求、
+  也不允许重启客户端才能刷新角色归属。
+- **现场证据：** `10:49:19` UI 新任务启动明确重新扫描五窗，并正确读到 3473 在 `hwnd-1900A7E`、
+  3511 在 `hwnd-6E0B72`；但本轮失败恢复仍报前者 `expectedOwner=3511 visible=3473`、后者
+  `expectedOwner=3473 visible=3511`，每 3 秒永久拒绝重启。扫描事实正确，错在本轮恢复权威仍取旧 owner 缓存。
+- **实施边界：** 只修 Client 新任务启动／自动恢复的 owner 权威：正常新任务必须从启动时的活 HWND 标题抓取
+  owner，并把它随该 run 的不可变 recovery plan 保存；运行中临时切号仍扣住，切回原 owner 才放行。
+  不改大理寺／五环业务，不迁移运行中的任务，不操作电脑、不重启、不发送输入。
+- **合同计划：** 复现 3473/3511 两两换窗与五角色整体轮换；钉住新任务 owner 来自重扫后的活标题、恢复计划
+  优先于 mutable/last 缓存、运行中临时切号仍不改 owner。全部只写隔离输出，不碰共享 `target/classes`。
+- **实施结果：** `WindowTaskControlService` 在 NORMAL／战后冷启动提交前刷新 exact HWND、抓取本轮 owner，
+  并写入不可变 `RemoteTerminalRecoveryPlan`；恢复门优先使用计划 owner。`WindowRuntimeContext` 在 ACK 时不再
+  覆盖已冻结 owner，并会把 ACK 往返期间发生的角色切换转为既有 identity suspension。PAUSE_RESUME 不强制改认。
+- **隔离验证：** 修改生产类编译至 `%TEMP%\g143-isolated-*` 成功；G143 **4/4**、G142 **2/2**、
+  native-binding generation **5/5**、identity/refresh/registration **14/14**、冷启动顺序 **4/4**，合计
+  **29/29**；另定向复跑可恢复终局 replacement 合同 **1/1**。共享 `target/classes` 时间戳未变；未操作电脑、
+  未重启、未发输入。
+
+## Codex - 2026-09-02 / G142「五环失败后自动重启误用上一轮角色，导致 3473 永久卡死」
+
+- **目标与基线：** `D:\mavenProject\DHXY-cr271`，`dev@b19e20ce=origin/dev`；受保护基线
+  `D:\mavenProject\DHXY` 未触碰。目标生产文件立项前相对 pushed 无差异；工作树中其它卡既有脏改全部保留。
+- **用户授权：** 用户确认临时切换窗口／角色后不可永久卡死，要求修改；约束为切走时仍暂停，切回本次任务
+  主人才恢复，绝不允许别的角色接着执行。
+- **日志结论：** `hwnd-6E0B72` 本轮 owner=3473，但 FAILED 后自动重启读取上一轮 lastOwner=3519；
+  `expectedOwner=3519 visible=3473` 每 3 秒重复，累计 156 次，失败后物理输入 0。
+- **写集：** `WindowTaskControlService.java` 当前 owner 优先、last owner 兜底；`WindowRuntimeContext.java`
+  补同源 owner name 只读访问；新增 `G142RecoverableRestartOwnerContractTest.java`；治理卡/dashboard。
+- **隔离验证：** 修改类编译到 `%TEMP%`，未写共享 target；G142 **2/2**、身份上下文 **5/5**。远程控制
+  既有 recovery 用例通过；整类 6 条红已用 `origin/dev` 基线复现为同一批既有红，本卡没有新增失败。
+- **边界：** 不改五环业务和身份漂移门，不处理 `completion undecidable`；不操作电脑、不重启、不发输入。
+
+## Codex - 2026-09-02 / G141「五环买鞋：商品面板延迟打开导致误判无鞋」立卡
+
+- **目标工作树与基线：** 治理记录在 `D:\mavenProject\DHXY-cr271`（`dev@b19e20ce`）；Cloud 只读核对
+  `D:\mavenProject\dhxy-cloud-brain`（`dev@6d05cd8`）。受保护基线 `D:\mavenProject\DHXY` 未触碰。
+  两棵工作树均有大量其它卡的既有脏改，本轮只追加 G141 卡、活动记录并重生成 dashboard。
+- **用户授权：** 用户确认“按照你说的试一下，做一张卡”。本轮只做治理立卡；不操作电脑、不重启、不跑任务、
+  不修改生产／测试代码、不执行测试。
+- **事故结论：** `00:41` 五窗并非全部失败：三窗已买鞋成功，两个窗口在用户暂停前仍重试。失败窗点击
+  “我想买点东西”后约 `600ms` 的单次截图里商品面板尚未出现，鞋分数仅 `0.276/0.288`；成功帧面板已开，
+  鞋分数 `1.000`。根因是单帧拍早，不是鞋模板过时。G125 的战斗硬门与进店 intent 清理五窗均已通过。
+- **意外现状：** 立卡前发现 Cloud 源码已由其它会话写入 G141 实现（既有购买按钮模板作面板锚点，
+  `400ms` 轮询、`4s` 上界）及 3 条源码合同，但治理卡、独立 Review 与合同执行记录均缺失。故本卡如实标为
+  “源码／合同已存在，待独立 Review、replay、隔离测试与 fresh”，不重复创建编号，也不把代码存在冒充完成。
+- **验收重点：** 三张事故帧生产算法 replay + 标记图；延迟出现不误关窗；超时有界；停止即时响应；
+  “面板未开”与“面板已开但无鞋”分因；G125 与既有成功买鞋路径零退化。
+
 ## Codex - 2026-08-31 / G135「油壶壶本次天庭封妖符逐帧取证」
 
 - **目标工作树：** `D:\mavenProject\DHXY-cr271`（`dev`）；受保护基线 `D:\mavenProject\DHXY` 只读。Client 基线 `HEAD=origin/dev=8d9d2d2`；Cloud 基线 `HEAD=origin/dev=263ad1e7`。
@@ -114,6 +167,23 @@
   直接 `verified=true`；④ `DalisiQuizTask.openOfficialDialog` 无条件 `return true` 丢弃点击结果。
 - **卡片：** G122 已登记完整证据、预期写集、五类自动合同、事故帧/marked 要求和五角色 fresh 验收门；
   状态 `ROOT CAUSE CONFIRMED / P1×4 / USER APPROVED CARD / NO CODE / REPAIR REQUIRED`，实施 owner 未指派。
+
+## Claude - 2026-09-01 / G137 抓鬼暗雷绿链到达门（当前图名 == 目的图名）
+
+- **边界：** `SOURCE FIXED / FRESH REQUIRED`。写集仅 Cloud `D:\mavenProject\dhxy-cloud-brain` 的 5 个生产文件
+  + 1 个新合同 + 1 处既有合同签名同步 + `.gitignore` 白名单一行。未运行 `mvn`、未写共享 `target/classes`
+  （仍为 `09-01 02:06` 那一代）、未重启、未 fresh。
+- **用户契约：** 抓鬼任务若是暗雷怪，点了绿链停下后先和当前地图比一次；一致才执行暗雷，不一致就再点绿链。
+  用户定案：重点上限 3 次（之后回钟馗重接）；目的图名读不到 fail-open。
+- **根因：** 绿链腿 `UNTARGETED_TRACKER/targetMap=null` → 云端对该类型把**任何一次坐标停稳**无条件映射成
+  终局（原为五环同图短距而写）→ 跨图加载的约 1 秒静止被判成到达 → 在半路图上跑暗雷。两轮在完全相同的
+  三个过图点 `(415,235) → (374,16) → (31,19)` 上重演；停稳后 0.5–1.6 秒坐标又变，角色其实还在走。
+- **已证伪的两种可能：** 不是我们点的（绿链那一下之后到腿被清，对该窗口零点击零按键）；
+  不是游戏 bug（自动寻路从未被取消，角色自己走完并过了图）。
+- **验证：** 全树 683 文件隔离编译 0 错；合同 27/27 连跑两次；变异 6/7 杀（存活 1 条为等价变异）。
+- **顺带发现（非本卡引入）：** `CatchGhostDarkThunderPatrolDialogContractTest` 与 `YipinGuardClickPlanTest`
+  在本卡改动前就编译不过（构造器/断言签名过时），故整包无法运行，只能隔离跑可编译的合同。
+- **遗留：** OCR 超时的约三成绿链腿仍无此门（按定案 fail-open）；要盖住需先降低 OCR 边车超时率。
 
 ## Claude - 2026-08-29 / G114 用户批准方案 B，范围回退完成
 

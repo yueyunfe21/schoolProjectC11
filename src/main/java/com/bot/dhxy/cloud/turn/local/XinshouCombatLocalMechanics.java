@@ -1,5 +1,6 @@
 package com.bot.dhxy.cloud.turn.local;
 
+import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.driver.BoundWindowKeyboardService;
@@ -578,7 +579,9 @@ public final class XinshouCombatLocalMechanics {
                             return CombatVisibility.UNAVAILABLE;
                         }
                         try {
-                            boolean matched = ImageFinder.find(source, template, stage.threshold()) != null;
+                            double[] stageMatch = ImageFinder.find(source, template, stage.threshold());
+                            MatchEvidenceStore.saveOnChange("xinshou-combat-stage", null, source, template, stageMatch);
+                            boolean matched = stageMatch != null;
                             if (matched && !stage.requireAll()) {
                                 return CombatVisibility.VISIBLE;
                             }
@@ -663,7 +666,9 @@ public final class XinshouCombatLocalMechanics {
                 if (template == null) {
                     return PanelVisibility.UNAVAILABLE;
                 }
-                return ImageFinder.find(frame, template, AUTO_REMAINING_THRESHOLD) == null
+                double[] autoRemainingMatch = ImageFinder.find(frame, template, AUTO_REMAINING_THRESHOLD);
+                MatchEvidenceStore.saveOnChange("xinshou-auto-remaining", null, frame, template, autoRemainingMatch);
+                return autoRemainingMatch == null
                         ? PanelVisibility.ABSENT
                         : PanelVisibility.VISIBLE;
             } catch (IOException error) {

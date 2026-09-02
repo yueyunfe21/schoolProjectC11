@@ -112,6 +112,15 @@ The user is actively debugging and expects direct, practical changes. Do not hid
 
 > **编号必须带简介(2026-08-31 用户裁定):** 向用户提及任何 G 卡号、任务编号、契约测试名或提交时,必须同句附一行人话简介说明它是什么(例:`G130(停稳判定改为全任务本地读坐标数字)`)。禁止裸编号、裸哈希;指代提交用日期(`8月31日 19:08 那次提交`),不用 commit 哈希。用户不记编号,裸编号等于没说。
 
+> **排查必须发图摆证据(2026-09-02 用户裁定):** 任何 debug 分析、事故定位、模板匹配结论,都必须把证据图**发到聊天窗口**给用户看,不许只用文字描述。三条硬性要求:
+> 1. **发图**:凡结论依赖某张落盘图(match-evidence / match-miss / evidence/dialog / logs/frames / images/temp 等),必须用文件发送把该图发给用户。只写路径、只写"我看了图"不算数——用户要能直接看见。
+> 2. **摆证据**:结论必须逐条列出判据(日志原文行 + 时间戳 + 落盘图 + 分数/坐标),让用户能自己核对每一步。禁止"我查过了""应该是"这类无据断言。
+> 3. **匹配对比必须成对发**:凡涉及模板匹配的判断(命中或未命中),必须把**模板图**和**当时的实拍原图**一起发到聊天窗口做对比,并附分数与阈值。只发一张、或一张都不发,结论一律不成立。
+>
+> 事故来源:2026-09-02 00:41 买鞋失败,先凭日志断言"模板过时",用户当场驳回"图片不可能错,昨天之前全是命中的"——复查发现同一模板同轮 6 次命中、4 次未命中,是画面状态问题而非模板问题。若当时把模板与实拍图摆出来对比,不会误判。
+>
+> 配套义务:**发现某个匹配点 miss 时没有落盘原图,必须当场向用户报告这个取证缺口**(违反下方"匹配必留证"铁律),而不是绕过它继续猜。
+
 > **Current no-test override (2026-08-11):** Do not create or run any test of any kind unless the user later explicitly authorizes that specific test or test family. This includes unit, integration, contract, replay, image/testcase, runtime, application, UI, capture, and input tests. This override suspends every standing or automatic test exception below, including the G016 exception. A request to fix, compile, review, or hand off code is not test authorization. State plainly that the change is untested when handing it off.
 
 Important behavior constraints:

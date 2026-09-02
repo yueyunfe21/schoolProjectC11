@@ -1,5 +1,6 @@
 package com.bot.dhxy.cloud.turn.local.tasktracker;
 
+import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.driver.BoundWindowCaptureService;
 import com.bot.dhxy.input.InputProvider;
@@ -147,6 +148,7 @@ public final class TaskTrackerPanelCaptureLocalMechanics {
         }
         try {
             double[] match = ImageFinder.find(roi, template, ANCHOR_THRESHOLD);
+            MatchEvidenceStore.saveOnChange("tracker-anchor-cached-roi", null, roi, template, match);
             if (!validMatch(match, roi)) {
                 log.info("[task-tracker-capture] cached ROI miss; use masked full-window fallback: source={}", source);
                 return null;
@@ -172,6 +174,7 @@ public final class TaskTrackerPanelCaptureLocalMechanics {
                 persistAbsentEvidence(raw, raw, source);
                 return null;
             }
+            MatchEvidenceStore.saveOnChange("tracker-anchor-full-window", null, raw, template, match);
             return new Point((int) Math.round(match[0]), (int) Math.round(match[1]));
         } finally {
             raw.flush();

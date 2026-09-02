@@ -24,6 +24,7 @@ public enum DialogOperation {
     /** 取消任务 on 李靖's dialog, armed only when Cloud explicitly requests cancellation. */
     TIANTING_CANCEL_TASK,
     TIANTING_YINYAO,
+    DALISI_QUIZ_ACCEPT,
     TIANTING_FENGYAO,
     /** All known 天庭 options, armed only after a tracker click starts no movement. */
     TIANTING_RECOVERY_OPTION,

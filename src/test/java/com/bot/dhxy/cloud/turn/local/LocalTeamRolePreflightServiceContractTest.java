@@ -11,22 +11,34 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 class LocalTeamRolePreflightServiceContractTest {
 
+    /**
+     * 用户裁决（2026-09-01，单窗天庭误判 SOLO 案）：角色只认队伍面板里的语义按钮，
+     * 放大镜（小地图可见性）与队伍无关，永不参与判定。
+     * classifyPanel(leaderButtonVisible, memberMarkerVisible)。
+     */
     @Test
-    void absentMinimapMagnifierAfterAltTMeansSolo() {
-        assertEquals(LocalTeamRolePreflightService.Role.SOLO,
-                LocalTeamRolePreflightService.classifyPanel(false, false));
+    void leaderButtonsAloneDecideLeaderEvenWithoutMemberMarker() {
+        assertEquals(LocalTeamRolePreflightService.Role.LEADER,
+                LocalTeamRolePreflightService.classifyPanel(true, false));
     }
 
     @Test
-    void groupedPanelWithDismissButtonOrTransferLeaderButtonMeansLeader() {
+    void leaderEvidenceOutranksMemberEvidence() {
         assertEquals(LocalTeamRolePreflightService.Role.LEADER,
                 LocalTeamRolePreflightService.classifyPanel(true, true));
     }
 
     @Test
-    void groupedPanelWithoutLeaderButtonsMeansMember() {
+    void memberMarkerAloneMeansMember() {
         assertEquals(LocalTeamRolePreflightService.Role.MEMBER,
-                LocalTeamRolePreflightService.classifyPanel(true, false));
+                LocalTeamRolePreflightService.classifyPanel(false, true));
+    }
+
+    @Test
+    void noTeamEvidenceOnThisFrameMeansSolo() {
+        // 单帧无证据只代表"这一帧没看到"；调用方轮询到超时才最终定 SOLO。
+        assertEquals(LocalTeamRolePreflightService.Role.SOLO,
+                LocalTeamRolePreflightService.classifyPanel(false, false));
     }
 
     @Test

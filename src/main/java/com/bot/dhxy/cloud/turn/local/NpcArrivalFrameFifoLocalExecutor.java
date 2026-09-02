@@ -1,5 +1,6 @@
 package com.bot.dhxy.cloud.turn.local;
 
+import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.cloud.task.NpcClickSmartCloudSession;
 import com.bot.dhxy.cloud.task.NpcClickSmartQueueMessage;
 import com.bot.dhxy.cloud.task.NpcClickSmartQueueOutcome;
@@ -746,6 +747,7 @@ public final class NpcArrivalFrameFifoLocalExecutor {
         double[] match;
         try {
             match = ImageFinder.find(raw, template, CTRL_TEMPLATE_THRESHOLD);
+            MatchEvidenceStore.save("npc-ctrl-verify", null, raw, template, match);
         } finally {
             raw.flush();
             template.flush();
@@ -861,6 +863,7 @@ public final class NpcArrivalFrameFifoLocalExecutor {
         double[] match;
         try {
             match = ImageFinder.find(raw, template, GHOST_KING_COMPLETE_STORY_THRESHOLD);
+            MatchEvidenceStore.save("ghost-king-complete-story", null, raw, template, match);
         } finally {
             raw.flush();
             template.flush();

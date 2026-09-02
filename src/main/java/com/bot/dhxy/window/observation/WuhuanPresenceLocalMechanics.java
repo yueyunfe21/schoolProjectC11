@@ -1,5 +1,6 @@
 package com.bot.dhxy.window.observation;
 
+import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.tools.CoordinateHelper;
 
@@ -79,6 +80,8 @@ final class WuhuanPresenceLocalMechanics {
                     BufferedImage template = titleTemplate();
                     titleScore = ImageFinder.bestMatchScore(tracker, template);
                     titlePresent = Double.isFinite(titleScore) && titleScore >= TITLE_THRESHOLD;
+                    MatchEvidenceStore.saveOnChange("wuhuan-title-presence", null, tracker, template,
+                            titlePresent ? new double[]{0, 0, titleScore} : null);
                     if (titlePresent) {
                         trackerPng = encodePng(tracker);
                     } else if (template != null) {

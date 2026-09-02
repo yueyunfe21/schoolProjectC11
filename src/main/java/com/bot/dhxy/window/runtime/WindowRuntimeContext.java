@@ -1174,6 +1174,8 @@ public class WindowRuntimeContext {
 
     public String getTaskOwnerPlayerId() { return taskOwnerPlayerId; }
 
+    public String getTaskOwnerPlayerName() { return taskOwnerPlayerName; }
+
     public String getVisiblePlayerId() { return visiblePlayerId; }
 
     public boolean isIdentitySuspended() { return identitySuspended; }
@@ -3304,7 +3306,14 @@ public class WindowRuntimeContext {
             clearTaskRunProgress();
         }
         clearPausedTaskRunProgress("remote task start accepted");
-        captureTaskOwnerIdentity();
+        // A normal new start captures before transport submission (G143). Do not let a title switch during the
+        // ACK round trip replace that exact-run owner; legacy/resume paths still capture here when none was frozen.
+        if (taskOwnerPlayerId == null) {
+            captureTaskOwnerForNewRun();
+        } else {
+            WindowTitleIdentityParser.parse(nativeBinding.getTitle())
+                    .ifPresent(identity -> updateIdentitySuspension(null, identity));
+        }
     }
 
     public void markStopping(String message) {
@@ -3605,7 +3614,12 @@ public class WindowRuntimeContext {
         leftTopStatusSwitchClosePending.set(null);
     }
 
-    private void captureTaskOwnerIdentity() {
+    /**
+     * Captures the role currently visible in this context's exact HWND as the owner of a newly submitted task run.
+     * The native title is authoritative; {@link #gameState} is used only when that title has no parseable identity.
+     * Calling this for an already-running task would wrongly turn a temporary account switch into a new owner.
+     */
+    public void captureTaskOwnerForNewRun() {
         WindowTitleIdentity identity = WindowTitleIdentityParser.parse(nativeBinding.getTitle()).orElse(null);
         if (identity == null) {
             PlayerCharacter me = gameState.getMe();

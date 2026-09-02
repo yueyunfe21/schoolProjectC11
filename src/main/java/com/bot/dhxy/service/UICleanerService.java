@@ -1,6 +1,7 @@
 package com.bot.dhxy.service;
 
 
+import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.input.InputProvider;
@@ -143,7 +144,9 @@ public class UICleanerService {
                 return null;
             }
             try {
-                if (ImageFinder.find(frame, title, 0.8) != null) {
+                double[] worldTitleMatch = ImageFinder.find(frame, title, 0.8);
+                MatchEvidenceStore.saveOnChange("ui-map-probe-title", null, frame, title, worldTitleMatch);
+                if (worldTitleMatch != null) {
                     log.info("UI map read-only probe present: source={} evidence=world-map-title", source);
                     return true;
                 }
@@ -176,7 +179,9 @@ public class UICleanerService {
                         return null;
                     }
                     try {
-                        if (ImageFinder.find(mapFooter, checkbox, 0.95) != null) {
+                        double[] checkboxMatch = ImageFinder.find(mapFooter, checkbox, 0.95);
+                        MatchEvidenceStore.saveOnChange("ui-map-probe-checkbox", null, mapFooter, checkbox, checkboxMatch);
+                        if (checkboxMatch != null) {
                             log.info("UI map read-only probe present: source={} evidence={}", source, templatePath);
                             return true;
                         }
@@ -230,6 +235,8 @@ public class UICleanerService {
             String roiPath = windowScopedTempPath.resolve("ui_cleanup_cached_roi_scan.png");
             ImageIO.write(crop, "png", new File(roiPath));
             double[] result = ImageFinder.find(roiPath, templatePath, matchRate);
+            MatchEvidenceStore.saveOnChange("ui-cleanup-roi-scan", null,
+                    crop, ImageIO.read(new File(templatePath)), result);
             return coordinateHelper.resolveMatchedPointInRect(rect, result);
         } catch (Exception e) {
             log.warn("UI cleanup cached ROI match failed: template={} rect=({}, {})-({}, {}) reason={}",
@@ -323,7 +330,9 @@ public class UICleanerService {
                     return null;
                 }
                 try {
-                    if (ImageFinder.find(frame, template, 0.8) != null) {
+                    double[] genericProbeMatch = ImageFinder.find(frame, template, 0.8);
+                    MatchEvidenceStore.saveOnChange("ui-generic-close-probe", null, frame, template, genericProbeMatch);
+                    if (genericProbeMatch != null) {
                         log.info("UI generic-close read-only probe present: source={} template={}", source, templatePath);
                         return true;
                     }

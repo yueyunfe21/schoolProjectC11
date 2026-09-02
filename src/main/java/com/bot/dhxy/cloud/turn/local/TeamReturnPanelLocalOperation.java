@@ -1,5 +1,6 @@
 package com.bot.dhxy.cloud.turn.local;
 
+import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.driver.BoundWindowCaptureService;
 import com.bot.dhxy.input.InputSequences;
@@ -368,7 +369,10 @@ public final class TeamReturnPanelLocalOperation {
             if (strongest == null || strongest.length < 3 || !Double.isFinite(strongest[2])) {
                 return LeaderSignalCheck.UNREADABLE;
             }
-            return strongest[2] >= LEADER_SIGNAL_THRESHOLD
+            boolean leaderSignalPresent = strongest[2] >= LEADER_SIGNAL_THRESHOLD;
+            MatchEvidenceStore.saveOnChange("team-return-leader-signal", null, roi, template,
+                    leaderSignalPresent ? strongest : null);
+            return leaderSignalPresent
                     ? LeaderSignalCheck.PRESENT : LeaderSignalCheck.ABSENT;
         } catch (IOException | RuntimeException failure) {
             log.warn("[team-return-panel] leader signal read failed: reason={}", failure.getMessage());

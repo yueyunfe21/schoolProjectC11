@@ -578,6 +578,60 @@ public final class WindowObservationSampler {
         }
     }
 
+    /**
+     * G137（2026-09-01 17:21 封妖卡死）：对话选项点完后光标停在选项行上，把绿字渲染成悬停色，
+     * 本探针的绿字模板从此配不上（封妖符窗口 9 秒"失明"，直到别的腿碰巧把鼠标挪走）。
+     * 点击本身命中的行必然在 no-park 带内，收尾沿最近边三步滑出；不在带内则零动作。
+     *
+     * @param clickX 刚执行的选项点击的屏幕绝对 X。
+     * @param clickY 刚执行的选项点击的屏幕绝对 Y。
+     * @param windowLeft 窗口屏幕绝对左边。
+     * @param windowTop 窗口屏幕绝对上边。
+     * @return 三步滑出动作序列；点击点不在 no-park 带内时为空。
+     */
+    static List<InputAction> dialogOptionUnhoverGlide(int clickX, int clickY,
+                                                      int windowLeft, int windowTop) {
+        if (!com.bot.dhxy.input.action.DialogMouseNoParkZone.containsScreenPoint(
+                clickX, clickY, windowLeft, windowTop)) {
+            return List.of();
+        }
+        java.awt.Point exit = com.bot.dhxy.input.action.DialogMouseNoParkZone.nearestExitTarget(
+                clickX, clickY, windowLeft, windowTop);
+        List<InputAction> glide = new ArrayList<>(6);
+        for (int step = 1; step <= 3; step++) {
+            glide.add(InputAction.moveMouse(
+                    clickX + (exit.x - clickX) * step / 3,
+                    clickY + (exit.y - clickY) * step / 3));
+            glide.add(InputAction.sleep(25));
+        }
+        return glide;
+    }
+
+    /**
+     * G137：把滑出排成独立输入请求——挂在点击请求尾部会让滑步失败把已落地的点击改判成
+     * executed=false（云端会当"配到没点上"重布防，白发一族）。独立请求最坏情况=光标留在原地，
+     * 即修复前的现状，不会污染任何事实。
+     */
+    private void submitDialogOptionUnhoverGlide(int clickX, int clickY) {
+        try {
+            WindowNativeBinding binding = context.getNativeBinding();
+            if (binding == null || !binding.hasGeometry()) {
+                return;
+            }
+            List<InputAction> glide = dialogOptionUnhoverGlide(
+                    clickX, clickY, binding.getX(), binding.getY());
+            if (glide.isEmpty()) {
+                return;
+            }
+            inputSequences.submitAsync("tianting:dialog-option:unhover", glide);
+            log.info("[INPUT_TRACE] dialog-option unhover glide queued: windowId={} from=({}, {})",
+                    context.getWindowId(), clickX, clickY);
+        } catch (RuntimeException glideFailure) {
+            log.debug("dialog-option unhover glide skipped: windowId={} cause={}",
+                    context.getWindowId(), glideFailure.toString());
+        }
+    }
+
     private BufferedImage autoPanelTemplate() {
         if (autoPanelTemplate != null) {
             return autoPanelTemplate;
@@ -3684,13 +3738,15 @@ public final class WindowObservationSampler {
         int optionX = rect[0] + validated.roiOffsetX();
         int optionY = rect[1] + validated.roiOffsetY();
         boolean ghostKingAccept = optionSet == TiantingOptionSet.GHOST_KING_ACCEPT;
+        boolean dalisiAccept = optionSet == TiantingOptionSet.DALISI_ACCEPT;
         try {
             /*
              * Clicking 引妖香 redraws the Tracker panel. The global input worker owns the atomic
              * move/click, while this sampler returns immediately and keeps observing combat/pathing.
              */
             inputSequences.moveAndClickLeftAsync(
-                            ghostKingAccept ? "ghost-king:dialog-option" : "tianting:dialog-option",
+                            dalisiAccept ? "dalisi:dialog-option"
+                                    : ghostKingAccept ? "ghost-king:dialog-option" : "tianting:dialog-option",
                             optionX, optionY, 80, 150)
                     .whenComplete((clicked, inputFailure) -> {
                         boolean executed = inputFailure == null && Boolean.TRUE.equals(clicked);
@@ -3711,7 +3767,7 @@ public final class WindowObservationSampler {
                             pendingAsyncRois.put(freshRoi.roiKey(), freshRoi);
                         }
                         log.info("{} dialog option {}: windowId={} template={} score={} click=({}, {})",
-                                ghostKingAccept ? "Ghost King" : "Tianting",
+                                dalisiAccept ? "Dalisi" : ghostKingAccept ? "Ghost King" : "Tianting",
                                 executed ? "clicked" : "click failed", context.getWindowId(),
                                 templateName(validated.templatePath()), validated.score(), optionX, optionY);
                         if (executed && TiantingDialogLocalMechanics.DUOXIE.equals(validated.templatePath())) {
@@ -3727,18 +3783,22 @@ public final class WindowObservationSampler {
                         if (executed) {
                             // NPC 点击 FIFO 用这一刻判"上一下点中 NPC 没有";见 WindowRuntimeContext 注释。
                             context.markTaskDialogOptionAnswered(validated.actionKey());
+                            // G137：光标停在刚点过的选项行上会把绿字渲染成悬停色，模板从此配不上
+                            // （封妖符 9 秒失明事故）。作为独立请求排队：滑步失败不改写点击结果。
+                            submitDialogOptionUnhoverGlide(optionX, optionY);
                         }
                         publishAsyncEvent(new ObservationKeyEvent(
-                                (ghostKingAccept ? "ghost-king-dialog-" : "tianting-dialog-")
+                                (dalisiAccept ? "dalisi-dialog-" : ghostKingAccept ? "ghost-king-dialog-" : "tianting-dialog-")
                                         + interest.getCreatedAtMs() + "-" + validated.actionKey(),
-                                ghostKingAccept
+                                dalisiAccept ? ObservationKeyEventType.DALISI_DIALOG_CLICKED
+                                        : ghostKingAccept
                                         ? ObservationKeyEventType.GHOST_KING_DIALOG_CLICKED
                                         : ObservationKeyEventType.TIANTING_DIALOG_CLICKED,
                                 System.currentTimeMillis(),
                                 null,
                                 null,
                                 0,
-                                ghostKingAccept ? "ghost-king-dialog-option" : "tianting-dialog-option",
+                                dalisiAccept ? "dalisi-dialog-option" : ghostKingAccept ? "ghost-king-dialog-option" : "tianting-dialog-option",
                                 validated.actionKey()
                                         + "|score=" + validated.score()
                                         + "|executed=" + executed
@@ -3747,17 +3807,18 @@ public final class WindowObservationSampler {
                     });
         } catch (RuntimeException inputFailure) {
             log.warn("{} dialog option async submit failed: windowId={} template={} type={} message={}",
-                    ghostKingAccept ? "Ghost King" : "Tianting", context.getWindowId(),
+                    dalisiAccept ? "Dalisi" : ghostKingAccept ? "Ghost King" : "Tianting", context.getWindowId(),
                     templateName(validated.templatePath()), inputFailure.getClass().getSimpleName(),
                     inputFailure.getMessage());
             publishAsyncEvent(new ObservationKeyEvent(
-                    (ghostKingAccept ? "ghost-king-dialog-" : "tianting-dialog-")
+                    (dalisiAccept ? "dalisi-dialog-" : ghostKingAccept ? "ghost-king-dialog-" : "tianting-dialog-")
                             + interest.getCreatedAtMs() + "-" + validated.actionKey(),
-                    ghostKingAccept
+                    dalisiAccept ? ObservationKeyEventType.DALISI_DIALOG_CLICKED
+                            : ghostKingAccept
                             ? ObservationKeyEventType.GHOST_KING_DIALOG_CLICKED
                             : ObservationKeyEventType.TIANTING_DIALOG_CLICKED,
                     System.currentTimeMillis(), null, null, 0,
-                    ghostKingAccept ? "ghost-king-dialog-option" : "tianting-dialog-option",
+                    dalisiAccept ? "dalisi-dialog-option" : ghostKingAccept ? "ghost-king-dialog-option" : "tianting-dialog-option",
                     validated.actionKey() + "|score=" + validated.score()
                             + "|executed=false|trackerChained=false|probeCorrelation=" + interest.getSource()));
         }
@@ -3829,7 +3890,9 @@ public final class WindowObservationSampler {
         /** Same recovery set after this accepted cycle already consumed 引妖香. */
         RECOVERY_NO_YINYAO(DialogOperation.TIANTING_RECOVERY_OPTION_NO_YINYAO),
         /** 鬼王在下愿为三; uses this mature shared-frame/fresh-frame click pipeline. */
-        GHOST_KING_ACCEPT(DialogOperation.GHOST_KING_ACCEPT_TASK);
+        GHOST_KING_ACCEPT(DialogOperation.GHOST_KING_ACCEPT_TASK),
+        /** G133：大理寺「我要参加有奖问答」，同管线本地匹配+点击（用户拍板与其他任务对齐）。 */
+        DALISI_ACCEPT(DialogOperation.DALISI_QUIZ_ACCEPT);
 
         private final DialogOperation operation;
 
@@ -3857,9 +3920,11 @@ public final class WindowObservationSampler {
         }
 
         boolean supports(TaskType taskType) {
-            return this == GHOST_KING_ACCEPT
-                    ? taskType == TaskType.GHOST_KING
-                    : taskType == TaskType.TIANTING;
+            return switch (this) {
+                case GHOST_KING_ACCEPT -> taskType == TaskType.GHOST_KING;
+                case DALISI_ACCEPT -> taskType == TaskType.DALISI_QUIZ;
+                default -> taskType == TaskType.TIANTING;
+            };
         }
 
         Optional<TiantingDialogLocalMechanics.OptionHit> match(BufferedImage roi) {
@@ -3873,6 +3938,7 @@ public final class WindowObservationSampler {
                 case RECOVERY_NO_YINYAO ->
                         TiantingDialogLocalMechanics.matchRecoveryOptionWithoutYinyao(roi);
                 case GHOST_KING_ACCEPT -> TiantingDialogLocalMechanics.matchGhostKingAcceptOption(roi);
+                case DALISI_ACCEPT -> TiantingDialogLocalMechanics.matchDalisiAcceptOption(roi);
             };
         }
     }

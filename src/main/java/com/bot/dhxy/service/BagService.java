@@ -1297,12 +1297,28 @@ public class BagService {
         InputActionScope.checkpoint();
     }
 
+    /**
+     * G132（用户拍板 2026-09-01）：任务页就是包裹的最后一页——已标定任务页时，扫描以它为界，
+     * 之后的页位根本没有页签，不再盲点（此前固定点满 5 页，2026-09-01 00:27 实测每轮都点到
+     * 界外的 page 5 (522,650)）。未标定时保持原有 5 页行为，不引入新盲区。
+     * 标定来源=calibrateMainBagTaskTab（task_tab_fallback_a/b 模板，启动时队长校准一次）。
+     */
+    private int lastSearchablePageBound() {
+        Integer taskTab = calibratedMainBagTaskTabIndex.get();
+        return taskTab != null
+                && taskTab >= FIRST_SEARCHABLE_PAGE_INDEX
+                && taskTab <= LAST_SEARCHABLE_PAGE_INDEX
+                ? taskTab : LAST_SEARCHABLE_PAGE_INDEX;
+    }
+
     private int[] pageScanOrder(Integer preferredPageIndex, Integer skipPageIndex) {
+        int pageBound = lastSearchablePageBound();
         List<Integer> order = new ArrayList<>();
-        if (isSearchablePage(preferredPageIndex) && !preferredPageIndex.equals(skipPageIndex)) {
+        if (isSearchablePage(preferredPageIndex) && preferredPageIndex <= pageBound
+                && !preferredPageIndex.equals(skipPageIndex)) {
             order.add(preferredPageIndex);
         }
-        for (int i = FIRST_SEARCHABLE_PAGE_INDEX; i <= LAST_SEARCHABLE_PAGE_INDEX; i++) {
+        for (int i = FIRST_SEARCHABLE_PAGE_INDEX; i <= pageBound; i++) {
             if (Integer.valueOf(i).equals(skipPageIndex) || order.contains(i)) {
                 continue;
             }

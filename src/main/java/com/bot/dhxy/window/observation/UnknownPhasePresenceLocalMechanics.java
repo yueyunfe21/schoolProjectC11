@@ -1,5 +1,6 @@
 package com.bot.dhxy.window.observation;
 
+import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.tools.CoordinateHelper;
 
@@ -133,6 +134,7 @@ final class UnknownPhasePresenceLocalMechanics {
         java.awt.Graphics2D graphics = null;
         for (int pass = 0; pass < WANCHENG_MASK_MAX_PASSES; pass++) {
             double[] hit = ImageFinder.find(work, voidTemplate, TITLE_THRESHOLD);
+            MatchEvidenceStore.saveOnChange("wancheng-void-mask", null, work, voidTemplate, hit);
             if (hit == null || hit.length < 2) {
                 break;
             }
@@ -156,7 +158,10 @@ final class UnknownPhasePresenceLocalMechanics {
     private static String presence(BufferedImage frame, BufferedImage template) {
         if (frame == null || template == null) return "unknown";
         double score = ImageFinder.bestMatchScore(frame, template);
-        return Double.isFinite(score) && score >= TITLE_THRESHOLD ? "present" : "absent";
+        boolean present = Double.isFinite(score) && score >= TITLE_THRESHOLD;
+        MatchEvidenceStore.saveOnChange("unknown-phase-title", null, frame, template,
+                present ? new double[]{0, 0, score} : null);
+        return present ? "present" : "absent";
     }
 
     private static byte[] encodePng(BufferedImage image) {

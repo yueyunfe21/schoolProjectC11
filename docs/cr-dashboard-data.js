@@ -1,5 +1,49 @@
 window.CR_DASHBOARD_DATA = [
   {
+    "id": "G143",
+    "number": 143,
+    "owner": "Codex",
+    "status": "**源码已修 / G143合同4/4 + owner家族26/26 / 待 Review / 待 fresh**",
+    "kind": "review",
+    "domain": "窗口/Runner",
+    "files": "Client `WindowTaskControlService.java`、`WindowRuntimeContext.java`、`G143ColdStartOwnerRebindContractTest.java`",
+    "summary": "**新任务重扫窗口后仍沿用旧角色缓存。** 启动时已正确扫描到 3473/3511 换窗，但失败恢复仍按换窗前 owner 每 3 秒拒绝；现从 exact HWND 活标题抓取本轮 owner 并固化进不可变恢复计划，ACK 前临时切号会暂停而不会改认主人。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G142",
+    "number": 142,
+    "owner": "Codex",
+    "status": "**源码已修 / G142合同2/2 + 身份上下文5/5 / 待 Review / 待 fresh**",
+    "kind": "review",
+    "domain": "五环",
+    "files": "Client `WindowTaskControlService.java`、`WindowRuntimeContext.java`、`G142RecoverableRestartOwnerContractTest.java`",
+    "summary": "**五环失败后自动重启误用上一轮角色，导致 3473 永久卡死。** 可恢复失败时当前 run 仍保存 owner=3473，旧代码却只读上一轮 lastOwner=3519，每 3 秒永久拒绝重启；改为当前 run owner 优先、last owner 仅在当前 owner 已清空时兜底，临时切走/切回的防串号语义保持。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G141",
+    "number": 141,
+    "owner": "待认领",
+    "status": "**源码已存在 / 合同已存在但未独立执行 / 待 Review / 待 fresh**",
+    "kind": "review",
+    "domain": "五环",
+    "files": "Cloud `FiveRingTaskV3.java`、`G141ShoeShopGoodsPanelGateContractTest.java`",
+    "summary": "**五环买鞋：商品面板延迟打开导致误判无鞋。** 点“我想买点东西”后旧流程固定等约 `600ms` 就用单帧定案；两个失败窗的取证帧仍是店内货架、面板尚未出现。改为有上界多帧等待，区分“面板没开”和“面板已开但无鞋”，不得因拍早一帧立即关窗重开 NPC。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G137",
+    "number": 137,
+    "owner": "Claude",
+    "status": "SOURCE FIXED / 新合同 11/11、合计 27/27 连跑两次 / 变异 6/7 杀（1 条等价） / 全树隔离编译 0 错 / 共享 target 未写 / FRESH REQUIRED",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Cloud `CatchGhostTask` 到达门 + `CatchGhostRoundContext` 目的图名、`cloudbrain/TaskTrackerPanelService` 绿链图名解析、`service/TaskTrackerPanelService` + `TaskTrackerPanelReadResult` 字段直通",
+    "summary": "暗雷绿链腿是 `UNTARGETED_TRACKER/targetMap=null`，云端把任何一次坐标停稳无条件当终局，跨图加载的一秒静止被判成“走完了”，于是在长安/地府等半路图上跑暗雷、次数卡 `[1/7]`；改为「当前图名 == 绿链写的目的图名」才执行暗雷，不一致最多重点绿链 3 次再回钟馗重接，目的图名读不到则 fail-open。",
+    "verification": "需复核"
+  },
+  {
     "id": "G135",
     "number": 135,
     "owner": "Claude",
@@ -41,6 +85,17 @@ window.CR_DASHBOARD_DATA = [
     "domain": "修罗",
     "files": "Cloud 新 `StartupQuestPanelResyncGate`（唯一实现）+ 七任务接线（修罗改薄委托）",
     "summary": "**热启动绿链防过期门通用化（用户拍板:所有任务全接）**:门 08-21 只落地修罗,天庭 fresh 未触发暴露\"首发未铺开\"。语义原样(无绿链不走/失败 fail-open/停止上抛)+新增每 run 一次闩;五环不读面板故入口无条件重同步一次。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G134",
+    "number": 134,
+    "owner": "Claude",
+    "status": "**SOURCE FIXED / 行为合同 2/2 / 变异杀 / G127 回归绿 / FRESH REQUIRED**",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Cloud `TaskTrackerPanelService.dumpMatchMiss`（一次性 20 张限额 → 最近 20 张滚动池）",
+    "summary": "**判定取证改滚动池（用户:为什么每次 debug 都没图）**:旧语义存满永久沉默,锚点/暗雷位点月初满额后一整月事故全无图。改槽位取模+先删后写,磁盘占用不变,永远保留最近 N 张;全部 dumpMatchMiss 位点一次受益。数字型判定不落盘的缺口随 G133 修;翻转才存图是用户自定的性能策略不动。",
     "verification": "需复核"
   },
   {

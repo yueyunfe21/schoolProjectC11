@@ -64,6 +64,8 @@ public class LocalTeamRolePreflightService {
     private static final String MINIMAP_MAGNIFIER_TEMPLATE = "images/template/map/minimap_visible_anchor.png";
     private static final String DISMISS_TEAM_TEMPLATE = "images/template/team/jiesan.png";
     private static final String TRANSFER_LEADER_TEMPLATE = "images/template/team/transfer_leader_button.png";
+    /** 成员面板"暂时离队"按钮（TeamTaskProperties 官方注册的 teamPanelMemberMarkerTemplate 同源）。 */
+    private static final String MEMBER_MARKER_TEMPLATE = "images/template/team/member_marker.png";
     private static final int TEAM_ANCHOR_X = 644;
     private static final int TEAM_ANCHOR_Y = 91;
     private static final int TEAM_ANCHOR_SIZE = 10;
@@ -437,7 +439,7 @@ public class LocalTeamRolePreflightService {
             log.warn("local team-role panel probe unavailable: windowId={} reason=binding-unavailable", context.getWindowId());
             return Role.MEMBER;
         }
-        Role[] resolved = new Role[]{Role.MEMBER};
+        Role[] resolved = new Role[]{Role.SOLO};
         boolean[] panelStateResolved = new boolean[1];
         boolean completed = inputSequences.submitFrozenExactWindowExclusiveAndWait(
                 "team-role:local-panel:" + context.getWindowId(), context, binding, () -> {
@@ -445,23 +447,40 @@ public class LocalTeamRolePreflightService {
                         return false;
                     }
                     inputProvider.pressAltT();
-                    Boolean minimapVisible = waitForPanelState(binding, cancelled);
-                    BufferedImage panel = null;
-                    try {
-                        if (minimapVisible == null) {
-                            // A capture failure/time-out is not proof that the magnifier disappeared and must
-                            // block task startup rather than silently assigning this window as a member.
-                            panelStateResolved[0] = false;
-                        } else {
-                            panelStateResolved[0] = true;
-                            if (minimapVisible) {
-                                panel = capture(binding, TEAM_PANEL_ROI);
+                    /*
+                     * 用户裁决（2026-09-01，单窗天庭误判 SOLO 案）：删除"Alt+T 后放大镜可见=有队"
+                     * 的间接判据——放大镜的语义是小地图可见，与队伍毫无关系，任何遮挡（活动图标、
+                     * 残留窗口、战斗）都会把队长误判成无队。改为与五窗锚组路径同源的直接语义证据：
+                     * Alt+T 后轮询队伍面板，解散/转让队长按钮=队长，成员标志（暂时离队）=成员，
+                     * 到超时什么队伍按钮都没有=无队伍（此时弹出的是组队平台）。每一拍判定帧照
+                     * waitForLeaderMatch 同款落盘，误判可归因。
+                     */
+                    long deadlineNanos = System.nanoTime()
+                            + java.time.Duration.ofMillis(PANEL_PROBE_TIMEOUT_MS).toNanos();
+                    while (!cancelled.getAsBoolean() && System.nanoTime() < deadlineNanos) {
+                        BufferedImage panel = capture(binding, TEAM_PANEL_ROI);
+                        try {
+                            if (panel != null) {
+                                panelStateResolved[0] = true;
+                                double[] dismissMatch = find(panel, DISMISS_TEAM_TEMPLATE);
+                                double[] transferMatch = find(panel, TRANSFER_LEADER_TEMPLATE);
+                                double[] memberMatch = find(panel, MEMBER_MARKER_TEMPLATE);
+                                persistPanelProbeEvidence(context, panel, dismissMatch, transferMatch);
+                                Role verdict = classifyPanel(
+                                        dismissMatch != null || transferMatch != null,
+                                        memberMatch != null);
+                                if (verdict != Role.SOLO) {
+                                    resolved[0] = verdict;
+                                    break;
+                                }
                             }
-                            resolved[0] = classifyPanel(minimapVisible, isLeaderPanel(panel));
+                        } finally {
+                            if (panel != null) {
+                                panel.flush();
+                            }
                         }
-                    } finally {
-                        if (panel != null) {
-                            panel.flush();
+                        if (!sleep(PANEL_PROBE_INTERVAL_MS, cancelled)) {
+                            break;
                         }
                     }
                     if (resolved[0] == Role.SOLO) {
@@ -481,29 +500,6 @@ public class LocalTeamRolePreflightService {
         return resolved[0];
     }
 
-    /**
-     * Waits up to three seconds for a readable minimap state after Alt+T. A visible magnifier means grouped;
-     * an absent magnifier means solo. The first readable frame ends the wait immediately.
-     */
-    private Boolean waitForPanelState(WindowNativeBinding binding, BooleanSupplier cancelled) {
-        long deadlineNanos = System.nanoTime() + java.time.Duration.ofMillis(PANEL_PROBE_TIMEOUT_MS).toNanos();
-        while (!cancelled.getAsBoolean() && System.nanoTime() < deadlineNanos) {
-            BufferedImage magnifier = capture(binding, MINIMAP_MAGNIFIER_ROI);
-            try {
-                if (magnifier != null) {
-                    return matches(magnifier, MINIMAP_MAGNIFIER_TEMPLATE);
-                }
-            } finally {
-                if (magnifier != null) {
-                    magnifier.flush();
-                }
-            }
-            if (!sleep(PANEL_PROBE_INTERVAL_MS, cancelled)) {
-                return null;
-            }
-        }
-        return null;
-    }
 
     private void closePanelWithAltTThenRecover(WindowNativeBinding binding, BooleanSupplier cancelled) {
         if (cancelled.getAsBoolean()) {
@@ -534,10 +530,6 @@ public class LocalTeamRolePreflightService {
                 binding.getNativeHandle());
     }
 
-    private boolean isLeaderPanel(BufferedImage panel) {
-        return panel != null && (matches(panel, DISMISS_TEAM_TEMPLATE) || matches(panel, TRANSFER_LEADER_TEMPLATE));
-    }
-
     private boolean minimapIsVisible(WindowNativeBinding binding) {
         BufferedImage magnifier = capture(binding, MINIMAP_MAGNIFIER_ROI);
         try {
@@ -549,11 +541,15 @@ public class LocalTeamRolePreflightService {
         }
     }
 
-    static Role classifyPanel(boolean minimapVisibleAfterAltT, boolean leaderButtonVisible) {
-        if (!minimapVisibleAfterAltT) {
-            return Role.SOLO;
+    /**
+     * 纯语义判定（用户裁决 2026-09-01）：队长按钮（解散/转让）在=LEADER；成员标志在=MEMBER；
+     * 两者都不在=本帧无队伍证据（调用方轮询到超时才定 SOLO）。队长证据优先于成员证据。
+     */
+    static Role classifyPanel(boolean leaderButtonVisible, boolean memberMarkerVisible) {
+        if (leaderButtonVisible) {
+            return Role.LEADER;
         }
-        return leaderButtonVisible ? Role.LEADER : Role.MEMBER;
+        return memberMarkerVisible ? Role.MEMBER : Role.SOLO;
     }
 
     private boolean matches(BufferedImage source, String templatePath) {
