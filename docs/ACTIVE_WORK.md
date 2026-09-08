@@ -96155,3 +96155,14 @@ Cloud helper。`SummonSkillTailBoundaryScanner` 则不是局部 OCR/上云桥接
   范围，只保留团灭后死亡位置报告晚到与 20 秒事件等待。
 - **统一实施裁决同步：** G118/G119/G120 均改为用户已批准；G119/G120 取消 deferred，三卡必须完成代码、
   隔离合同与 Review 后才进入统一 fresh。
+## 2026-09-02 G144 图像判断全链路取证缺口审计（Codex，只读代码审计）
+
+- 目标工作树：Client/Governance `D:\mavenProject\DHXY-cr271`，Cloud 只读 `D:\mavenProject\dhxy-cloud-brain`；保护基线 `D:\mavenProject\DHXY` 未修改。
+- 用户要求：所有参与匹配、状态判断、任务分流或点击决定的图片都必须保留并能证明对应的窗口、任务、日志和最终动作。
+- 审计结果：Client 46 个 `ImageFinder` 调用/48 个截图调用；现有总截图池排除 MEMBER、每窗五分钟抽样、队列满可丢并仅保留两天；30 个显式 match evidence 调用中 23 个传 `windowId=null`。另确认 15 类具体缺口，详见 `docs/G144_IMAGE_DECISION_EVIDENCE_AUDIT.md`。
+- 建议：用内容寻址图片仓去重，每次判断追加 manifest/WAL；高风险动作证据不得静默丢；raw/processed/template/verdict/final-click 与 Client/Cloud correlation 必须闭环。
+- 本轮只新增治理审计文档并同步卡片/看板；未改生产代码、未编译、未重启、未触发 UI/input。
+# 2026-09-07 G155（名字层按需准备）15:30 天庭李靖卡死取证
+
+- 工作树 `D:\mavenProject\DHXY-cr271`，分支 dev；本地 origin/dev 为“Checkpoint current client work through G143”。治理文件已有其它改动，本轮仅追加取证；Cloud `D:\mavenProject\dhxy-cloud-brain` 只读。
+- 结论与原图已写回 G155：空 Ctrl 候选被判安全拒绝，吞掉黄名续帧；15:30 记忆查询返回空，但同轮早先曾命中。未修改生产、未编译、未运行测试、未发送游戏输入。

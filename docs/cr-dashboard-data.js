@@ -1,5 +1,16 @@
 window.CR_DASHBOARD_DATA = [
   {
+    "id": "G144",
+    "number": 144,
+    "owner": "Codex",
+    "status": "**审计完成 / NO PRODUCTION CODE / 待批准修复**",
+    "kind": "open",
+    "domain": "Dialog",
+    "files": "Client 全部图像判断/截图/证据路径；Cloud 远程图片判定边界；`G144_IMAGE_DECISION_EVIDENCE_AUDIT.md`",
+    "summary": "**图像判断全链路取证缺口审计。** 总截图池排除成员、五分钟抽样且可丢；翻转证据会跨窗覆盖，自动战斗面板、坐标判稳、Dialog 框体等多条关键判断没有 exact 图片。建议以图片 hash 去重并为每次判断追加不可静默丢的关联 manifest。",
+    "verification": "需复核"
+  },
+  {
     "id": "G143",
     "number": 143,
     "owner": "Codex",

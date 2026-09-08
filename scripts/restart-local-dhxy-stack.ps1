@@ -289,6 +289,33 @@ $clientJvmOptions = "-Xms2g -XX:G1HeapRegionSize=16m"
 $clientArguments = @("-Xms2g", "-XX:G1HeapRegionSize=16m", "-cp", $clientClasspath, "com.bot.dhxy.AutoBot")
 $clientArgumentLine = "$clientJvmOptions -cp $(Quote-ProcessArgument $clientClasspath) com.bot.dhxy.AutoBot"
 
+# G151：WGC 采集 sidecar——PrintWindow 是全系统唯一会向游戏窗口投递重绘请求的采集路径，
+# WGC 从 DWM 合成缓冲取帧、目标进程零参与。幂等：端口 PING 通即复用；失败不阻断启动
+# （客户端按次回退 LEGACY 链并节流告警，眼睛永远不瞎）。
+$wgcSidecarPort = 47831
+$wgcSidecarScript = Join-Path $PSScriptRoot "wgc_capture_sidecar.py"
+$wgcSidecarLog = Join-Path $projectRoot "logs\wgc-sidecar.log"
+$wgcSidecarAlive = $false
+try {
+    $wgcProbe = New-Object System.Net.Sockets.TcpClient
+    $wgcSidecarAlive = $wgcProbe.ConnectAsync("127.0.0.1", $wgcSidecarPort).Wait(500) -and $wgcProbe.Connected
+    $wgcProbe.Dispose()
+} catch { $wgcSidecarAlive = $false }
+if ($wgcSidecarAlive) {
+    Write-Stage "WGC sidecar 已在线（端口 $wgcSidecarPort），复用现有进程。"
+} else {
+    $wgcPython = Get-Command python -ErrorAction SilentlyContinue
+    if ($null -eq $wgcPython) {
+        Write-Stage "警告：未找到 python，WGC sidecar 未启动——采集将全程回退 LEGACY(PrintWindow) 链。"
+    } else {
+        # PS7 的 Start-Process 直接挂重定向会等长驻子进程（见上方 Cloud 启动注释同款坑），走 cmd /c。
+        $wgcCommand = "`"$($wgcPython.Source)`" `"$wgcSidecarScript`" > `"$wgcSidecarLog`" 2>&1"
+        Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $wgcCommand `
+            -WorkingDirectory $projectRoot -WindowStyle Hidden | Out-Null
+        Write-Stage "已拉起 WGC sidecar：端口 $wgcSidecarPort 日志：$wgcSidecarLog"
+    }
+}
+
 Write-Stage "启动 DHXY JavaFX 客户端。"
 $clientLauncher = if (Test-Path -LiteralPath $javawExe -PathType Leaf) { $javawExe } else { $javaExe }
 $clientProcess = Start-Process -FilePath $clientLauncher -ArgumentList $clientArgumentLine `

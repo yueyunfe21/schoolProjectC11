@@ -2,7 +2,6 @@ package com.bot.dhxy.cloud.turn.local;
 
 import com.bot.dhxy.config.WindowIsolationProperties;
 import com.bot.dhxy.core.GameContext;
-import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.GlobalInputLock;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
@@ -82,8 +81,7 @@ final class FrozenExactInputHarness implements AutoCloseable {
                 new InputActionDeadLetter(),
                 inputProvider,
                 coordinator,
-                contextHolder,
-                new BoundWindowKeyboardService(null, null, null, null));
+                contextHolder);
         worker.start();
     }
 

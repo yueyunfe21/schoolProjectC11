@@ -99,13 +99,20 @@ public final class TaskTrackerPanelCaptureLocalMechanics {
                             "task-tracker-capture:drag-anchor");
                     int fromX = Math.addExact(binding.getX(), anchor.x);
                     int fromY = Math.addExact(binding.getY(), anchor.y);
-                    int targetX = Math.addExact(binding.getX(), DRAG_TARGET_X);
-                    int targetY = Math.addExact(binding.getY(), DRAG_TARGET_Y);
+                    /*
+                     * G158（2026-09-05 用户拍板）：拖回落点去同一化——固定 (119,221) 五窗一像素不差。
+                     * 每次拖拽掷截断高斯，截断 ±80/±60 收在默认 ROI 盒(±100/±75)内侧留 20/15 余量，
+                     * 保证拖完必在盒内，不会下轮又触发重拖。
+                     */
+                    int dropX = DRAG_TARGET_X + truncatedGaussianOffset(35.0D, -80, 80);
+                    int dropY = DRAG_TARGET_Y + truncatedGaussianOffset(25.0D, -60, 60);
+                    int targetX = Math.addExact(binding.getX(), dropX);
+                    int targetY = Math.addExact(binding.getY(), dropY);
                     inputProvider.dragAndDrop(fromX, fromY, targetX, targetY);
                     if (!sleepAfterDrag()) {
                         return CaptureResultDto.nonCaptured(State.MECHANICS_FAILED);
                     }
-                    anchor = new Point(DRAG_TARGET_X, DRAG_TARGET_Y);
+                    anchor = new Point(dropX, dropY);
                 }
                 rememberAnchor(context, anchor);
 
@@ -251,6 +258,12 @@ public final class TaskTrackerPanelCaptureLocalMechanics {
 
     private static void rememberAnchor(WindowRuntimeContext context, Point anchor) {
         context.setTaskTrackerAnchorMemory(new WindowTrackerAnchorMemory(anchor.x, anchor.y));
+    }
+
+    /** G158：截断高斯偏移（与 WindowObservationSampler 同式；本类自持避免跨包耦合）。 */
+    private static int truncatedGaussianOffset(double sigma, int min, int max) {
+        double value = java.util.concurrent.ThreadLocalRandom.current().nextGaussian() * sigma;
+        return (int) Math.round(Math.max(min, Math.min(max, value)));
     }
 
     private static boolean isInsideDefaultRoi(Point anchor) {

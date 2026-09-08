@@ -18,7 +18,6 @@ import com.bot.dhxy.cloud.turn.protocol.TurnWindowRect;
 import com.bot.dhxy.config.WindowIsolationProperties;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.driver.BoundWindowCaptureService;
-import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.GlobalInputLock;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
@@ -805,6 +804,7 @@ final class TurnContractFixtures {
         capture.regionPixels = new int[] {beforePixel, afterPixel};
         ProbeKeyboardService keyboard = new ProbeKeyboardService(binding, contextHolder, events);
         ProbeInput input = new ProbeInput(events);
+        input.keyboard = keyboard;
         ProbeWaits waits = new ProbeWaits(events);
         ProbeInputActionQueue probeQueue = new ProbeInputActionQueue(
                 contextHolder, refresh, taskContextHolder);
@@ -822,14 +822,12 @@ final class TurnContractFixtures {
                 new InputActionDeadLetter(),
                 input.provider,
                 coordinator,
-                contextHolder,
-                null).start();
+                contextHolder).start();
         TurnCaptureStepExecutor captureExecutor = new TurnCaptureStepExecutor(
                 capture,
                 new TurnPngCodec(),
                 new InputSequences(probeQueue),
                 contextHolder,
-                keyboard,
                 input.provider,
                 () -> null,
                 waits);
@@ -1204,7 +1202,7 @@ final class TurnContractFixtures {
                     image.setRGB(x, y, pixel);
                 }
             }
-            return new CaptureResult(image, CaptureProvider.HWND_PRINTWINDOW);
+            return new CaptureResult(image, CaptureProvider.HWND_BITBLT);
         }
     }
 
@@ -1354,7 +1352,12 @@ final class TurnContractFixtures {
         }
     }
 
-    static final class ProbeKeyboardService extends BoundWindowKeyboardService {
+    /**
+     * G146: the pixel-change probe's Ctrl transitions now ride the HID provider (holdCtrl/releaseCtrl).
+     * The probe keeps the same worker-context witness the PostMessage stub used to assert: the keystroke
+     * must run under the exact frozen window context of the request.
+     */
+    static final class ProbeKeyboardService {
         private final WindowNativeBinding expectedBinding;
         private final WindowTaskContextHolder contextHolder;
         private final List<String> events;
@@ -1364,32 +1367,22 @@ final class TurnContractFixtures {
         ProbeKeyboardService(WindowNativeBinding expectedBinding,
                              WindowTaskContextHolder contextHolder,
                              List<String> events) {
-            super(null, null, null, null);
             this.expectedBinding = expectedBinding;
             this.contextHolder = contextHolder;
             this.events = events;
         }
 
-        @Override
-        public KeyTransitionAttempt transitionModifier(
-                WindowNativeBinding binding,
-                String windowId,
-                ModifierKey key,
-                KeyTransition transition) {
+        void transition(boolean down) {
             WindowRuntimeContext workerContext = contextHolder.rawCurrent().orElseThrow(
                     () -> new AssertionError("probe mechanics ran without the exact worker window context"));
             assertEquals(WINDOW_ID, workerContext.getWindowId());
             assertSame(expectedBinding, workerContext.getNativeBinding());
-            assertSame(expectedBinding, binding);
-            assertEquals(WINDOW_ID, windowId);
-            assertEquals(ModifierKey.CONTROL, key);
-            events.add("key:" + transition.name());
-            if (transition == KeyTransition.DOWN) {
+            events.add("key:" + (down ? "DOWN" : "UP"));
+            if (down) {
                 downCalls++;
             } else {
                 upCalls++;
             }
-            return new KeyTransitionAttempt(true, true, "OK");
         }
     }
 
@@ -1397,6 +1390,7 @@ final class TurnContractFixtures {
         private final List<String> events;
         final InputProvider provider;
         RuntimeException moveFailure;
+        ProbeKeyboardService keyboard;
 
         ProbeInput(List<String> events) {
             this.events = events;
@@ -1417,6 +1411,14 @@ final class TurnContractFixtures {
                             if (moveFailure != null) {
                                 throw moveFailure;
                             }
+                            return null;
+                        }
+                        if ("holdCtrl".equals(method.getName())) {
+                            keyboard.transition(true);
+                            return null;
+                        }
+                        if ("releaseCtrl".equals(method.getName())) {
+                            keyboard.transition(false);
                             return null;
                         }
                         throw new AssertionError("unexpected InputProvider call: " + method.getName());
@@ -1442,17 +1444,6 @@ final class TurnContractFixtures {
                 return false;
             }
             return true;
-        }
-    }
-
-    private static final class RecordingKeyboardService extends BoundWindowKeyboardService {
-        private RecordingKeyboardService() {
-            super(null, null, null, null);
-        }
-
-        @Override
-        public ShortcutAttempt pressShortcut(AltShortcut shortcut) {
-            return new ShortcutAttempt(true, true, null, false);
         }
     }
 

@@ -8,8 +8,6 @@ import com.bot.dhxy.cloud.turn.protocol.TurnXinshouDragArguments;
 import com.bot.dhxy.config.WindowIsolationProperties;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
-import com.bot.dhxy.driver.BoundWindowKeyboardService;
-import com.bot.dhxy.driver.WinApiMouseController;
 import com.bot.dhxy.input.GlobalInputLock;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.WindowAwareInputCoordinator;
@@ -289,8 +287,7 @@ class XinshouDragRetainedSessionProductionContractTest {
                     new InputActionDeadLetter(),
                     inputProvider,
                     coordinator,
-                    contextHolder,
-                    new BoundWindowKeyboardService(null, null, null, null));
+                    contextHolder);
             worker.start();
             executor = new XinshouDragLocalOperationExecutor(
                     mouse,
@@ -402,17 +399,49 @@ class XinshouDragRetainedSessionProductionContractTest {
         }
     }
 
-    private static final class RecordingMouseController extends WinApiMouseController {
+    /** G146: WinApiMouseController is deleted; every unexpected physical call now fails the test. */
+    private abstract static class InputProviderStub implements com.bot.dhxy.input.InputProvider {
+        @Override public void clickLeft(int x, int y, int delayMs) { throw unexpected("clickLeft"); }
+        @Override public void clickRight(int x, int y, int delayMs) { throw unexpected("clickRight"); }
+        @Override public void doubleRightClick(int x, int y, int clickDelayMs, int intervalMs) { throw unexpected("doubleRightClick"); }
+        @Override public void moveMouse(int x, int y) { throw unexpected("moveMouse"); }
+        @Override public void holdCtrl() { throw unexpected("holdCtrl"); }
+        @Override public void releaseCtrl() { throw unexpected("releaseCtrl"); }
+        @Override public void pressCtrlU() { throw unexpected("pressCtrlU"); }
+        @Override public void pressCtrlA() { throw unexpected("pressCtrlA"); }
+        @Override public void pressCtrlSpace() { throw unexpected("pressCtrlSpace"); }
+        @Override public void pressAlt1() { throw unexpected("pressAlt1"); }
+        @Override public void pressAlt2() { throw unexpected("pressAlt2"); }
+        @Override public void pressAlt4() { throw unexpected("pressAlt4"); }
+        @Override public void pressAlt6() { throw unexpected("pressAlt6"); }
+        @Override public void pressAlt8() { throw unexpected("pressAlt8"); }
+        @Override public void pressAltT() { throw unexpected("pressAltT"); }
+        @Override public void pressAltU() { throw unexpected("pressAltU"); }
+        @Override public void pressAltO() { throw unexpected("pressAltO"); }
+        @Override public void pressAltE() { throw unexpected("pressAltE"); }
+        @Override public void pressAltQ() { throw unexpected("pressAltQ"); }
+        @Override public void pressAltA() { throw unexpected("pressAltA"); }
+        @Override public void pressAltC() { throw unexpected("pressAltC"); }
+        @Override public void pressEnter() { throw unexpected("pressEnter"); }
+        @Override public void pasteText(String text) { throw unexpected("pasteText"); }
+        @Override public void typeTextUnicode(String text) { throw unexpected("typeTextUnicode"); }
+        @Override public void typeTextAscii(String text) { throw unexpected("typeTextAscii"); }
+        @Override public void scrollDown(int clicks) { throw unexpected("scrollDown"); }
+        @Override public void scrollUp(int clicks) { throw unexpected("scrollUp"); }
+        @Override public void dragAndDrop(int startX, int startY, int endX, int endY) { throw unexpected("dragAndDrop"); }
+
+        private static AssertionError unexpected(String method) {
+            return new AssertionError("unexpected physical input call: " + method);
+        }
+    }
+
+    private static final class RecordingMouseController extends InputProviderStub {
         private final List<String> events = new CopyOnWriteArrayList<>();
         private final List<String> callbackThreads = new CopyOnWriteArrayList<>();
         private final AtomicBoolean leftHeld = new AtomicBoolean();
         private final AtomicBoolean failNextContinuation = new AtomicBoolean();
         private final AtomicReference<ReleaseGate> releaseGate = new AtomicReference<>();
         private final CountDownLatch leftUp = new CountDownLatch(1);
-
-        private RecordingMouseController() {
-            super(null, null, null);
-        }
 
         @Override
         public void holdSweepWithoutRelease(

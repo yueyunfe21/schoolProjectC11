@@ -76,6 +76,13 @@ public class LocalTeamRolePreflightService {
     private static final int CALIBRATED_WINDOW_WIDTH = 1036;
     private static final int CALIBRATED_WINDOW_HEIGHT = 783;
 
+    /** G148-M2：绑定尺寸是否正好在模板标定基线上（自动重启熔断用；手动启动保持只诊断不拦截）。 */
+    public static boolean isAtCalibratedSize(com.bot.dhxy.window.model.WindowNativeBinding binding) {
+        return binding != null && binding.hasGeometry()
+                && binding.getWidth() == CALIBRATED_WINDOW_WIDTH
+                && binding.getHeight() == CALIBRATED_WINDOW_HEIGHT;
+    }
+
     /** UI 侧据此把尺寸漂移从普通失败里认出来并弹告警；改文案时必须同步 MainWindowController。 */
     public static final String WINDOW_SIZE_DRIFT_MARKER = "游戏窗口尺寸已偏离模板标定基线";
 
@@ -296,7 +303,7 @@ public class LocalTeamRolePreflightService {
             try {
                 double[] dismissMatch = find(panel, DISMISS_TEAM_TEMPLATE);
                 double[] transferMatch = find(panel, TRANSFER_LEADER_TEMPLATE);
-                persistPanelProbeEvidence(target.context(), panel, dismissMatch, transferMatch);
+                persistPanelProbeEvidence(target.context(), panel, dismissMatch, transferMatch, null);
                 if ((dismissMatch != null || transferMatch != null)
                         && leaderWindowId.compareAndSet(null, target.context().getWindowId())) {
                     return;
@@ -465,7 +472,7 @@ public class LocalTeamRolePreflightService {
                                 double[] dismissMatch = find(panel, DISMISS_TEAM_TEMPLATE);
                                 double[] transferMatch = find(panel, TRANSFER_LEADER_TEMPLATE);
                                 double[] memberMatch = find(panel, MEMBER_MARKER_TEMPLATE);
-                                persistPanelProbeEvidence(context, panel, dismissMatch, transferMatch);
+                                persistPanelProbeEvidence(context, panel, dismissMatch, transferMatch, memberMatch);
                                 Role verdict = classifyPanel(
                                         dismissMatch != null || transferMatch != null,
                                         memberMatch != null);
@@ -583,7 +590,8 @@ public class LocalTeamRolePreflightService {
             WindowRuntimeContext context,
             BufferedImage panel,
             double[] dismissMatch,
-            double[] transferMatch) {
+            double[] transferMatch,
+            double[] memberMatch) {
         if (panel == null || context == null) {
             return;
         }
@@ -597,6 +605,8 @@ public class LocalTeamRolePreflightService {
             graphics.drawImage(panel, 0, 0, null);
             markTeamTemplate(graphics, dismissMatch, Color.RED, "dismiss");
             markTeamTemplate(graphics, transferMatch, Color.YELLOW, "transfer");
+            // G143：MEMBER/SOLO 的真正判据是成员标记模板，此前标记图只画 dismiss/transfer 两圈。
+            markTeamTemplate(graphics, memberMatch, Color.GREEN, "member");
             Files.createDirectories(directory);
             ImageIO.write(panel, "png", raw.toFile());
             ImageIO.write(evidence, "png", marked.toFile());

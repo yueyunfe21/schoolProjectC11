@@ -5,7 +5,6 @@ import com.bot.dhxy.cloud.turn.protocol.TurnInputCoordinateSpace;
 import com.bot.dhxy.cloud.turn.protocol.TurnInputSpec;
 import com.bot.dhxy.cloud.turn.protocol.TurnStep;
 import com.bot.dhxy.cloud.turn.protocol.TurnStepType;
-import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.input.action.InputActionExecutionResult;
 import com.bot.dhxy.input.action.InputActionQueue;
@@ -108,7 +107,7 @@ public final class TurnInputStepExecutor {
     /** Deliver one validated key tap through the frozen exact-window input queue. */
     private Result deliverKeyTap(TurnExecutionWindow window, TurnInputSpec input) {
         String key = input.key();
-        BoundWindowKeyboardService.AltShortcut alt = keyMapper.findBackgroundTap(key).orElse(null);
+        TurnKeyboardKeys.AltShortcut alt = keyMapper.findBackgroundTap(key).orElse(null);
         if (alt != null) {
             InputAction serializedAlt = toSerializedAltAction(alt);
             return submitKeyboardActions(
@@ -116,9 +115,9 @@ public final class TurnInputStepExecutor {
                     "turn:input:keyboard:" + alt.name(),
                     List.of(serializedAlt));
         }
-        BoundWindowKeyboardService.ControlShortcut ctrl = keyMapper.findControlShortcut(key).orElse(null);
+        TurnKeyboardKeys.ControlShortcut ctrl = keyMapper.findControlShortcut(key).orElse(null);
         if (ctrl != null) {
-            InputAction action = ctrl == BoundWindowKeyboardService.ControlShortcut.CTRL_A
+            InputAction action = ctrl == TurnKeyboardKeys.ControlShortcut.CTRL_A
                     ? InputAction.pressCtrlA()
                     : InputAction.pressCtrlU();
             return submitKeyboardActions(
@@ -139,7 +138,7 @@ public final class TurnInputStepExecutor {
     }
 
     /** Maps the baseline worker-supported Alt vocabulary to its existing serialized action. */
-    private InputAction toSerializedAltAction(BoundWindowKeyboardService.AltShortcut shortcut) {
+    private InputAction toSerializedAltAction(TurnKeyboardKeys.AltShortcut shortcut) {
         return switch (shortcut) {
             case ALT_1 -> InputAction.pressAlt1();
             case ALT_2 -> InputAction.pressAlt2();
@@ -160,7 +159,7 @@ public final class TurnInputStepExecutor {
 
     /** Deliver one KEY_DOWN modifier press through the frozen exact-window input queue. */
     private Result deliverModifierDown(TurnExecutionWindow window, TurnInputSpec input) {
-        BoundWindowKeyboardService.ModifierKey modifier = keyMapper.findModifierKey(input.key()).orElse(null);
+        TurnKeyboardKeys.ModifierKey modifier = keyMapper.findModifierKey(input.key()).orElse(null);
         if (modifier == null) {
             return Result.failed(
                     Code.BACKGROUND_KEY_UNSUPPORTED,
@@ -174,7 +173,7 @@ public final class TurnInputStepExecutor {
 
     /** Deliver one KEY_UP modifier release; an aborted request invokes provider release-all cleanup. */
     private Result deliverModifierRelease(TurnExecutionWindow window, TurnInputSpec input) {
-        BoundWindowKeyboardService.ModifierKey modifier = keyMapper.findModifierKey(input.key()).orElse(null);
+        TurnKeyboardKeys.ModifierKey modifier = keyMapper.findModifierKey(input.key()).orElse(null);
         if (modifier == null) {
             return Result.failed(
                     Code.BACKGROUND_KEY_UNSUPPORTED,

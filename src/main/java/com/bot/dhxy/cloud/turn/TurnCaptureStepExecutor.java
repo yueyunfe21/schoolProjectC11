@@ -6,7 +6,6 @@ import com.bot.dhxy.cloud.turn.protocol.TurnRegion;
 import com.bot.dhxy.cloud.turn.protocol.TurnWindowRect;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.driver.BoundWindowCaptureService;
-import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
@@ -41,7 +40,6 @@ public final class TurnCaptureStepExecutor {
     private final TurnPngCodec pngCodec;
     private final InputSequences inputSequences;
     private final WindowTaskContextHolder contextHolder;
-    private final BoundWindowKeyboardService keyboardService;
     private final InputProvider inputProvider;
     private final Supplier<Point> pointerLocationSupplier;
     private final LongPredicate settleWait;
@@ -51,15 +49,14 @@ public final class TurnCaptureStepExecutor {
                                    TurnPngCodec pngCodec,
                                    InputSequences inputSequences,
                                    WindowTaskContextHolder contextHolder,
-                                   BoundWindowKeyboardService keyboardService,
                                    InputProvider inputProvider) {
-        this(captureService, pngCodec, inputSequences, contextHolder, keyboardService, inputProvider,
+        this(captureService, pngCodec, inputSequences, contextHolder, inputProvider,
                 TurnCaptureStepExecutor::currentScreenPointer, TaskSleep::sleep);
     }
 
     /** Retains the existing pure-capture constructor for isolated tests that do not request pointer clearance. */
     public TurnCaptureStepExecutor(BoundWindowCaptureService captureService, TurnPngCodec pngCodec) {
-        this(captureService, pngCodec, null, null, null, null,
+        this(captureService, pngCodec, null, null, null,
                 TurnCaptureStepExecutor::currentScreenPointer, TaskSleep::sleep);
     }
 
@@ -68,7 +65,7 @@ public final class TurnCaptureStepExecutor {
                             InputSequences inputSequences,
                             WindowTaskContextHolder contextHolder,
                             Supplier<Point> pointerLocationSupplier) {
-        this(captureService, pngCodec, inputSequences, contextHolder, null, null,
+        this(captureService, pngCodec, inputSequences, contextHolder, null,
                 pointerLocationSupplier, TaskSleep::sleep);
     }
 
@@ -76,7 +73,6 @@ public final class TurnCaptureStepExecutor {
                             TurnPngCodec pngCodec,
                             InputSequences inputSequences,
                             WindowTaskContextHolder contextHolder,
-                            BoundWindowKeyboardService keyboardService,
                             InputProvider inputProvider,
                             Supplier<Point> pointerLocationSupplier,
                             LongPredicate settleWait) {
@@ -84,7 +80,6 @@ public final class TurnCaptureStepExecutor {
         this.pngCodec = Objects.requireNonNull(pngCodec, "pngCodec");
         this.inputSequences = inputSequences;
         this.contextHolder = contextHolder;
-        this.keyboardService = keyboardService;
         this.inputProvider = inputProvider;
         this.pointerLocationSupplier = Objects.requireNonNull(pointerLocationSupplier, "pointerLocationSupplier");
         this.settleWait = Objects.requireNonNull(settleWait, "settleWait");
@@ -198,7 +193,7 @@ public final class TurnCaptureStepExecutor {
         if (window.metadata().stopRequested() || Thread.currentThread().isInterrupted()) {
             return Execution.stopped("stop requested before pixel-change probe");
         }
-        if (inputSequences == null || keyboardService == null || inputProvider == null) {
+        if (inputSequences == null || inputProvider == null) {
             return Execution.failed(Code.PIXEL_PROBE_FAILED, "pixel-change probe mechanics are unavailable");
         }
 
@@ -232,21 +227,7 @@ public final class TurnCaptureStepExecutor {
                                     }
 
                                     ctrlDownInvoked = true;
-                                    if (inputProvider.requiresForegroundKeyboard()) {
-                                        inputProvider.holdCtrl();
-                                    } else {
-                                        BoundWindowKeyboardService.KeyTransitionAttempt down =
-                                                keyboardService.transitionModifier(
-                                                        window.binding(),
-                                                        window.metadata().windowId(),
-                                                        BoundWindowKeyboardService.ModifierKey.CONTROL,
-                                                        BoundWindowKeyboardService.KeyTransition.DOWN);
-                                        if (!down.attempted() || !down.success()) {
-                                            state.failed = true;
-                                            state.detail = "Ctrl DOWN failed: " + down.reason();
-                                            return true;
-                                        }
-                                    }
+                                    inputProvider.holdCtrl();
                                     if (!probeCheckpoint(state, "after Ctrl DOWN")) {
                                         return true;
                                     }
@@ -299,6 +280,11 @@ public final class TurnCaptureStepExecutor {
                                             before, after, probe.differenceRatioThreshold())
                                             ? Code.PIXELS_UNCHANGED
                                             : Code.PIXELS_CHANGED;
+                                    // G143（用户裁定 2026-09-02 图片判定必留证）：帧差判定驱动
+                                    // "点击生效没有"级决策，before/after 两帧此前全丢。滚动池落盘。
+                                    TurnProbeDiffDump.keep(before, after,
+                                            state.completedCode == Code.PIXELS_UNCHANGED,
+                                            probe.differenceRatioThreshold());
                                     state.afterImage = after;
                                     after = null;
                                     return true;
@@ -311,21 +297,8 @@ public final class TurnCaptureStepExecutor {
                                         boolean released = false;
                                         String releaseDetail = null;
                                         try {
-                                            if (inputProvider.requiresForegroundKeyboard()) {
-                                                inputProvider.releaseCtrl();
-                                                released = true;
-                                            } else {
-                                                BoundWindowKeyboardService.KeyTransitionAttempt up =
-                                                        keyboardService.transitionModifier(
-                                                                window.binding(),
-                                                                window.metadata().windowId(),
-                                                                BoundWindowKeyboardService.ModifierKey.CONTROL,
-                                                                BoundWindowKeyboardService.KeyTransition.UP);
-                                                released = up.attempted() && up.success();
-                                                if (!released) {
-                                                    releaseDetail = up.reason();
-                                                }
-                                            }
+                                            inputProvider.releaseCtrl();
+                                            released = true;
                                         } catch (Throwable releaseFailure) {
                                             state.releaseFailed = true;
                                             releaseDetail = releaseFailure.toString();

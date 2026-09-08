@@ -1,6 +1,7 @@
 package com.bot.dhxy.driver;
 
 import com.bot.dhxy.capture.WindowCaptureEvidenceStore;
+import com.bot.dhxy.config.CaptureBackendProperties;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -39,15 +40,28 @@ import java.util.Optional;
 @Service
 public class BoundWindowCaptureService {
 
-    private static final int PRINT_WINDOW_RENDER_FULL_CONTENT = 0x00000002;
     private static final int SRCCOPY = 0x00CC0020;
     private static final int DIB_RGB_COLORS = 0;
     private static final int BI_RGB = 0;
 
     private final WindowCaptureEvidenceStore captureEvidenceStore;
+    private final CaptureBackendProperties captureBackendProperties;
+    private final WgcSidecarCaptureClient wgcSidecarCaptureClient;
 
-    public BoundWindowCaptureService(WindowCaptureEvidenceStore captureEvidenceStore) {
+    // G151：两个 public 构造器会让 Spring 无法消歧（回退找无参构造器→启动崩，2026-09-05 事故）。
+    // 生产构造器显式 @Autowired 钉死注入点；测试便捷构造器保留但不参与容器候选。
+    @org.springframework.beans.factory.annotation.Autowired
+    public BoundWindowCaptureService(WindowCaptureEvidenceStore captureEvidenceStore,
+                                     CaptureBackendProperties captureBackendProperties,
+                                     WgcSidecarCaptureClient wgcSidecarCaptureClient) {
         this.captureEvidenceStore = captureEvidenceStore;
+        this.captureBackendProperties = captureBackendProperties;
+        this.wgcSidecarCaptureClient = wgcSidecarCaptureClient;
+    }
+
+    /** 隔离测试用：LEGACY 链、零 sidecar 依赖。 */
+    public BoundWindowCaptureService(WindowCaptureEvidenceStore captureEvidenceStore) {
+        this(captureEvidenceStore, new CaptureBackendProperties(), null);
     }
 
     /**
@@ -250,16 +264,28 @@ public class BoundWindowCaptureService {
         }
 
         long hwndValue = Pointer.nativeValue(hwnd.getPointer());
-        Optional<BufferedImage> printWindow = captureWithCompatibleBitmap(hwnd, width, height,
-                (windowDc, memoryDc) -> User32.INSTANCE.PrintWindow(hwnd, memoryDc, PRINT_WINDOW_RENDER_FULL_CONTENT));
-        BlankProbe printWindowBlankProbe = probeBlank(printWindow.orElse(null));
-        log.debug("HWND capture probe: hwnd={} title={} provider=PRINTWINDOW present={} blank={} differentSamples={} firstRgb={} size={}x{}",
-                hwndValue, binding.getTitle(), printWindow.isPresent(), printWindowBlankProbe.blank(),
-                printWindowBlankProbe.differentSamples(), printWindowBlankProbe.firstRgbHex(), width, height);
-        if (printWindow.isPresent() && !printWindowBlankProbe.blank()) {
-            return Optional.of(new CaptureResult(printWindow.get(), CaptureProvider.HWND_PRINTWINDOW));
+        /*
+         * G151（2026-09-04 用户拍板升格）：PrintWindow 是全系统唯一会向游戏窗口投递重绘请求的
+         * 采集路径——游戏窗口过程真实收到消息并执行整窗重绘（2026-07 性能调查实证），属"物理接触"。
+         * WGC sidecar 从 DWM 合成缓冲取帧，目标进程零参与；实测帧契约与本链同构零偏移。
+         * 可用性优先：sidecar 失败按次回退下方 LEGACY 链（节流告警），眼睛永远不瞎。
+         */
+        /*
+         * G151 终态（用户拍板 2026-09-04"兜底我都不想要，截图就是不需要让游戏知道"）：
+         * PrintWindow 已整体删除——它是全系统唯一会让游戏窗口过程收到重绘请求的采集路径
+         * （落盘证据 910 张 HWND_PRINTWINDOW 实证重启前它是主路=一直有感）。现存两路全是无感：
+         * WGC 从 DWM 合成缓冲取帧、BitBlt 读系统重定向表面，均不向窗口投递任何消息。
+         * 两路皆失败=本拍采集失败（快失败，上游自带重试），宁可瞎一帧不让游戏有感。
+         */
+        if (captureBackendProperties.getBackend() == CaptureBackendProperties.Backend.WGC_SIDECAR
+                && wgcSidecarCaptureClient != null) {
+            Optional<BufferedImage> wgc = wgcSidecarCaptureClient.captureWindow(hwndValue, width, height);
+            BlankProbe wgcBlankProbe = probeBlank(wgc.orElse(null));
+            if (wgc.isPresent() && !wgcBlankProbe.blank()) {
+                return Optional.of(new CaptureResult(wgc.get(), CaptureProvider.WGC_SIDECAR));
+            }
+            wgc.ifPresent(BufferedImage::flush);
         }
-
         Optional<BufferedImage> bitBlt = captureWithCompatibleBitmap(hwnd, width, height,
                 (windowDc, memoryDc) -> GDI32.INSTANCE.BitBlt(memoryDc, 0, 0, width, height, windowDc, 0, 0, SRCCOPY));
         BlankProbe bitBltBlankProbe = probeBlank(bitBlt.orElse(null));
@@ -267,16 +293,13 @@ public class BoundWindowCaptureService {
                 hwndValue, binding.getTitle(), bitBlt.isPresent(), bitBltBlankProbe.blank(),
                 bitBltBlankProbe.differentSamples(), bitBltBlankProbe.firstRgbHex(), width, height);
         if (bitBlt.isPresent() && !bitBltBlankProbe.blank()) {
-            printWindow.ifPresent(BufferedImage::flush);
             return Optional.of(new CaptureResult(bitBlt.get(), CaptureProvider.HWND_BITBLT));
         }
 
-        log.warn("HWND capture fallback to possibly blank image: hwnd={} title={} printWindowPresent={} printWindowBlank={} bitBltPresent={} bitBltBlank={}",
-                hwndValue, binding.getTitle(), printWindow.isPresent(), printWindowBlankProbe.blank(),
-                bitBlt.isPresent(), bitBltBlankProbe.blank());
-        return printWindow
-                .map(image -> new CaptureResult(image, CaptureProvider.HWND_PRINTWINDOW))
-                .or(() -> bitBlt.map(image -> new CaptureResult(image, CaptureProvider.HWND_BITBLT)));
+        log.warn("HWND capture failed on all game-silent providers (no PrintWindow by user decree): "
+                        + "hwnd={} title={} bitBltPresent={} bitBltBlank={}",
+                hwndValue, binding.getTitle(), bitBlt.isPresent(), bitBltBlankProbe.blank());
+        return bitBlt.map(image -> new CaptureResult(image, CaptureProvider.HWND_BITBLT));
     }
 
     private Optional<BufferedImage> captureWithCompatibleBitmap(WinDef.HWND hwnd,
@@ -406,9 +429,10 @@ public class BoundWindowCaptureService {
     }
 
     public enum CaptureProvider {
-        HWND_PRINTWINDOW,
         HWND_BITBLT,
-        HWND_BITBLT_REGION
+        HWND_BITBLT_REGION,
+        /** G151：Windows.Graphics.Capture sidecar——目标进程零参与的采集路径。 */
+        WGC_SIDECAR
     }
 
     @Value

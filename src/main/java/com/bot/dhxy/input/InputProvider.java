@@ -8,13 +8,6 @@ package com.bot.dhxy.input;
  * code already running inside an exclusive input callback.</p>
  */
 public interface InputProvider {
-    /**
-     * Whether ordinary keyboard actions require the same focused transaction as mouse input.
-     * FakerInput returns true; the legacy WinAPI provider returns false so existing routing stays unchanged.
-     */
-    default boolean requiresForegroundKeyboard() {
-        return false;
-    }
 
     /** Left-click at a screen-absolute point and wait the given milliseconds. */
     void clickLeft(int x, int y, int delayMs);

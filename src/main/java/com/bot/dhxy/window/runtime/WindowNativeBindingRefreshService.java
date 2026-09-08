@@ -20,6 +20,10 @@ public class WindowNativeBindingRefreshService {
 
     private final NativeWindowProbe nativeWindowProbe;
     private final ConcurrentHashMap<String, String> reportedGeometryMismatches = new ConcurrentHashMap<>();
+    /** G148-M2：live 与注册尺寸连续不一致的次数（按 HWND）；一致即清零。 */
+    private final ConcurrentHashMap<String, Integer> geometryMismatchStreaks = new ConcurrentHashMap<>();
+    /** G148-M2：连续这么多次刷新都尺寸不一致才算熔断，容忍单次抖动。 */
+    private static final int GEOMETRY_FUSE_CONSECUTIVE_TRIP = 3;
 
     public WindowNativeBindingRefreshService() {
         this(new JnaNativeWindowProbe());
@@ -78,8 +82,10 @@ public class WindowNativeBindingRefreshService {
         String handle = binding.getNativeHandle();
         if (liveWidth == adoptedWidth && liveHeight == adoptedHeight) {
             reportedGeometryMismatches.remove(handle);
+            geometryMismatchStreaks.remove(handle);
             return;
         }
+        geometryMismatchStreaks.merge(handle, 1, Integer::sum);
         String mismatch = liveWidth + "x" + liveHeight + "->" + adoptedWidth + "x" + adoptedHeight;
         if (mismatch.equals(reportedGeometryMismatches.put(handle, mismatch))) {
             return;
@@ -88,6 +94,26 @@ public class WindowNativeBindingRefreshService {
                         + "hwnd={} title={} live={}x{} registered={}x{} position=({}, {})",
                 handle, binding.getTitle(), liveWidth, liveHeight,
                 adoptedWidth, adoptedHeight, binding.getX(), binding.getY());
+    }
+
+    /**
+     * G148-M2：该 HWND 的 live 尺寸是否已连续多次偏离注册尺寸（中途漂移熔断电平）。
+     *
+     * <p>refreshGeometry 的既有语义是"保注册尺寸、只告警"——漂移窗口的捕获照旧用旧尺寸，
+     * 模板全部失配（G124：771 模板集体失配还按错坐标乱点）。此电平供自动重启链熔断用；
+     * 尺寸一旦恢复一致即自动复位。</p>
+     */
+    public boolean isGeometryDriftFused(String nativeHandle) {
+        if (nativeHandle == null) {
+            return false;
+        }
+        Integer streak = geometryMismatchStreaks.get(nativeHandle);
+        return streak != null && streak >= GEOMETRY_FUSE_CONSECUTIVE_TRIP;
+    }
+
+    /** G148-M2：当前 live 与注册尺寸的差异描述（如 "1117x840->1036x783"），一致时为 null。 */
+    public String geometryDriftDetail(String nativeHandle) {
+        return nativeHandle == null ? null : reportedGeometryMismatches.get(nativeHandle);
     }
 
     /**

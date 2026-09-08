@@ -3,7 +3,6 @@ package com.bot.dhxy.service;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.core.MatchEvidenceStore;
-import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.window.interaction.WindowFocusService;
@@ -82,7 +81,6 @@ public class BagService {
     private final CoordinateHelper coordinateHelper;
     private final WindowScopedTempPath windowScopedTempPath;
     private final WindowTaskContextHolder windowTaskContextHolder;
-    private final BoundWindowKeyboardService boundWindowKeyboardService;
     private final WindowFocusService windowFocusService;
     private final Map<String, Integer> visiblePageCache = new ConcurrentHashMap<>();
     private final Map<String, Integer> itemPageCache = new ConcurrentHashMap<>();
@@ -1134,6 +1132,8 @@ public class BagService {
         }
         log.info("[bag] page {} matched: template={} count={} firstPoint=({}, {})",
                 tabIndex + 1, targetItemTemplate, found.size(), found.get(0).x, found.get(0).y);
+        // G143：命中帧也留证（滚动池）——命中即点击，原图会被下一页扫描覆盖。
+        BagScanMissDump.keepHit(path, targetItemTemplate, tabIndex + 1);
         return found;
     }
 
@@ -1413,46 +1413,31 @@ public class BagService {
     }
 
     private boolean pressBackgroundAltE(String source) {
-        if (inputProvider.requiresForegroundKeyboard()) {
-            var current = windowTaskContextHolder.rawCurrent();
-            if (current.isEmpty() || current.get().getNativeBinding() == null) {
-                log.warn("[bag] driver Alt+E rejected without an exact window binding: source={}", source);
-                return false;
-            }
-            var context = current.get();
-            boolean focused = windowFocusService.isForeground(context.getNativeBinding());
-            log.info("[bag] driver Alt+E foreground check: source={} windowId={} focused={}",
-                    source, context.getWindowId(), focused);
-            if (!focused) {
-                log.warn("[bag] driver Alt+E rejected because queue-entry focus no longer owns exact window: "
-                                + "source={} windowId={} handle={}",
-                        source, context.getWindowId(), context.getNativeBinding().getNativeHandle());
-                return false;
-            }
-            try {
-                inputProvider.pressAltE();
-                return true;
-            } catch (RuntimeException inputFailure) {
-                log.warn("[bag] FakerInput Alt+E failed: source={} reason={}",
-                        source, inputFailure.toString());
-                return false;
-            }
-        }
+        // G146: PostMessage keyboard is retired. The explicit foreground witness before the HID press is
+        // kept as a typed local failure; the coordinator's strict gate backs it up at the keystroke.
         var current = windowTaskContextHolder.rawCurrent();
         if (current.isEmpty() || current.get().getNativeBinding() == null) {
-            log.warn("[bag] background Alt+E rejected without an exact window binding: source={}", source);
+            log.warn("[bag] driver Alt+E rejected without an exact window binding: source={}", source);
             return false;
         }
         var context = current.get();
-        var attempt = boundWindowKeyboardService.pressShortcut(
-                context.getNativeBinding(), context.getWindowId(),
-                BoundWindowKeyboardService.AltShortcut.ALT_E);
-        if (!attempt.attempted() || !attempt.success()) {
-            log.warn("[bag] background Alt+E failed: source={} windowId={} reason={}",
-                    source, context.getWindowId(), attempt.reason());
+        boolean focused = windowFocusService.isForeground(context.getNativeBinding());
+        log.info("[bag] driver Alt+E foreground check: source={} windowId={} focused={}",
+                source, context.getWindowId(), focused);
+        if (!focused) {
+            log.warn("[bag] driver Alt+E rejected because queue-entry focus no longer owns exact window: "
+                            + "source={} windowId={} handle={}",
+                    source, context.getWindowId(), context.getNativeBinding().getNativeHandle());
             return false;
         }
-        return true;
+        try {
+            inputProvider.pressAltE();
+            return true;
+        } catch (RuntimeException inputFailure) {
+            log.warn("[bag] FakerInput Alt+E failed: source={} reason={}",
+                    source, inputFailure.toString());
+            return false;
+        }
     }
 
     private boolean isInputWorkerThread() {

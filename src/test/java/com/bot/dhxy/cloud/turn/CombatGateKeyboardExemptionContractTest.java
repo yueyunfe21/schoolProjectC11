@@ -26,7 +26,7 @@ class CombatGateKeyboardExemptionContractTest {
     void altShortcutsDoNotGoThroughTheMouseCombatGate() throws Exception {
         String source = Files.readString(EXECUTOR, StandardCharsets.UTF_8);
 
-        int altBlockStart = source.indexOf("BoundWindowKeyboardService.AltShortcut alt =");
+        int altBlockStart = source.indexOf("TurnKeyboardKeys.AltShortcut alt =");
         assertTrue(altBlockStart > 0, "找不到 Alt 快捷键分支；改了结构就更新这条合同");
         String altBlock = source.substring(altBlockStart, altBlockStart + 700);
 
@@ -42,7 +42,8 @@ class CombatGateKeyboardExemptionContractTest {
 
         int rawStart = source.indexOf("private InputActionExecutionResult submitMouseActionsRaw");
         assertTrue(rawStart > 0);
-        String mouseSubmit = source.substring(rawStart, rawStart + 500);
+        // G146 复核时发现 500 字符窗口早已切掉 COMBAT_ACTIVE（对 git HEAD 同样失败，属陈旧锚窗）；放宽到 700。
+        String mouseSubmit = source.substring(rawStart, rawStart + 700);
 
         assertTrue(mouseSubmit.contains("isLocalCombatVisible")
                         && mouseSubmit.contains("COMBAT_ACTIVE"),

@@ -195,7 +195,25 @@ public final class WindowObservationSampler {
     private static final int AUTO_PANEL_CENTER_OFFSET_Y = 28;
     private static final int AUTO_PANEL_SAFE_OFFSET_X = 489;
     private static final int AUTO_PANEL_SAFE_OFFSET_Y = 726;
-    private static final double AUTO_PANEL_ALIGN_TOLERANCE_PX = 20.0;
+    // G158 v2（2026-09-05 用户拍板"一开始的20太少了,50可以不动"）：50px 内不搬家。
+    private static final double AUTO_PANEL_ALIGN_TOLERANCE_PX = 50.0;
+    /*
+     * G158（2026-09-05 用户拍板"浮动可以大,100 都能接受"）：安全落点去同一化。
+     * 固定 (489,726) 使五窗面板永远停在同一像素——纯本地目视面签名。每窗进程内掷一次专属
+     * 安全点：x 高斯截断 ±100；y 截断 [-80, +10]（几何硬约束：y=726+半高28=底边754,
+     * 窗高 768,向下只剩 +14 余量,收 +10）。**判据(>20px 对齐检查)与拖拽落点同源用抖后点**
+     * ——参照点不抖只抖落点会导致拖完永远判"偏了"场场重拖。窗内稳定(不反复搬家),窗间/
+     * 重启间不同。sampler 每窗一实例(SpringObservationRunnerFactory),实例字段天然按窗隔离。
+     */
+    private final int autoPanelSafeJitteredX = AUTO_PANEL_SAFE_OFFSET_X
+            + truncatedGaussianOffset(45.0D, -100, 100);
+    private final int autoPanelSafeJitteredY = AUTO_PANEL_SAFE_OFFSET_Y
+            + truncatedGaussianOffset(30.0D, -80, 10);
+
+    static int truncatedGaussianOffset(double sigma, int min, int max) {
+        double value = java.util.concurrent.ThreadLocalRandom.current().nextGaussian() * sigma;
+        return (int) Math.round(Math.max(min, Math.min(max, value)));
+    }
     private XinshouCombatLocalMechanics autoPanelMechanics;
     private BufferedImage autoPanelTemplate;
     private boolean autoPanelTemplateLoadFailed;
@@ -478,8 +496,9 @@ public final class WindowObservationSampler {
 
     /**
      * Baseline safe-area alignment, local half: when the visible panel's inferred center has
-     * drifted more than 20px from the safe drop point (window base + 489,726), one drag pulls it
-     * back — at most once per combat generation, and never concurrently with an Alt+8 repair.
+     * drifted beyond AUTO_PANEL_ALIGN_TOLERANCE_PX from this window's jittered safe point
+     * (G158), one drag pulls it back — at most once per combat generation, and never
+     * concurrently with an Alt+8 repair.
      */
     private void maybeAlignAutoPanel(double[] panelMatch) {
         int[] frameRect = sharedCycleFrameRect;
@@ -489,8 +508,9 @@ public final class WindowObservationSampler {
         }
         int panelX = frameRect[0] + (int) Math.round(panelMatch[0]) + AUTO_PANEL_CENTER_OFFSET_X;
         int panelY = frameRect[1] + (int) Math.round(panelMatch[1]) + AUTO_PANEL_CENTER_OFFSET_Y;
-        int targetX = frameRect[0] + AUTO_PANEL_SAFE_OFFSET_X;
-        int targetY = frameRect[1] + AUTO_PANEL_SAFE_OFFSET_Y;
+        // G158：判据与落点同用本窗抖后安全点。
+        int targetX = frameRect[0] + autoPanelSafeJitteredX;
+        int targetY = frameRect[1] + autoPanelSafeJitteredY;
         if (Math.hypot(panelX - targetX, panelY - targetY) <= AUTO_PANEL_ALIGN_TOLERANCE_PX) {
             autoPanelAlignedGeneration = generation;
             return;

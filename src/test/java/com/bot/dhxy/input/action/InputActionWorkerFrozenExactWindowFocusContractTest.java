@@ -2,7 +2,6 @@ package com.bot.dhxy.input.action;
 
 import com.bot.dhxy.config.WindowIsolationProperties;
 import com.bot.dhxy.core.GameContext;
-import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.WindowAwareInputCoordinator;
 import com.bot.dhxy.window.model.WindowNativeBinding;
@@ -68,8 +67,7 @@ class InputActionWorkerFrozenExactWindowFocusContractTest {
                     null,
                     input,
                     coordinator,
-                    null,
-                    new BoundWindowKeyboardService(null, null, null, null));
+                    null);
             context = new WindowRuntimeContext("window-1", new GameContext());
             binding = new WindowNativeBinding(
                     "12345", "title", "class", 77L, 10, 20, 800, 600);

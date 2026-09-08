@@ -84,6 +84,8 @@ public final class NpcArrivalFrameFifoLocalExecutor {
     private static final int WINDOW_HEIGHT = 768;
     private static final int CANDIDATE_LIMIT = 12;
     private static final long WAIT_SLEEP_MS = 500L;
+    /** G155：Alt+4 名字层生效沉降，沿用云端既有 NPC_PIPELINE_HIDE_PLAYER_NAMES_SETTLE_MS。 */
+    private static final int NAME_LAYER_SETTLE_MS = 180;
 
     /**
      * G125 修 A：会话静默总时限。2026-08-30 20:29:58 云端一边发布 FIFO 开会话动作、一边翻页去
@@ -467,19 +469,55 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                     spec.allowedLeft(), spec.allowedTop(), spec.allowedWidth(), spec.allowedHeight());
             return NpcClickSmartQueueOutcome.SAFETY_REJECTED;
         }
+        Point execClick = jitterForExecution(click, spec);
         NpcClickSmartQueueOutcome outcome = executePointAndVerify(
                 arguments,
                 spec,
                 binding,
                 click,
+                execClick,
                 "fifoCandidate:" + message.getType(),
                 "npc-click-smart-fifo:" + message.getType() + ":" + message.getDecisionId());
+        /*
+         * G152 v2（2026-09-04 用户设计裁定）：验证成功的抖动点=一次真实命中，它就是新基点——
+         * 存实际点出去的点，基点在 NPC 判定框内自然游走（验证门自带纠错：打不开对话框的点
+         * 永远不会被存，游走天然有界）。未证实/deferred 不接管基点：miss 点不能当新基准。
+         */
         if (shouldRetainVerifiedPoint(outcome)) {
-            rememberVerifiedPoint(arguments, spec, click);
+            rememberVerifiedPoint(arguments, spec, execClick);
         } else if (shouldRetainDeferredPoint(spec, outcome)) {
             rememberDeferredPoint(arguments, spec, click);
         }
         return outcome;
+    }
+
+    /*
+     * G152（2026-09-04 用户质疑实证）：NPC 点击落点此前零抖动——日志实锤同一像素连点 5 次
+     * （TOOLTIP relative=(371,239)×5），且候选点呈公式格点分布（x∈{371,490,689,691}、
+     * y∈{99,195,239,297,337,339}）。执行时加小幅均匀抖动（NPC 判定框几十像素，裕量充足），
+     * 抖出安全区回落基准。v2 记忆语义（用户设计）：**验证成功的抖动点=新基点**——真实命中过的
+     * 点接管基准，基点在判定框内自然游走（验证门自带纠错，游走有界）；未证实的点不接管。
+     */
+    private static final int NPC_CLICK_JITTER_X = 5;
+    private static final int NPC_CLICK_JITTER_Y = 4;
+    /*
+     * G157-P1（G145 缓行半项落地，2026-09-05 用户拍板）：落点分布从均匀方块改截断高斯椭圆。
+     * 评审实锤：±5/±4 均匀抖动在热力图上是边缘与中心等密的整齐小方块；真人落点是中心密、
+     * 边缘稀的二维高斯。σ 取边界的 ~0.45 倍，截断在既有 ±5/±4 边界内——安全区回落语义不变。
+     */
+    private static final double NPC_CLICK_JITTER_SIGMA_X = 2.2D;
+    private static final double NPC_CLICK_JITTER_SIGMA_Y = 1.8D;
+
+    private static int gaussianOffset(double sigma, int bound) {
+        double value = java.util.concurrent.ThreadLocalRandom.current().nextGaussian() * sigma;
+        return (int) Math.round(Math.max(-bound, Math.min(bound, value)));
+    }
+
+    private Point jitterForExecution(Point base, TurnNpcArrivalFrameFifoSpec spec) {
+        Point jittered = new Point(
+                base.x + gaussianOffset(NPC_CLICK_JITTER_SIGMA_X, NPC_CLICK_JITTER_X),
+                base.y + gaussianOffset(NPC_CLICK_JITTER_SIGMA_Y, NPC_CLICK_JITTER_Y));
+        return insideAllowedRegion(jittered, spec) ? jittered : base;
     }
 
     private NpcClickSmartQueueOutcome executePointAndVerify(
@@ -487,12 +525,13 @@ public final class NpcArrivalFrameFifoLocalExecutor {
             TurnNpcArrivalFrameFifoSpec spec,
             WindowNativeBinding binding,
             Point click,
+            Point execClick,
             String actionSource,
             String verificationSource) {
-        int absoluteX = binding.getX() + click.x;
-        int absoluteY = binding.getY() + click.y;
-        log.info("NPC arrival FIFO submitting point: source={} relative=({}, {}) absolute=({}, {})",
-                actionSource, click.x, click.y, absoluteX, absoluteY);
+        int absoluteX = binding.getX() + execClick.x;
+        int absoluteY = binding.getY() + execClick.y;
+        log.info("NPC arrival FIFO submitting point: source={} base=({}, {}) jittered=({}, {}) absolute=({}, {})",
+                actionSource, click.x, click.y, execClick.x, execClick.y, absoluteX, absoluteY);
         long clickAtMs = System.currentTimeMillis();
         boolean submitted = inputSequences.submitAndWait(
                 "npcClick:" + actionSource + ":" + arguments.targetKeyword(),
@@ -583,7 +622,20 @@ public final class NpcArrivalFrameFifoLocalExecutor {
             WindowNativeBinding binding,
             NpcClickSmartQueueMessage message) {
         if (message.getCtrlProbePoints() == null || message.getCtrlProbePoints().isEmpty()) {
-            return NpcClickSmartQueueOutcome.SAFETY_REJECTED;
+            /*
+             * G165（2026-09-07 事故：接任务死循环 1033 次、黄名识别全线未执行）：空候选是"这一路
+             * 没找到东西"（云端明写 status=NOT_FOUND/action=NO_ACTION），与 MEMORY/TOOLTIP/紫名
+             * 三路的空结果同义，必须与它们一样返回 SKIPPED 让会话继续 poll 到 END。
+             * 此前返回 SAFETY_REJECTED——那是"点位越界、危险动作被拦"的语义，调用方对它的处置是
+             * 立即 return terminal()，于是会话在 CTRL_CANDIDATES 处当场夭折：END 永远收不到
+             * （实测全天 1637 次会话 END 送达 0 次）、EXHAUSTED 永不成立、
+             * replaceWithFreshFrame 永不执行 → G155 改按需 Alt+4 后黄名所依赖的"名字层替换帧"
+             * 永远不产生（attempt=2 全天仅 1 次）→ 洗黄字一次没跑、玩家名从未被屏蔽。
+             */
+            log.info("NPC arrival FIFO ctrl-candidate stage empty; treating as skip so the session can "
+                            + "reach END and request a name-layer replacement frame: sessionId={} reason={}",
+                    message.getSessionId(), message.getReason());
+            return NpcClickSmartQueueOutcome.SKIPPED;
         }
         for (int index = 0; index < message.getCtrlProbePoints().size(); index++) {
             TaskCheckpoint.throwIfStopRequested(
@@ -642,13 +694,20 @@ public final class NpcArrivalFrameFifoLocalExecutor {
         }
         log.info("NPC arrival retained-point replay source: windowId={} taskRunId={} intentId={} proven={}",
                 spec.windowId(), spec.businessTaskRunId(), arguments.intentId(), proven);
+        Point replayBase = new Point(retained);
+        Point replayExec = jitterForExecution(replayBase, spec);
         NpcClickSmartQueueOutcome outcome = executePointAndVerify(
                 arguments,
                 spec,
                 binding,
-                new Point(retained),
+                replayBase,
+                replayExec,
                 "fifoRetainedPointReplay",
                 "npc-click-smart-fifo:retained-point-replay");
+        // G152 v2：重放命中同样接管基点——成功的抖动点就是下一次的基准。
+        if (shouldRetainVerifiedPoint(outcome)) {
+            rememberVerifiedPoint(arguments, spec, replayExec);
+        }
         log.info("NPC arrival retained-point replay finished: windowId={} taskRunId={} intentId={} point={} outcome={}",
                 spec.windowId(), spec.businessTaskRunId(), arguments.intentId(), retained, outcome);
         return outcome == NpcClickSmartQueueOutcome.VERIFIED
@@ -755,8 +814,11 @@ public final class NpcArrivalFrameFifoLocalExecutor {
         if (match == null || match.length < 3) {
             return NpcClickSmartQueueOutcome.VERIFICATION_FAILED;
         }
-        int clickX = scanRect[0] + (int) Math.round(match[0]);
-        int clickY = scanRect[1] + (int) Math.round(match[1]);
+        // G152：Ctrl 候选同样加执行抖动（匹配点原样连点是同款格点签名）；G157-P1 改截断高斯。
+        int clickX = scanRect[0] + (int) Math.round(match[0])
+                + gaussianOffset(NPC_CLICK_JITTER_SIGMA_X, NPC_CLICK_JITTER_X);
+        int clickY = scanRect[1] + (int) Math.round(match[1])
+                + gaussianOffset(NPC_CLICK_JITTER_SIGMA_Y, NPC_CLICK_JITTER_Y);
         inputProvider.moveMouse(clickX, clickY);
         if (!TaskSleep.sleep(100) || !InputActionScope.checkpoint()) {
             return NpcClickSmartQueueOutcome.CANCELLED;
@@ -918,7 +980,24 @@ public final class NpcArrivalFrameFifoLocalExecutor {
         }
     }
 
+    /**
+     * G155（2026-09-05 用户裁定"只有洗黄字那里的截图需要 Alt+4"）：名字层准备移到这里。
+     *
+     * <p>首帧服务的是记忆点/固定点/tooltip（今日 199 候选里占 96%），全部按坐标或模板判定，
+     * 与玩家名字层无关；此前却每次点 NPC 前都无条件 Alt+4（今日 152 次），黄字阶段一次没用上。
+     * 替换帧＝首帧候选全被拒后的兜底轮，正是黄名/紫名/CTRL 真正要洗图的那一帧——名字层只在这里备。
+     * Alt+4 是 toggle 不是幂等开关（G113-1 点错 NPC 事故），一次替换只按一次。</p>
+     */
     private byte[] captureFreshExactFrame(WindowNativeBinding binding) {
+        boolean nameLayerPrepared = inputSequences.submitAndWait(
+                "npcClick:replacement-hide-player-names",
+                List.of(
+                        InputAction.pressAlt4(),
+                        InputAction.sleep(NAME_LAYER_SETTLE_MS)));
+        if (!nameLayerPrepared) {
+            log.warn("NPC arrival FIFO replacement frame name-layer preparation failed; capturing raw scene: windowId={}",
+                    binding.getTitle());
+        }
         BufferedImage frame = tracker.captureToMemory(
                 "npc-arrival-fifo-replacement",
                 binding.getX(), binding.getY(),

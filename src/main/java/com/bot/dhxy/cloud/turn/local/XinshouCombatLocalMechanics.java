@@ -3,7 +3,6 @@ package com.bot.dhxy.cloud.turn.local;
 import com.bot.dhxy.core.MatchEvidenceStore;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
-import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputActionExecutionResult;
@@ -59,21 +58,18 @@ public final class XinshouCombatLocalMechanics {
     /**
      * @param inputSequences frozen exact-window input transaction boundary
      * @param contextHolder current task window binding source
-     * @param keyboard exact-HWND keyboard delivery used inside the frozen transaction
-     * @param inputProvider direct mouse provider, used only while the input worker owns the transaction
+     * @param inputProvider HID input provider; G146 — keyboard now rides the same driver as mouse
      * @param tracker exact-window screenshot provider used by the local panel probe
      */
     @Autowired
     public XinshouCombatLocalMechanics(
             InputSequences inputSequences,
             WindowTaskContextHolder contextHolder,
-            BoundWindowKeyboardService keyboard,
             InputProvider inputProvider,
             GameClientTracker tracker) {
         this(new InputSequencesExactWindowPort(
                 inputSequences,
                 contextHolder,
-                keyboard,
                 inputProvider,
                 tracker));
     }
@@ -395,19 +391,16 @@ public final class XinshouCombatLocalMechanics {
 
         private final InputSequences inputSequences;
         private final WindowTaskContextHolder contextHolder;
-        private final BoundWindowKeyboardService keyboard;
         private final InputProvider inputProvider;
         private final GameClientTracker tracker;
 
         private InputSequencesExactWindowPort(
                 InputSequences inputSequences,
                 WindowTaskContextHolder contextHolder,
-                BoundWindowKeyboardService keyboard,
                 InputProvider inputProvider,
                 GameClientTracker tracker) {
             this.inputSequences = Objects.requireNonNull(inputSequences, "inputSequences");
             this.contextHolder = Objects.requireNonNull(contextHolder, "contextHolder");
-            this.keyboard = Objects.requireNonNull(keyboard, "keyboard");
             this.inputProvider = Objects.requireNonNull(inputProvider, "inputProvider");
             this.tracker = Objects.requireNonNull(tracker, "tracker");
         }
@@ -445,7 +438,6 @@ public final class XinshouCombatLocalMechanics {
                         Result result = action.execute(new ProductionSession(
                                 context.getWindowId(),
                                  binding,
-                                 keyboard,
                                  inputProvider,
                                  tracker));
                         mechanicalResult.set(Objects.requireNonNull(
@@ -505,19 +497,16 @@ public final class XinshouCombatLocalMechanics {
 
         private final String windowId;
         private final WindowNativeBinding binding;
-        private final BoundWindowKeyboardService keyboard;
         private final InputProvider inputProvider;
         private final GameClientTracker tracker;
 
         private ProductionSession(
                 String windowId,
                 WindowNativeBinding binding,
-                BoundWindowKeyboardService keyboard,
                 InputProvider inputProvider,
                 GameClientTracker tracker) {
             this.windowId = windowId;
             this.binding = binding;
-            this.keyboard = keyboard;
             this.inputProvider = inputProvider;
             this.tracker = tracker;
         }
@@ -619,28 +608,26 @@ public final class XinshouCombatLocalMechanics {
 
         @Override
         public boolean pressAltB() {
-            if (inputProvider.requiresForegroundKeyboard()) {
-                try {
-                    inputProvider.pressAltB();
-                    return true;
-                } catch (RuntimeException error) {
-                    return false;
-                }
+            try {
+                inputProvider.pressAltB();
+                return true;
+            } catch (RuntimeException error) {
+                return false;
             }
-            BoundWindowKeyboardService.ShortcutAttempt attempt = keyboard.pressShortcut(
-                    binding,
-                    windowId,
-                    BoundWindowKeyboardService.AltShortcut.ALT_B);
-            return attempt.attempted() && attempt.success();
         }
 
         @Override
         public boolean pressAlt8() {
-            BoundWindowKeyboardService.ShortcutAttempt attempt = keyboard.pressShortcut(
-                    binding,
-                    windowId,
-                    BoundWindowKeyboardService.AltShortcut.ALT_8);
-            return attempt.attempted() && attempt.success();
+            // G146: Alt+8 leaves the PostMessage path. The HID press runs inside the already-open
+            // input transaction; the coordinator's strict gate self-heals focus or refuses.
+            try {
+                inputProvider.pressAlt8();
+                return true;
+            } catch (RuntimeException error) {
+                log.warn("[panel-verify] HID Alt+8 refused/failed: windowId={} reason={}",
+                        windowId, error.toString());
+                return false;
+            }
         }
 
         @Override

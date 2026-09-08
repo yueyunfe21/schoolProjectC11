@@ -4,27 +4,34 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-/** Source contract for transient SetCursorPos retry without weakening the final position proof. */
+/**
+ * Source contract for cursor-move convergence without weakening the final position proof.
+ *
+ * <p>G035 originally guarded the WinApi SetCursorPos retry; G146 deleted that backend, so the same
+ * protection now anchors on the FakerInput absolute-move converge loop: every attempt must read the
+ * cursor back, only a verified <=1px endpoint may return, corrections ride the same driver, and an
+ * unreadable cursor fails closed.</p>
+ */
 public final class G035CursorMoveRetryContractTest {
 
     public static void main(String[] args) throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/com/bot/dhxy/driver/WinApiMouseController.java"), StandardCharsets.UTF_8);
+                "src/main/java/com/bot/dhxy/driver/fakerinput/FakerInputProvider.java"),
+                StandardCharsets.UTF_8);
         String move = between(source,
-                "private void moveCursorToLogicalPoint(",
-                "private static INPUT buildMouseInput(");
-        require(source.contains("CURSOR_MOVE_MAX_ATTEMPTS = 3"),
-                "cursor movement must have a bounded three-attempt policy");
-        require(move.contains("attempt <= CURSOR_MOVE_MAX_ATTEMPTS"),
-                "SetCursorPos retry must stay inside the existing move method");
-        require(move.contains("User32.INSTANCE.SetCursorPos(physicalX, physicalY)"),
-                "every attempt must use the same physical target");
-        require(move.contains("User32.INSTANCE.GetCursorPos(after)"),
+                "private void moveToLogicalPoint(",
+                "static int normalizeAbsoluteCoordinate(");
+        require(move.contains("User32.INSTANCE.GetCursorPos(current)"),
                 "every attempt must retain read-back verification");
-        require(move.contains("if (reached) {\n                return;"),
-                "only a verified cursor position may return successfully");
-        require(move.indexOf("throw new IllegalStateException") > move.indexOf("for (int attempt"),
-                "exhausted retries must still fail closed");
+        require(move.contains("Math.abs(current.x - targetX) <= 1")
+                        && move.contains("Math.abs(current.y - targetY) <= 1"),
+                "only a verified <=1px cursor position may return successfully");
+        require(move.contains("device.updateRelativeMouse(heldMouseButtons, correctionX, correctionY"),
+                "residual correction must ride the same driver, never SendInput/SetCursorPos");
+        require(move.contains("throw new IllegalStateException(\"FakerInput could not read the current cursor position\")"),
+                "an unreadable cursor must fail closed");
+        require(!source.contains("SendInput") || source.contains("without reintroducing a SendInput"),
+                "no SendInput fallback may reappear in the FakerInput provider");
         System.out.println("G035_CURSOR_MOVE_RETRY_CONTRACT_PASS=1/1");
     }
 

@@ -23,6 +23,37 @@ final class BagScanMissDump {
     private static final Path DIR = Path.of("images", "temp", "match-miss", "bag-scan");
     private static final int LIMIT = 20;
     private static final AtomicInteger WRITTEN = new AtomicInteger();
+    /** G143：命中帧滚动池——命中即点击，原图秒被下一页覆盖，点错了无图可查（用户裁定 2026-09-02）。 */
+    private static final Path HIT_DIR = Path.of("images", "temp", "match-evidence", "bag-scan-hit");
+    private static final int HIT_POOL = 20;
+    private static final AtomicInteger HIT_WRITTEN = new AtomicInteger();
+
+    /**
+     * G143：保留一张"匹配命中"的扫描帧（滚动覆盖，不设总量上限但占用恒定）。
+     *
+     * @param capturedPath 刚参与匹配的扫描图路径。
+     * @param templatePath 命中的物品模板。
+     * @param page 1 起的包裹页码，当前页传 0。
+     */
+    static void keepHit(String capturedPath, String templatePath, int page) {
+        if (capturedPath == null) {
+            return;
+        }
+        try {
+            Path source = Path.of(capturedPath);
+            if (!Files.exists(source)) {
+                return;
+            }
+            Files.createDirectories(HIT_DIR);
+            int index = HIT_WRITTEN.getAndIncrement() % HIT_POOL;
+            String templateName = templatePath == null ? "unknown"
+                    : templatePath.replaceAll(".*/", "").replace(".png", "");
+            Path target = HIT_DIR.resolve(String.format("%02d-page%d-%s.png", index, page, templateName));
+            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException | RuntimeException failure) {
+            log.warn("[bag] could not keep the hit page: {}", failure.toString());
+        }
+    }
 
     private BagScanMissDump() {
     }

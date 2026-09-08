@@ -284,13 +284,18 @@ class TurnCapturePointerClearContractTest {
                     rect,
                     false,
                     stopRequested);
+            // G151 顺手修既有损坏：turn 重构给构造器加了三个 token 参数（7 参），本反射还找 4 参
+            // 早已 NoSuchMethod——与采集改动无关，按当前签名适配（token 传 null，本合同不消费）。
             Constructor<TurnExecutionWindow> constructor = TurnExecutionWindow.class.getDeclaredConstructor(
                     WindowTaskRunner.class,
                     WindowRuntimeContext.class,
                     WindowNativeBinding.class,
-                    TurnWindowMetadata.class);
+                    TurnWindowMetadata.class,
+                    com.bot.dhxy.window.execution.RemoteTaskHandle.class,
+                    com.bot.dhxy.runner.stop.TaskStopToken.class,
+                    com.bot.dhxy.runner.stop.TaskPauseToken.class);
             constructor.setAccessible(true);
-            return constructor.newInstance(null, context, binding, metadata);
+            return constructor.newInstance(null, context, binding, metadata, null, null, null);
         } catch (ReflectiveOperationException e) {
             throw new AssertionError("cannot construct isolated turn execution window", e);
         }
@@ -405,7 +410,7 @@ class TurnCapturePointerClearContractTest {
         private CaptureResult result(int width, int height) {
             BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
             image.setRGB(0, 0, 0xff336699);
-            return new CaptureResult(image, CaptureProvider.HWND_PRINTWINDOW);
+            return new CaptureResult(image, CaptureProvider.HWND_BITBLT);
         }
     }
 }

@@ -75,11 +75,6 @@ public class FakerInputProvider implements InputProvider {
     }
 
     @Override
-    public boolean requiresForegroundKeyboard() {
-        return true;
-    }
-
-    @Override
     public void clickLeft(int x, int y, int delayMs) {
         inputCoordinator.runInput("fakerInput:clickLeft", () -> click(x, y, BUTTON_LEFT, delayMs));
     }
@@ -105,11 +100,13 @@ public class FakerInputProvider implements InputProvider {
 
     @Override
     public void holdCtrl() {
-        inputCoordinator.runInput("fakerInput:holdCtrl", () -> setModifier(MODIFIER_LEFT_CTRL, true));
+        inputCoordinator.runKeyboardInput("fakerInput:holdCtrl", () -> setModifier(MODIFIER_LEFT_CTRL, true));
     }
 
     @Override
     public void releaseCtrl() {
+        // G146: release is exempt from the strict foreground gate — the HID modifier state is
+        // device-global, and a refused release would leak a held Ctrl into every later action.
         inputCoordinator.runInput("fakerInput:releaseCtrl", () -> setModifier(MODIFIER_LEFT_CTRL, false));
     }
 
@@ -229,7 +226,7 @@ public class FakerInputProvider implements InputProvider {
         if (text == null || text.isEmpty()) {
             return;
         }
-        inputCoordinator.runInput("fakerInput:typeTextAscii", () -> {
+        inputCoordinator.runKeyboardInput("fakerInput:typeTextAscii", () -> {
             // Alt shortcuts run immediately before world-map ASCII input. Publish an explicit all-released
             // HID state first so a missed/delayed Alt-up report can never turn a token such as "l" into Alt+L.
             synchronized (this) {
@@ -341,7 +338,7 @@ public class FakerInputProvider implements InputProvider {
     }
 
     private void pressShortcut(String label, int modifier, byte key) {
-        inputCoordinator.runInput("fakerInput:" + label, () -> {
+        inputCoordinator.runKeyboardInput("fakerInput:" + label, () -> {
             synchronized (this) {
                 int originalModifiers = heldModifiers;
                 heldModifiers |= modifier;
@@ -365,7 +362,7 @@ public class FakerInputProvider implements InputProvider {
     }
 
     private void pressKey(String label, byte key) {
-        inputCoordinator.runInput("fakerInput:" + label, () -> {
+        inputCoordinator.runKeyboardInput("fakerInput:" + label, () -> {
             pressKeyDirect(key);
         });
     }

@@ -1,5 +1,722 @@
 # DHXY Package Architecture
 
+## G164 暗雷停稳死锁（2026-09-07 用户报"1:25暗雷还是不动"，G163 后另一条独立死锁）
+
+- **状态：`IMPLEMENTED / 云端隔离编译 0 + 合同 5/5（含事故 facts 纯函数回放）+ 变异红 / 待重启验收`。**
+- **与 G163 的关系：** G163（背景污染误判推进）已生效——本次 `darkThunder=true` 全程稳定未被冲掉。
+  这是**另一条独立死锁**，表现同样是"暗雷不动"，故看着像没修好。
+- **死锁三要素（01:24~01:26，全程 darkThunder=true/stopped=true/pathingActive=true）：**
+  ①决策表 `pathingActive` 门排在 `stopped` 分支之前无条件返回 PARK_PATHING，暗雷巡游支永远够不着；
+  ②`pathingActive` 由 `trackerLinkRecoveryEpisode != null` **合成**为真，即使小地图早已 STOPPED_AWAY；
+  ③暗雷绿链"点了不移动"本是正常形态（人已在巡游点、靠原地巡游引妖王），却被
+  `consumeTrackerLinkTerminal` 当成"卡住"去 arm G017 恢复，episode 占住不清 → pathingActive 恒真 → 死锁。
+  5 次重按恢复 + 回家重接全程 darkThunder=true **一步没做**（G017 重按上界 5 次本就存在，非无限）。
+- **与封妖符旧坑同源（第二次发作）：** 1255 行注释记着封妖符踩过一模一样的"陈旧 episode 合成
+  pathingActive=true 使 PARK_PATHING 抢先"，当时只做了**点状修**（封妖符成功分支手动清 episode），
+  暗雷这个出口没补，六天后从暗雷漏出。
+- **实施（三条协同，云端两文件）：** ①`consumeTrackerLinkTerminal`：暗雷腿 NO_MOVEMENT 退休 episode
+  而非 arm 恢复（episode 记录新增 darkThunder 字段，两处构造点透传）；②`readFacts`：合成的
+  pathingActive **让位于真实物理停稳**（ARRIVED/STOPPED_AWAY 时不再合成——泛化根因，替代点状修，
+  杜绝任何陈旧 episode 永久挟持决策）；③`TiantingSubtaskDecision`：`stopped && darkThunder` 兜底门
+  排在 pathingActive 之前返回 RUN_DARK_THUNDER（最后一道闸，普通腿 darkThunder=false 语义不变）。
+- **合同：** `G164DarkThunderStopDeadlockContractTest` 5 条（**事故 facts 纯函数回放判 RUN_DARK_THUNDER**；
+  普通腿仍 PARK_PATHING；战斗态优先；物理停稳抑制合成 active 源码锚；暗雷 NO_MOVEMENT 退休门在 arm 之前）。
+  变异（删决策兜底+还原合成）2 条抓红。
+- **待重启验收：** 暗雷腿停稳后应直接 `RUN_DARK_THUNDER` 巡游至进战斗或超时，不再 5 次重按空转；
+  `G164 dark-thunder tracker leg NO_MOVEMENT is expected` 出现即说明退休门生效。
+
+## G163 任务框比对背景免疫（2026-09-06 用户定性，天庭暗雷巡游自杀事故）
+
+- **状态：`IMPLEMENTED / 云端隔离编译 0 + 合同 4/4（含 1064 张语料回放）+ 变异红 / 待重启验收`。**
+- **用户定性原话：** "原因是背景被带入到了匹配中！"（我先猜"底部滚动行"，被一句纠到真因。）
+- **事故（22:04~22:10 天庭队长）：** 追踪器="请前往瑶池(94,83)**来回巡游**以引出妖王(1场暗雷战斗)"，
+  人已停在 (94,83)。22:08:39 正确进入 `RUN_DARK_THUNDER` 巡游，走了 2 步；**22:08:55 巡游被掐断**
+  ——任务框比对判 CHANGED → 认定"任务推进" → `darkThunder=false` → 改走普通绿链 → 人已在原地
+  点了不动 → `EXACT_TRACKER_CLICK_NO_MOVEMENT` 恢复循环空转。**自杀循环：巡游这个动作本身
+  制造了中止巡游的信号**（角色走动→背景滚动→误判推进）。日常完成数同步虚增 24→28。
+- **根因：** 任务追踪框背景半透明、游戏世界透过来；`compareRaw` 对整块 RGB（含背景）算相关系数，
+  阈值 0.80。事故三帧文字一字不差，score=0.736/0.791/0.742 全部掉线判 CHANGED。
+- **判据选型（走过一次弯路，值得记）：** 首版改用本类既有色相判据 `isTrackerTextPixel` 抽掩膜——
+  **实测无效**：透出的世界本就富含黄/绿/亮像素照样入选，掩膜可视化显示背景被大面积误选、
+  差异均匀分布全部 78 行。真正的分界是**亮度**：文字满不透明绘制，世界被半透明深色面板压暗。
+- **语料回放定案（1064 次任务框比对，images/temp/match-evidence/taskbox-compare）：**
+  旧 raw 判 CHANGED 394 次 → 亮度掩膜下 **37 次差异率恰为 0**（纯背景误判，占 CHANGED 的 **9.4%**），
+  其余 357 次 ≥ **0.294**；旧判 UNCHANGED 657 次 → 差异率**全部 0.0000**（零误翻）。
+  0 与 0.294 完全空带，阈值取 **0.05** 落在正中。亮度门 190。
+- **实施（三条，云端五文件）：** ①比对器新增 `compareTextMasked/compareTextMaskedEvidenced`
+  （亮度掩膜，G143 留证不变）；②**全仓九处任务框类判定**全部切换——天庭六处
+  （taskbox-advanced / subtask-advance / darkthunder-branch / fengyaofu-branch-exit /
+  fengyaofu-phase-transition / post-combat）、观察者两处（darkthunder-same / cycle-same）、
+  prepared-tracker-retain 一处；**`dialog-fingerprint-raw` 比的是对话框 ROI（另一个面、另一套配色，
+  且有显式 WashMode 设计），核查后按原样保留**；③`recordCompletedSubtask` 加同框去重
+  （javadoc 早承诺"重复读不灌水"，实际无闸——事故里 27/28 落在同一哈希连计两次）。
+- **合同：** `G163TaskBoxBackgroundImmuneContractTest` 4 条（掩膜必须按亮度且禁退色相+阈值锚；
+  九处调用点全切且不许回 raw；同框去重闸在计数之前；**语料回放断言旧 UNCHANGED 零误翻**）。
+  变异（掩膜退回色相）2 条抓红，其中语料回放直接抓出误翻。
+- **待重启验收：** 暗雷巡游不再被背景滚动打断（`RUN_DARK_THUNDER` 应持续到进战斗或超时）；
+  `G163 subtask completion ignored` 出现即说明去重闸生效；日常完成数与李靖面板 OCR 一致。
+
+## G161 NPC 点击记忆键=停稳位置（2026-09-06 用户裁定，医宝宝连误点事故）
+
+- **2026-09-07 历史日志复核：P1，已证实误杀合法成功记忆。** 用户坚持李靖 `player:155,108` 曾成功，归档 `logs/archive/cloud-brain-console.20260902-003138.log:2604` 证明 9月1日19:34:27.430 取出 exact 该键点击 `(308,274)`；2613 为 verified=true，2620 接任务 executed=true，2626 记成功点，2629 learnStatus=promoted。9月6日16:48:40.596，`logs/archive/cloud-brain-console.20260906-203838.log:11` 明确 `G161 dropped departure-keyed ... 李靖 ... player:155,108`，49 行再次出现。距离为 11，合法 nearby 业务允许 tolerance=11；“距离>6即出发键”把合法历史成功点误判为脏数据。上文“7~11空带/零误杀”被真实历史证据推翻，不得再引用。本轮仅取证，未恢复数据/修改生产；修复应纠正仅凭距离删成功记忆的规则并恢复被误杀记录，保持真实停稳坐标桥修复。
+- **状态：`IMPLEMENTED / 云端隔离编译 0 + 合同 3/3（含边界反射断言）+ 实库回放 + 变异红 / 待重启验收`。**
+- **事故（用户报 14:11 医宝宝连点失败"错太多次不正常"）：** 巫医点击先连吃两次剧情框（(510,282)/
+  (510,302)）才撞对。取证排除抖动（当日 31 次点击偏移全部 ≤4px）;真因=**记忆场景键的 player 坐标
+  是"出发前位置"**,而落脚点被导航随机化——同一出发点的抽屉里混着不同落脚格的答案,每轮先踩错再撞对。
+- **根因分层（G130 迁移第三处漏档,同族 G156/位置链）：** 老 OCR 链 `analyzeTerminalCoordinate`
+  只认 ACTIVE 事实+坐标条图;G130 值判稳事实自带字模坐标、不带坐标条图 → 位置桥
+  （taskPositionOwner→registry.updateCurrentTaskPosition→getMe()）**整条断供**。实库分层实锤：
+  6~8 月键全部是落脚点(距目标≤4 格,库健康);**2026-09-02（G130 上线重启）起**出现出发点/异图/
+  窗口坐标泄漏键（player:120,83/117,95/415,235/14,19/22,16…），巫医、灵兽村使者（被 G153 远点
+  132,92 污染）、地藏王等多处中招。
+- **实施（三半,云端两文件）：** ①治本=翻译后 ARRIVED/STOPPED_AWAY 事实的停稳坐标喂既有位置桥
+  （复用 PATHING_COORDINATE_RESOLVED 类型,桥/注册表/栅栏零改动;同窗同值电平去噪）;
+  ②加载隔离=`putOrMergePolicy` 丢弃 player 与 target 切比雪夫距离 >6 的条目（不进 memories、
+  不回写镜像=落盘即删;**用户令,G097 修正案**——G097 保护"失败不得动成功点",本案删的是键归错档）;
+  ③写入拒学=`outcomeUpdate` 对越界键 rejected（点照点,只是不记）。
+- **阈值 6 的出处（实库回放定案）：** 全库 839 条 clickPolicies 回放:保留 769/丢 70;
+  保留最大距离 **6**、被丢最小 **12**,7~11 是空带——零误杀风险。阈值改动须重新回放。
+- **合同：** `G161SettledPositionMemoryKeyContractTest` 3 条（喂桥双终局+去噪+复用桥类型;
+  三门齐备+拒学在身份检查后;边界反射断言 6 过/7 拒/事故键拒/null fail-closed）。
+  变异（阈值放开 999）2 条断言抓红。
+- **待重启验收：** 新学条目的键应全部是落脚点（距目标 ≤6）;加载日志出现 ~70 条
+  `G161 dropped departure-keyed`;医宝宝/接任务不再出现"连吃剧情框后才撞对";
+  `Cloud current task position updated` 在每次停稳后出现。
+
+## G160 撤销大理寺故意答错（2026-09-06 用户裁定，业务铁律）
+
+- **状态：`REVERTED / 云端隔离编译 0 + 合同 3/3 + 变异红（含一次合同补强）/ 待重启验收`。**
+- **用户裁定原话：** "答题怎么还故意答错。那个不能这样，目的就是全部答对才能拿奖励。"
+- **错误性质（我的判断失误）：** G147 P4 答题人化采信了反检测评审 R8 的通用假设
+  "100% 正确率单独即签名"，加了已知题 3% 故意点错。但**本任务的奖励判据是全部答对，
+  答错直接损失奖励**——通用反检测结论与具体任务的领域事实冲突时，**领域判据优先**。
+  这正是既有铁律（用户领域判据优先于工程推断）本该拦住的一类错误。
+- **止损核查：** 全量日志 `deliberate WRONG clicked` **零命中**——G147 落地后大理寺未再运行，
+  该缺陷从未在生产触发，未造成任何奖励损失。
+- **实施：** 调用点与 `deliberateWrongClick` 方法整体删除、`DELIBERATE_WRONG_RATE` 常量删除，
+  **不留死代码不留开关**（避免将来被误当"可开启的人化选项"接回）；类头 G147 注释就地更正。
+  保留全部不损失收益的人化：读题延迟（随题宽正相关）、首见新题长考、3s settle 底线、悬停不归位。
+- **合同：** `G160DalisiAlwaysAnswerCorrectContractTest` 3 条（无故意答错路径/无概率常量/无日志文案；
+  **已知答案分支内严禁任何随机源**；无害人化必须保留）。
+- **合同补强（变异自证抓到的洞，值得记）：** 首版第二条只检查"读题延迟→点击"窄窗口，
+  变异把概率分支插在读题延迟**之上**即整段绕开、合同假绿。改为覆盖**整个已知答案分支**
+  （readAnswer 起至答对点击止）并禁 nextDouble/nextInt/ThreadLocalRandom 三者后，变异正常变红。
+  **教训：防复发类合同的检查窗口必须覆盖整条业务路径，不能卡在两个具体语句之间。**
+
+## G159 绿链后补给人化延迟（2026-09-05 用户拍板,长尾上限 10s）
+
+- **状态：`IMPLEMENTED / 云端隔离编译 0 + 合同 2/2（含 2 万样本分布断言）+ 变异红 / 待重启验收`。**
+- **实锤（用户问"点绿链后加血加蓝的频率是否一致"）：** 补给本身是阈值驱动按需触发（30/50/70% 血条
+  采样,今日 22 跳过/13 执行,间隔中位 59s 标准差 90s——频率无签名）;但**需要补的那些次**,
+  绿链→补给时延是窄带谱线:16 次里 10 次落 2.1~3.0s、5 次精确 2.2s——流水线底噪(维护窗开→
+  排队→截条→点击各步近恒定)。"分布错"陷阱同款(G150 教训)。
+- **撞车核查（用户追问医宝宝/修装备/召唤技能）：** 硬撞不可能——所有输入过每窗任务回合队列天然
+  串行;医宝宝/修装备是队长任务流独立阶段与成员补给不同窗;召唤技能同 capability 门同队列,
+  最坏前后脚排队。真正风险=太晚遇"到达关窗",而**执行前重过 capability 闸是现成保险**,
+  错过滚到下一安全缝(既有 deferred 语义),零新增互斥。
+- **实施（AutoCombatService 一处）：** pending 待办在 capability 闸首开后掷一次"不早于"时刻
+  （`nextFirstAidHumanDelayMs`:70% +0.2~1.5s / 25% +2~6s / 5% +8~10s,上限 10s 用户拍板）;
+  未到点 return false 保持 pending 顺延（既有重试节拍驱动,**不睡线程**——延迟门在进任务回合
+  队列之前,不占回合）;新一轮待办重掷、执行完成归零。既有节拍 ~3.5s 的量化被"绿链相位随机"
+  自然抹平。
+- **合同：** `G159FirstAidHumanDelayContractTest` 2 条（掷骰点在入队前+不睡线程+重掷/归零;
+  2 万样本三档占比 ±3%/±2% 且严禁越过 10s 上限）。变异（冻骰）证红。
+- **待重启验收：** `human delay drawn: delayMs=` 日志呈三档;绿链→补给实测间隔不再聚在 2.2s;
+  不应出现补给饿死（长尾+关窗错过应在下一缝补上）。
+
+## G158 面板拖回落点去同一化（2026-09-05 用户拍板"浮动可以大,100 都能接受"）
+
+- **状态：`IMPLEMENTED / 隔离编译 0 + 合同 3/3（含 2 万样本统计断言）+ 变异红 / 待重启验收`。**
+- **问题（用户问"拖任务面板位置每个号是不是完全一样"）：** 两处拖回落点是写死常量,五窗一像素不差:
+  自动战斗面板安全点 (489,726)、任务追踪面板拖回点 (119,221)。协议上纯本地零封包（服务器看不见）,
+  但目视面（盯屏/GM观察）五窗完全同点"太整齐"。用户拍板改,浮动上限 100。
+- **触发判据（本卡取证确认；v2 用户拍板容差 20→50）：** ①自动面板=面板中心与安全点欧氏距离
+  **>50px** 才拖（原 20 太敏感,"50 可以不动"）,每场战斗至多一次,不与 Alt+8 修复并发;
+  ②追踪面板=锚点跑出 (119,221)±100/±75 的默认 ROI 盒才拖回。
+- **两个硬约束（实施关键）：** ①自动面板的 **>20px 判据与拖拽落点必须同源用抖后点**——参照点不抖
+  只抖落点=拖完永远判"偏了"场场重拖;②追踪面板截断必须收在 ROI 盒内侧（±80/±60,留 20/15 余量）
+  否则拖完又触发。另有几何硬约束:自动面板 y=726+半高28=底边754,窗高768,**y 向下只放 +10**。
+- **实施（客户端两文件）：** ①Sampler:每窗实例字段 `autoPanelSafeJitteredX/Y`
+  （x 高斯 σ45 截断 ±100,y σ30 截断 [-80,+10]）,判据与落点同用;窗内稳定不反复搬家,
+  窗间/重启间不同（sampler 每窗一实例）。②TrackerMechanics:每次拖拽掷（σ35/±80,σ25/±60）,
+  拖后锚点记抖后实际落点。
+- **合同：** `G158PanelDropJitterContractTest` 3 条（判据落点同源+截断值+实例字段;ROI 盒内侧余量+
+  锚点记实际落点+盒常量出处锚;2 万样本边界与熵断言）。变异（判据参照点换回固定值）证红。
+- **待重启验收：** 五窗自动战斗面板应停在互不相同的位置;拖回不应出现"场场重拖"
+  （`dragging back` 日志同窗同代不应重复）;追踪面板拖回后不应立刻再触发。
+
+## G157 产包节律去精确化 + 落点高斯化（G145 P2+P1 收尾，2026-09-05 用户拍板"两个都做"）
+
+- **状态：`IMPLEMENTED / 双仓隔离编译 0 + 合同 4/4（含两条 2 万样本统计断言）+ 变异两发全红 / 待重启验收`。**
+- **P2 收窄版时延（G145 表最后一个待拍板项）：** R4 实锤=约 21 处固定时延常量（150/80/200/300ms 等）
+  使操作间隔熵极低，方差/频谱分析即现机械周期；收窄裁定=只有产生上行封包的时延可见，
+  250ms hint 轮询/1000ms 采样等纯本地节律改了白改。**落点选在 `InputActionWorker.execute`——
+  它是两仓所有真实输入序列（点击按住时长/双击间隔/步间 SLEEP）的唯一执行闸，纯本地轮询不经过这里,
+  天然完成"产包/纯本地"分家,21 处源头常量与既有合同锚零改动。** 执行时刻套对数正态乘子
+  `exp(N(0,0.18))` 截断 `[0.8, 1.5]`（期望≈1.02,150ms→典型 128~200ms）;带 deadline 的睡眠
+  抖后仍受 `executeDetailedSleep` 原语义约束;零/负时延原样返回。
+- **P1 落点高斯化（缓行半项，轨迹半边已判作废）：** R3 实锤=±5/±4 均匀抖动在热力图上是
+  边缘中心等密的方块，真人是中心密边缘稀的二维高斯。三处升级：客户端 FIFO `jitterForExecution`
+  与 Ctrl 候选（新 `gaussianOffset`，σ=2.2/1.8）、云端学习点重放（新 `gaussianClickOffset`）。
+  **截断保持在既有 ±5/±4 边界内，安全区回落语义不变——风险面零外扩。** G152 合同的云端锚
+  同步演进（均匀 nextInt → gaussianClickOffset），抖动本身仍是硬合同。
+- **合同：** `G157PacketRhythmAndGaussianContractTest` 4 条——源锚（四个产包时延点全接抖动+截断在）
+  + 反射统计断言两条（2 万样本：时延落 [0.8x,1.5x] 且 distinct≥30；落点 |v|≤2 占比 >60%，
+  均匀分布仅 45%、σ=2.2 截断高斯≈71%，分布形状本身进合同）。变异两发：冻结乘子=红、高斯换回均匀=红。
+- **待重启验收：** 输入日志同一动作的 sleep/按住时长应呈散布不再恒定;`base=(..) jittered=(..)`
+  散点长期累计应中心密边缘稀;任务成功率不回退（时序上界仅 +50%,现有超时预算均有余量）。
+- **G145 系至此收官：** P1~P9/M2 全实施或作废（M1/M3 作废、M5 纪律项），
+  仅剩两条"记录在案无对策"的已知风险行（Raw Input 设备归因、WDA_EXCLUDEFROMCAPTURE）。
+
+## G156 半路停下恢复两档判定（2026-09-05 用户裁定，06:21 移动中重按绿链事故）
+
+- **状态：`IMPLEMENTED / 云端隔离编译 0 + 合同 4/4 + 变异红 + 真实数据行为回放 / 待重启验收`。**
+- **用户裁定原话：** "和飞行没有关系，我们以前不是有可能停下了的状态么。现在的问题是判停不对。"
+  （我首版误判为长寿村飞行场景问题，被用户一句纠回判停链本身——**场景是表象，阈值是根因**。）
+- **回归根因：** 旧本地判定 `WindowObservationSampler.classifyRecognizedPathingState` 是**两档**：
+  到达目标 `LOCAL_PATHING_ARRIVAL_STATIONARY_MS=600ms` 即认（坐标已与目标重合，证据本就强）；
+  **半路停下 `LOCAL_PATHING_STOPPED_AWAY_MS=2200ms` 且 stableMs/intentAgeMs/recognizedStationaryMs
+  三条件齐备**；两者之间一律 ACTIVE＝用户记忆里"可能停下了但还不算数"的观察态。
+  08-22 值判稳重设计只写了单一 `VALUE_STABLE_ENTER_MS=900ms`，**这一档观察态没被带过来**；
+  G130(08-31) 把值判稳推广到全部任务后，旧两档判定成死代码（`isValueStabilityMode()` 恒真），
+  无目标绿链腿（UNTARGETED_TRACKER）的每一次 900ms 静止都被云端无条件映射成 STOPPED_AWAY 终局。
+- **实测取证（队长窗 06:14 重启后 ~7 分钟）：** 判停后又被**有效坐标变值**撤回 6 次，
+  真实静止时长 1341/1738/1361/2179/**2447**/1425 ms——**5/6 不足 2200ms，旧门本可全部拦住**。
+  06:21:04 那次真实静止仅 1425ms 却判停 → 等不到看打框 → `template-never-appeared` →
+  **移动中重按绿链**（＝用户目击现象）。轮 4/轮 5 各烧掉 2 次重按（上限 3 次/轮）。
+- **实施（云端一处，客户端零改动、协议零变更）：** `CloudObservationHttpHandler.translateStabilityFact`
+  在 STABLE→STOPPED_AWAY 分支后加静止时长门 `STOPPED_AWAY_STATIONARY_MS=2200ms`（取旧常量原值）：
+  静止起点 `max(locationChangedAtMs, pathingStartedAtMs)`（locationChangedAtMs==0 表示本腿从未观察到
+  变值，退回腿起点——同时覆盖旧门的 stableMs 与 intentAgeMs 两个条件，腿刚起步不会抢跑）；
+  不足者降回观察态。**ARRIVED 完全不受此门约束**（900ms 判稳即成终局，帧 lineage 语义不变）。
+  客户端电平续报 STABLE，静止够久自然有一拍越门。
+- **协议硬约束（踩坑预防，2026-08-23 22:4x 整批 400 实锤）：** 观察态必须**不带坐标/图名/lineage**
+  —— 校验器的"带坐标必须带图名"豁免只认 STABLE/STOPPED_AWAY，翻译产物会被 `inbox.accept` 复验，
+  ACTIVE 带坐标无图名 = 整批拒收。故新增 `withObservingActiveState` 专用构造。
+- **合同：** `G156StoppedAwayObservationGateContractTest` 4 条（2.2s 原值+静止起点公式+降观察态；
+  ARRIVED 不被拖慢且仍独占 lineage；观察态不带坐标；旧两档常量作为出处不许悄改）；变异（关门）证红。
+- **行为回放：** 用今晨 6 次真实静止时长跑新判据，5 次拦成观察态（含 06:21:04 那次）、
+  仅 2447ms 那次仍判停——与预期一致。
+- **代价：** 绿链腿真正停下时终局晚约 1.3 秒。
+- **待重启验收：** 出现 `G156 stable-but-not-yet-stopped` 观察态日志；
+  判停后被有效变值撤回的次数应大幅下降；`template-never-appeared` 与绿链重按应显著减少；
+  观察 POST 400 必须保持为 0（协议约束回归哨）。
+
+## G155 Alt+4 名字层按需化（G145 P6 落地，2026-09-05 用户裁定）
+
+- **2026-09-07 历史复核更正：** 李靖 `(155,108)` 不是未经使用的新站位；9月1日19:34 记忆点击与接任务成功、记忆晋升全链齐全，9月6日16:48 被 G161 距离过滤明确丢弃，证据详见 G161 追加记录。15:30 卡死是合法记忆被过滤与黄名续帧被空 CTRL 截断叠加；不能归因于用户此前没跑过该坐标。
+- **2026-09-07 记忆复核补充（用户指出以前成功点过）：** 按启动脚本租户作用域定位 `%LOCALAPPDATA%/DHXY/cloud-brain/state/5f8f5fe289f501f11ca5459581a9a78c8982e0ace554268e524857051fa6a71e/vision_memory.json`，解析 JSON 后李靖政策 32 行、去重人物站位 28 个，当前文件 `player:155,108` 为 0；文件最后写入 14:23:31，早于事故。不能把此结论扩大为“历史上从未存在”，历史丢失/迁移尚未证明。更早的直接触发证据是 Cloud 日志 58816：14:43:05.934 `李靖 nearby: player=天宫(155,108) target=天宫(144,114) tolerance=11`，任务把回城落点当作附近可点，随后失败保留站位。永久库有李靖记忆，但查找含 exact 人物站位，洗黄字的补救又被空 CTRL 终止。当前源码相比上轮读取已经变化，不能用它反推当时 G161 加载规则；未改生产或运行态。
+- **2026-09-07 15:30 运行取证：P1，黄名续帧不可达，待修复。** 天庭队长油壶壶 `hwnd-1BCF0F22` 在天宫 `(155,108)` 点李靖 `(144,114)`。Client `logs/local-stack-client.out.log:67553–67563`：15:30:01.847 MEMORY 返回 `cloud-brain-npc-memory-miss`；01.982 收到 `CONTINUATION / cloud-brain-npc-yellow-needs-name-layer`；01.986 空 `CTRL_CANDIDATES` 被判 `SAFETY_REJECTED`。`NpcArrivalFrameFifoLocalExecutor.executeCtrlCandidates` 将空列表判安全拒绝，`consumeOne` 返回 TERMINAL，外层直接返回，未消费 END、未进入 EXHAUSTED 换帧，故本卡移到替换帧的 Alt+4 与黄名识别均不可达。上层再开新 intent，仍从首帧重复。原图：`images/debug/npc-arrival-click/20260907_153006_052_hwnd-1BCF0F22_李靖/frame.png`，同目录 metadata 六条消息全部 click=none。修复方向：空候选作为无候选继续消费，真实越界保留拒绝；确保续帧请求可达既有有界第二轮。用户本轮仅要求排查，未改生产、未运行测试、未触发输入。
+- **记忆证据边界：** 同一 taskRunId 在 14:07:15 和 14:23:27 分别取到李靖 `player:143,113` 与 `player:142,113` 记忆；15:30 为 `player:155,108` 且返回空。查询键包含人物坐标，不能据此说全部记忆没加载，也不能仅凭 miss 区分该键从未保存还是工作副本已耗尽。
+- **状态：`IMPLEMENTED / 双仓隔离编译 0 + 合同 3/3 + 变异红 / 待重启验收`。**
+- **用户裁定（直接决定，免去 P6 的产包核实前置）：** "直接点击、记忆点、tooltip 本来都不需要 Alt+4，
+  只有洗黄字那里的截图需要。我们现在太多没必要的按 Alt+4 了。"
+- **取证（今日日志）：** Alt+4 按了 **152 次**，且 **全部来自单帧计划**
+  （`runSingleFrameNpcClickPlan` 开头无条件 `keyStep(ALT_4)+180ms+capture`）；
+  云端流水线名字层 `prepareNpcPipelineNameLayerOnce` **0 次**、本地黄字扫描 **0 次**。
+  FIFO 候选类型分布 199 个：MEMORY 74 / TOOLTIP 66 / FIXED_POINT 51（合计 96%，全按坐标或模板判定，
+  与玩家名字层无关）、YELLOW_NAME 仅 6（3%）、PURPLE_FORMULA 1 / CTRL 1。
+  **＝为 3% 的阶段，96% 的点击都交了一次仪式键。**
+- **实施（三处，保持"黄名只在备好名字层的帧上判定"这一不变量）：**
+  ①`NpcClickService.runSingleFrameNpcClickPlan` 首帧改为纯截图（去 ALT_4+沉降步）；
+  ②`SmartClickRecognizer.clickUniqueYellowTarget` 首帧（attemptIndex=0）不在脏场景硬判，
+  直接走**既有** REQUEST_NEW_SCREENSHOT 通道（reason=`cloud-brain-npc-yellow-needs-name-layer`）；
+  ③客户端 `NpcArrivalFrameFifoLocalExecutor.captureFreshExactFrame`（替换帧）按 Alt+4+180ms 再截图。
+  闭环＝首帧 EXHAUSTED → `replaceWithFreshFrame`（现在备名字层）→ attempt 2 黄名正常判
+  （G122 CONTINUATION/attemptIndex 语义原样复用，未新增协议字段）。
+- **代价与边界：** 黄名路（3%）多一次往返；96% 的点击少一次按键。Alt+4 是 toggle 非幂等
+  （G113-1 点错 NPC 事故），一次替换只按一次。本地 `runNpcClickPipeline` 的名字层准备与
+  `captureCleanNameRegionToMemory(prepareAlt4=true)` 语义未动。
+- **合同：** `G155NameLayerOnDemandContractTest` 3 条（首帧禁 ALT_4 步+必须纯截图；黄名首帧必须要新帧；
+  替换帧必须备名字层且可对账）；变异（把 ALT_4 加回首帧）证红。
+- **待重启验收：** `PRESS_ALT_4` 次数应从每次点 NPC 一次降到仅替换帧触发（预期降幅约 96%）；
+  出现 `npcClick:replacement-hide-player-names` 与 `cloud-brain-npc-yellow-needs-name-layer` 日志；
+  领双/接任务成功率不回退。
+
+## G154 固定点到达开锁（2026-09-05 领双 05:08 事故，用户拍板方案 1）
+
+- **状态：`IMPLEMENTED / 云端隔离编译 0 + 合同 3/3 + 变异红 / 待重启验收`。**
+- **事故（05:10 用户目击"队长领双原地不动+重新输地图领任务"）：** 鬼王 round 46 接任务成功后进领双维护,
+  到达长安(415,235)（intent 9e2f775b）;到达帧 frame54 已备、云端会话已建、固定点候选 (662,396) 已入队、
+  ready 已置位——但云端稳定事实分类出的 ARRIVED **不带 terminalFrameId/generation**,
+  `applyNpcArrivalFrameGate` 静默落 NO_GATE_CHANGE,`unlockArrivalFrame` 永远没被调用,会话锁死。
+  客户端 FIFO 干等 60s 熔断（quietMs=60047）,一下没点;领双 2/2 失败后 180s pre-combat 看门狗爆表,
+  故障闸"同轮从接任务重开"→世界地图重输阎王书房（=用户看到的重新领任务）,05:10:29 用户手停。
+- **历史对照（非偶发）：** 今晚 4 次领双仅 03:06 一次成功,且靠的是 42s 后偶发的第二次稳定事实
+  （坐标抖动重稳）抢在 60s 线前开锁——纯运气。
+- **取证纠偏：** 初判"tooltip 探测零产出"错;用户指正领双=记忆点直点（FIXED_POINT_YELLOW,
+  tooltipType=NONE,fixedWindowX/Y 注入 score=1.0 预置 targetCandidates）。真根因=开锁门,不是识别。
+- **实施（cloud-brain 两文件）：** ①`NpcClickSmartQueueStore.unlockArrivalFixedPoint`——
+  需求带预置 targetCandidates 才动作:会话已建→`session.unlock()`（自带 ready 发布）;
+  未建→置 `fixedPointArrivedPending`,备帧建会话时天生解锁（同 G125 首帧语义,G154 日志行）;
+  无需求/无预置候选→NO_GATE_CHANGE 保持原语义,视觉需求照旧等精确帧。电平重报幂等。
+  ②`DecisionEngine.applyNpcArrivalFrameGate` ARRIVED 分支:带帧照旧 `unlockArrivalFrame`,
+  无帧改走 `unlockArrivalFixedPoint`（此前静默 NO_GATE_CHANGE）。
+- **合同：** `G154FixedPointArrivalUnlockContractTest` 3 条（无帧 ARRIVED 必须路由固定点开锁+
+  带帧开锁不许移除;只对预置候选需求动作+session.unlock+pending;备帧天生解锁+留日志）;
+  变异（删 gate 调用）证红。
+- **待重启验收：** 领双到达后应立刻出现 `ARRIVAL_UNLOCKED_FIXED_POINT`（或 pending→born unlocked）日志,
+  FIFO 秒级收到 FIXED_POINT 候选;领双成功率回正、不再出现 quietMs=60047 熔断。
+- **关联未修（用户未拍板）：** 维护失败仍会被 180s 看门狗算总账打回接任务重开（方案 3 兜底未实施）;
+  heal-pet 洛阳城导航 MAP_NOT_REACHED 纠缠未查。
+
+## G153 修罗回程第五落点改屏幕右键走位（2026-09-04 用户全程设计）
+
+- **状态：`IMPLEMENTED / 云端编译 0 + 合同 1/1 / 待重启验收`。**
+- **取证（443 次回程统计，全部历史日志 `return item verified` 行）：** 回程道具在灵兽村的落点
+  恰好 **5 个固定点近似均匀**：(117,90)×97 / (120,83)×94 / (101,83)×88 / (117,95)×83 /
+  **(132,92)×81**——用户凭记忆预判"只可能随机到五个固定坐标"分毫不差。前 4 点在接任务 NPC
+  直点范围内（零移动）；唯 (132,92)（~20 格）落进"开世界地图搜索→点小地图"导航路
+  （route dialog preparation ×304 实证），对短距是真人绝不会做的操作，每天 ~16 次同款开图。
+- **用户设计（实况标注图确认，scratchpad g153_annotated.png）：** 落点固定+NPC 固定→方向恒定
+  （屏幕左偏下，NPC 名字就在屏幕左缘可见），**一次右键**即进直点范围，不需要任何格子→屏幕换算。
+  点位 (179,436) 窗口相对逻辑坐标，X±45 大幅随机；**Y 只向上抖 0~30**（用户纠偏：A 点已在
+  NPC 行位偏下，Y 向下=背着 NPC 走）。右键在本游戏只走路不交互（用户确认的游戏行为前提）。
+- **实现（v2，用户裁定判停沿用现有链，禁固定睡眠）：**
+  ①NavigationService 新公开 `navigateByScreenRightClickWalk`：TurnPathingIntent 随
+  MOVE+CLICK_RIGHT（WINDOW_RELATIVE）下发——Local Pathing Fact Bridge 同款，本地 runner 是
+  唯一寻路权威、发布 ARRIVED/STOPPED_AWAY 终局，`awaitNewerPathingTerminalOrPreparedRoute`
+  等它（与小地图路同一套停下判定，零新机制、零固定睡眠；初版 3s 固定睡眠被用户当场否决）；
+  ②XiuluoTaskV2 `walkOffFarReturnLanding` 挂回城验证成功汇合点（cached/normal 两分支同过），
+  触发门=落点∈(132,92)±3，调导航新方法后按终局记日志即返回；
+  **任何失败非致命**——世界地图导航路原样兜底，零新增失败路径。
+- **合同：** `G153FarReturnScreenWalkContractTest` 2 条（修罗侧：触发门钉 132,92/verified 汇合点/
+  走导航新方法禁自造 TurnStep/Y 只向上抖/walk 方法内禁 TaskSleep/非致命兜底；导航侧：意图搭车+
+  await 终局+右键窗口相对+ARRIVED/STOPPED_AWAY 两态映射+方法内禁固定睡眠——跨仓源码锚）。
+- **待重启验收：** 日志关键字 `G153 far-return screen walk`；命中该落点的轮次不应再出现
+  `xiuluo-v2:returnFallback:map` 的世界地图搜索；接任务成功率不降。
+
+## G152 NPC 点击落点抖动（2026-09-04 用户质疑"点 NPC 是不是每次同一个点"→日志实证成立）
+
+- **状态：`IMPLEMENTED / 双仓编译 0 + 合同 3/3 / 待重启验收`。**
+- **实证（client 日志 local-stack-client.out.log）：** NPC 点击**零抖动**——同一像素连点 5 次
+  （`fifoCandidate:TOOLTIP relative=(371,239)`×5、(311,99)×4、(691,99)×3），且候选点呈公式
+  **格点分布**（x∈{371,490,689,691}、y∈{99,195,239,297,337,339}）——比"每次同点"更机器的点阵签名。
+  代码根因：FIFO `executePointAndVerify` / Ctrl 候选 / 云端 learned 重放三处都是匹配点/存点原样点击；
+  客户端 FakerInput 落点还带 ≤1px 精确收敛。对话框选项误报排除：已有 ±12/±3 抖动
+  （早前两条 Y=175 是 n=2 巧合，±3 内同 Y 概率 1/7——n=2 不许下结论）。
+- **修法（三处执行面 ±5/±4 均匀抖动，NPC 判定框几十像素裕量充足）：**
+  ①FIFO 候选 `jitterForExecution`——抖出安全区回落基准；日志同落 base+jittered 供对账；
+  ②Ctrl 候选匹配点同抖；③云端 learned 重放点同抖（G139 遗留修复库复活后即生效）。
+- **v2 记忆语义（2026-09-04 用户设计裁定，推翻初版"记忆恒存基准"）：**
+  **验证成功的抖动点=一次真实命中=新基点**——rememberVerifiedPoint 存实际执行点（含重放命中），
+  基点在 NPC 判定框内自然游走：长期分布铺满可点区域+带时间相关性（比死中心撒方块更像真人）。
+  安全性由验证门保证：打不开对话框的点永远不被存，游走天然有界（自纠错）。
+  **未证实/deferred 不接管基点**——miss 点不能当新基准。云端 learned 路成功记录本就用执行点，
+  同语义天然成立。初版"防学习库漂移"的担忧只在无条件保存时成立，被用户论证推翻。
+- **定级说明：** 像素落点不上行（G145 架构师定论），本项属 P1 落点半项落地——服务端看不见，
+  收益=客户端遥测情景的纵深防御+消除本地日志/落盘里的点阵签名。用户主动点名，成本一行级。
+- **合同：** `G152NpcClickJitterContractTest` 3 条（FIFO 抖动+回落+记忆存基准+新旧日志格式、
+  Ctrl 抖动、云端 learned 禁原样重放——跨仓源码锚）。
+- **待重启验收：** 日志应出现 `base=(x,y) jittered=(x',y')` 且两者围绕基准散布；同一 NPC 多轮
+  落点不再重复同一像素。
+
+## G151 采集换底 WGC（G145 P8 升格，2026-09-04 用户拍板"最明显可能检测的截图还没做"）
+
+- **状态：`阶段1 IMPLEMENTED / 编译328/0 + 合同4/4 + 真机E2E通 / 下次重启即启用`。**
+- **动机（用户直觉+技术实锤）：** PrintWindow(PW_RENDERFULLCONTENT) 是全系统**唯一会向游戏窗口
+  投递重绘请求**的采集路径——游戏窗口过程真实收到消息并执行整窗重绘（2026-07 性能调查实证），
+  属"物理接触"；其余检测面全是统计推断，唯这条是硬证据面。WGC 从 DWM 合成缓冲取帧，目标进程
+  零参与。附带收益=卸掉五开渲染卡顿大头。
+- **真机判定实验（2026-09-04，3519 战斗中实况）：**
+  - WGC 帧 1036x783 与现行帧契约同构（含标题栏）；
+  - vs 窗口 DC 逐像素：整帧差异 0.23%（纯动画本底），标题栏/右上 HUD 静态区
+    **偏移 (0,0)、差异 0.0000**——771 模板零改动直接换底（G124 级风险清零）；
+  - Java→sidecar E2E：首帧 650ms（含建会话），续帧 **17~57ms**；战斗中与现行 PrintWindow
+    链共存无冲突；
+  - **重启前基线（落盘证据地面真相，2026-09-04 查证）：** 生产 capture-evidence
+    **910 张 HWND_PRINTWINDOW vs 10 张 HWND_BITBLT**，且 provider 标签只在该路成功非空时写——
+    证明重启前 PrintWindow 是主路且成功率极高＝**一直有感**（与 7 月整窗重绘性能根因自洽）。
+    G151 是把这个长期存在的有感采集面切成无感，非锦上添花。
+  - **纠错记录：** 早前"独立进程探测 PrintWindow 全黑→生产也常年失败"是无据外推（探针进程
+    上下文差异，非生产路径），被 910 张证据推翻——同"缺席日志不等于代码不在"类错误：先查证据再下结论。
+- **架构（零编译依赖路线，本机无 C++/dotnet SDK）：**
+  - `scripts/wgc_capture_sidecar.py`（python + pip `windows-capture` 2.0.1 预编译轮子）：
+    localhost:47831 行协议（`CAP <hwnd> <freshMs> <timeoutMs>` → `OK w h len`+BGRA），
+    按 hwnd 懒建会话（cursor/border 关、minimum_update_interval=400ms 限流、120s 闲置拆除）。
+    坑①：库的 `window_hwnd` 路对本游戏窗口抛 "Failed to convert item to GraphicsCaptureItem"，
+    改 hwnd→GetWindowText 精确标题→`window_name` 路（标题含唯一角色 ID 等效精确）；
+    坑②：Windows 下 SO_REUSEADDR 允许双绑，旧 sidecar 残留会静默接管端口——重启脚本用
+    端口探活幂等复用，杀旧进程须按端口找 PID。
+  - Java：`CaptureBackendProperties`（`bot.capture.backend` 默认 LEGACY）+
+    `WgcSidecarCaptureClient`（短连接、异常收敛 empty、10s 节流告警）+
+    `BoundWindowCaptureService` WGC 分支先于 PrintWindow、同过空帧探测、独立
+    `CaptureProvider.WGC_SIDECAR` 标签（落盘证据可归因）；**失败按次回退——眼睛永远不瞎**。
+    **终态（用户二次拍板 2026-09-04"兜底我都不想要，截图就是不需要让游戏知道"）：
+    PrintWindow 整体删除**（调用/常量/枚举标签全清，同 G146 删 PostMessage 哲学）。
+    现存两路全无感：WGC（DWM 合成缓冲）优先→BitBlt（系统重定向表面）回退，均不向窗口投递
+    任何消息；两路皆失败=本拍快失败（上游自带重试），宁可瞎一帧不让游戏有感。
+    顺手修复既有损坏：`TurnCapturePointerClearContractTest` 反射找 4 参 TurnExecutionWindow
+    构造器（turn 重构后已是 7 参）早已 NoSuchMethod——按当前签名适配后 13 合同复活全绿。
+  - 启用面：`config/application.properties`（G106 本机配置位）已置 `WGC_SIDECAR`，
+    restart-local-dhxy-stack.ps1 已加 sidecar 幂等拉起（PS7 重定向等待坑走 cmd /c）——
+    **下次重启验收即全量走 WGC**。
+- **合同：** `G151WgcCaptureContractTest` 4 条（默认 LEGACY 不配置零变化/BGRA 逐通道无损
+  含文字绿 (0,208,17)/sidecar 死端口收敛 empty 不抛/源码锚 WGC 先于 PrintWindow+空帧探测+独立标签）。
+- **熄屏实测（2026-09-04 用户问"关屏幕还能截到吗"）：** SC_MONITORPOWER 熄屏状态下，
+  WGC 两次均取到 **200ms 内新帧**、BitBlt 内容照常（自造动画窗验证）——帧来自合成器不来自屏幕，
+  **关显示器挂机完全可行**；锁屏未测（安全桌面可能停帧，勿用）；睡眠=整机停无图可言。
+- **待重启验收：** 日志/落盘证据 provider 应为 WGC_SIDECAR（偶见 HWND_BITBLT），
+  HWND_PRINTWINDOW 字样不应再出现；五窗互相遮挡时帧内容正确（本次只有单窗在线，遮挡未实测）。
+- **残余风险（G145 评审记录在案）：** 游戏方一行 `WDA_EXCLUDEFROMCAPTURE` 可令 WGC 与
+  PrintWindow 同时黑帧（致盲=可用性风险非取证风险）；Win11 无捕获黄框问题。
+
+## G150 轮间作息注入（G145 P5 收窄版，2026-09-04 用户三轮校准定案 A）
+
+- **状态：`IMPLEMENTED / 编译 0 + 合同 2/2 / 待重启验收`。**
+- **取证修正（评审第五次缩水）：** 全仓无任何定时调度器（@Scheduled/cron 零命中）——bot 从不自己
+  开工，每日上线/收工时刻全由用户手动决定，"每日定时器启动、上线时刻方差秒级"的评审假设不成立，
+  **每日作息窗半边免修**。成立的半边=**轮间零休息**：配置多轮任务（现实运营约 90 轮/天）的成功续跑
+  `scheduleNextConfiguredRun` 轮间衔接恒定 ~250ms——轮界交/接任务是真封包，几十轮如一是干净签名。
+- **设计校准（用户两轮纠偏）：** ①初版"每轮必歇 20~90s"被用户点破是窄带假分布（分布错陷阱，
+  与恒定 250ms 同类）；②长歇 7%/封顶 5min 被判拖节奏。终版 **A 案重尾混合**：
+  80% 顺手连开 2~8s / 17% 小歇 20~60s / 3% 走开 90s~3min。按 90 轮/天：额外约 +22 分钟，
+  长歇 2~3 次/天——用户裁定："90 轮连打真人本该歇这么多"。
+- **边界：** 只作用于 SUCCESS 续跑；FAILED/SKIPPED 恢复路径保持 G148 退避语义；五窗独立掷骰
+  （与 G149 启动错峰叠加，窗间漂移持续发散）。
+- **v2 纠偏（2026-09-05 用户实运行发现）：** 首版把作息装在**客户端 run 级续跑衔接**
+  （`scheduleNextConfiguredRun`），但界面显示的"轮"是修罗任务内部的场次（一个 run 含几十轮）——
+  按此配置 run 级点几乎永不触发，用户裁定点位装错。真正作息点=**云端 XiuluoTaskV2 轮与轮之间**：
+  `round skeleton finished` 后、且 `progress.shouldStartNextRound()` 才掷骰（最后一轮不歇），
+  新方法 `restBetweenRounds` 同 80/17/3 分布，切 1s 片走 `TaskSleep.sleepOrStop` 保暂停/停止即时响应；
+  队长歇即全队歇（成员窗只跟战斗，无失同步面）。run 级原实装保留作 run 交界兜底。
+  香损益：轮间歇烧摄妖香时长，香为探针制自动续，仅小幅多耗，用户知情。
+- **合同：** `G150InterRoundRestContractTest` 3 条（2 万样本三档区间+占比 ±3%/±1.5% 校验；
+  run 级源码锚；v2 新增修罗轮缝锚=shouldStartNextRound 门+restBetweenRounds+切片睡眠，变异删除证红）。
+- **待重启验收：** 云端日志 `G150 inter-round rest: round={} restMs={}` 应轮轮出现且呈三档分布。
+
+## G149 五窗去同步（G145 P3，2026-09-04 用户拍板：错峰上限 20 秒、其余求稳）
+
+- **状态：`IMPLEMENTED / 双仓编译 0 + 合同 4/4 + 变异红 / 待重启验收`。**
+- **取证修正（评审再缩水一半）：** G145 R6 证据里的"45 秒周期"本体=
+  `AutoCombatService.COMBAT_UI_CLEAN_INTERVAL_MS`（战斗中每精确 40s 的 UI 清理，
+  "in-combat maintenance" 日志即它）+处理耗时漂移；Alt+8 维护本身是事件驱动（账本低/同场 5min）
+  无周期；五窗同拍的锚点=同队同瞬进战（游戏给的，真人队伍同款）。该周期干的事基本纯本地
+  （探测为主，命中弹窗才点击），服务端大概率看不见——评审把它当主杀手属高估。
+  **真正产包的同步在批量启动**：两个启动入口都在同一循环背靠背拉起五窗，恒定顺序
+  （队长组先、组内按 id 序）+同秒连发+恒定毫秒滞后，开工封包（接任务/对话/导航）天天如此，
+  正中互相关聚类（相关>0.7 且滞后<2s）的定罪形态。
+- **改法：**
+  1. **批量启动错峰**（`WindowTaskControlService`，两入口同改）：同组内每次洗牌
+     （`shuffleGroup`）+窗间 5~20s 随机错峰（用户拍板上限 20s）。队长组仍整体先于成员组
+     （队伍建立依赖）；队长串行组用切片轮询等待（`staggerBetweenWindowStarts`，取消秒级响应），
+     成员异步组用累计延迟 `delayedExecutor`（取消由 startOneRemote 入口生命周期检查兜底）。
+     启动后各窗轮次耗时天然有方差，窗间漂移自行拉开，不需持续干预。
+  2. **战斗中清理抖动**（云端 `AutoCombatService`）：40s 精确→续拍 30~55s 随机；
+     首拍在进战+5s 后再加 1~8s 随机偏置（破同瞬进战锚点）；随机阈值存
+     `runnerUiCleanJitterMs`，消费后与三处复位点清零重掷。
+- **合同：** `G149StartStaggerContractTest` 4 条（错峰 300 样本 5~20s 界+真随机/洗牌保成员集+
+  50 次必变序/双入口源码接线×4 锚+旧 startOrder 结构禁回潮/云端清理抖动跨仓源码锚）；
+  变异（错峰改常数 0）→红。
+- **待重启验收：** 点一次启动，五窗应以随机顺序、5~20s 间隔先后拉起（总最长约 80s）；
+  战斗日志 "in-combat maintenance" 不再呈 40s 整拍。
+
+## G148 故障收口+版本熔断（G145 P7+M2，2026-09-03 用户拍板"可以"）
+
+- **状态：`IMPLEMENTED / 编译0 + 合同4/4 + 变异红 / 待重启验收`。**
+- **P7 故障收口（`WindowTaskControlService`）：** 根因=FAILED/SKIPPED 可恢复终态每次都以
+  `attempt=1` 调度重启，现成退避梯子（`WindowTurnLoop.FAILURE_RETRY_BASE_DELAYS_MS`
+  250ms→5s）从未升档——G139 的 280ms 无限热重启即此。修法：
+  ①新 `remoteRecoveryStreaks` 按窗连击计数驱动梯子升档（重试间隔 250ms→500→1s→2s→4s→5s 封顶）；
+  ②SKIPPED（确定性前置不满足）连击 >5 次熔断：`markRemoteStopped` 留言"等待人工处理"，不再重启；
+  ③FAILED 不设上限（崩溃恢复语义保留）但同享退避——风暴上限从每秒 3.5 次降到每 5 秒 1 次；
+  ④清零点=SUCCESS 终态+手动新启（新生命周期）。
+- **M2 版本熔断（`WindowNativeBindingRefreshService` + 控制层）：** 沿用 G124 定案
+  "手动启动只诊断不拦截"，只熔断**自动重启链**。两种尺寸失明态任一命中即不再自动重启、停机留言：
+  ①出生偏基线——注册尺寸≠1036x783（`LocalTeamRolePreflightService.isAtCalibratedSize` 新公开）；
+  ②中途漂移——live 尺寸连续 ≥3 次刷新偏离注册尺寸（refreshGeometry 既有"保注册尺寸只告警"语义
+  使捕获等效失明；新 `isGeometryDriftFused`/`geometryDriftDetail` 电平，尺寸恢复自动复位）。
+  停机文案含具体尺寸与"调回 1036x783 后手动重开"指引。
+- **合同：** `G148RecoveryFuseContractTest` 4 条（漂移熔断三次触发/恢复复位、基线门、
+  梯子隔档单调、控制层接线源码锚）；变异（去掉连击累计）→熔断合同红。
+- **边界（记录）：** 中途尺寸漂移不会即时打断进行中的 run（它会按自身失败路径终局），
+  熔断作用于终局后的重启决策；如需 run 中即时急停需跨层接线，另立卡拍板。
+- **待重启验收：** 复现 G139 场景（单窗判 SOLO）应看到重试间隔逐次拉长、第 6 次 SKIPPED 全停留言；
+  日志关键字 `G148-P7`/`G148-M2`。
+
+## G147 大理寺答题人化（G145 P4 扩展，2026-09-03 用户批准"可以按照你说的改"）
+
+- **状态：`阶段1+阶段2 均已实施（云端编译 683/0）/ 待重启验收`。**
+- **阶段2 实施记录（2026-09-03，用户提供 3511 悬停样本后当场标定）：**
+  - 标定实测（scratchpad hover3511.png，PrintWindow 拒后 CopyFromScreen 截 3511 前台窗）：
+    文字绿=纯 `(0,208,17)`、悬停黄=纯 `(255,255,0)`、点击选中框=纯 `(0,255,0)`，渲染无抗锯齿零过渡；
+    黄行内绿像素为 0、绿行内黄像素为 0，两态互斥。
+  - 重放验证（replay_normalize2.py）：绿模板 vs 黄实况归一化 **1.000**；历史绿帧回归配对正确的全部
+    ≥0.93（v1 失败根因=选中框纯绿被当文字涂白,61 框线像素把 1.000 拖到 0.825——匹配判据排除
+    (0,255,0) 后修复）；ImageFinder 实证为彩色三通道匹配（绿黄 R 通道 0 vs 255 必崩,08-26 事故成因）。
+  - 代码：`isHoverYellowText`/`isOptionTextPixel`（行切分/落点/学习条带绿黄同权）+
+    `isMatchTextColor`/`normalizeOptionText`/`findOptionTextNormalized`（accept 入口×2/known-answer/
+    wrong-exclusion 双向共 5 处改色盲匹配；question/hint 匹配不动——题干白字、浮窗不受悬停影响）；
+    **parkMouseOutsideDialog 整体摘除**（连带死方法 taskContext）。摘后行为：光标点完留原地，
+    客户端 nudgeCursorOutOfDialogZone 按限流（单窗 5s/全局 2.5s）就近轻推，出口随点击位置变化，
+    无固定泊点。
+  - 残余风险（待 fresh 验收）：①学习候选图可能以黄态入库——归一化匹配色盲故自洽，但人工看库
+    会看到黄字模板属正常；②nudge 推走后 hint 浮窗若跟随光标需观察 2.5s 内浮窗判定是否受影响。
+- **阶段1（已实施，dhxy-cloud-brain `DalisiQuizTask.java`）：**
+  1. 答后 settle：精确 3s → `humanizedSettleMs()`＝3s 底线（守住用户 08-26 拍板）+对数正态长尾
+     （中位≈+0.8s，封顶 +3.5s）；
+  2. 点击前"阅读"延迟 `sleepReadingDelay`：基底 600ms+题干模板宽度×3ms/px，乘 30% 对数正态噪声,
+     封顶 6s——延迟与题长正相关是服务端唯一直接可见面的反签名；`QuizLibrary.questionWidth` 新增
+     （正/负号域都支持，读不到 320px 兜底）；
+  3. 首见新题（matchQuestion==0 进学习分支）额外 +2~5s 长考——防"没见过也秒答"的换库断崖签名；
+  4. 已知题 3% 故意点错 `deliberateWrongClick`：只点与答案命中点不同行的选项；行切不出/全同行即放弃
+     照常答对（绝不为凑错误率乱点）；candidate 传 null——**故意错的行不入 wrong 库**（可能恰是别题
+     正确写法）；走"真实提交无论对错"语义，不进失败预算；
+  5. 纯本地节律（hint 250ms/accept 750ms 轮询）按 G145 P2 收窄裁定不动。
+- **阶段2（用户方向修正 2026-09-03）：** 原案"泊点随机化"被用户否决——"每题固定移出去再回来"
+  这个动作本身就是节拍，真人答完不动鼠标。目标改为**取消 parkMouseOutsideDialog**，前提=解决
+  悬停高亮失配（08-26 加 park-out 的原因：悬停把选项绿字变黄字，绿模板/绿像素行切分双失配）。
+  - **能力评估：可做。** 方案两层：①行切分/落点/学习条带的 `isGreenText` 扩成"绿或黄都算选项文字"；
+    ②模板匹配前对 ROI 与模板双侧做颜色归一化（选项文字像素→白、其余→黑，二值化按形状匹配），
+    绿模板与黄实况归一后同形。
+  - **阻塞：缺标定样本。** 落盘档案（dalisi-hint-*/known-answer 共 34 帧含框内黄簇）逐帧查证：
+    黄色全部来自答错浮窗橙字与完成画面奖励字，**无一帧是悬停选项**——park-out 一直开着，
+    光标点完即移走，"压着下一题选项"的状态从未被拍到。另 G053/G133 封妖案例悬停是**变白**，
+    大理寺悬停到底是黄字/白字/绿框需实证。**待用户提供一张光标悬停在选项上的截图**后标定阈值、
+    实施、用落盘原图重放验证（G142 技法），再摘 park-out。
+- **待重启验收（阶段1）**：延迟分布落在预期带（读题 0.8~6s/settle 3~6.5s）；故意错率≈3% 且不入
+  wrong 库；学习分支延迟不触发 180s watchdog。
+
+## G146 键盘输入统一走 FakerInput HID：删除 PostMessage 后台注入与 WIN_API 后端（2026-09-03 用户拍板"这个肯定都要的"）
+
+- **状态：`IMPLEMENTED / 合同 24/24+G035 1/1 隔离全绿 / 变异自证过（门 throw 改放行→1 红）/ 待重启生效`。**
+- **实施账（2026-09-03）：**
+  - 删文件：`BoundWindowKeyboardService.java`、`WinApiMouseController.java`；
+    `InputBackendProperties.Backend` 只剩 `FAKER_INPUT`；`InputProvider` 删 `requiresForegroundKeyboard()`。
+  - 新文件：`cloud/turn/TurnKeyboardKeys.java`（AltShortcut/ControlShortcut/ModifierKey 枚举从
+    PostMessage 服务移植，剥掉 virtualKey/scanCode 遗物；TurnKeyMapper/TurnInputStepExecutor 改指向它）。
+  - `WindowAwareInputCoordinator` 新增 `runKeyboardInput`+`requireCurrentWindowForeground`：
+    键前严格前台见证（一次自愈重聚焦，仍不达抛拒），事务内同验；无上下文/焦点隔离关闭时保持宽松。
+    FakerInputProvider 全部键盘入口（pressShortcut/pressKey/typeTextAscii/holdCtrl）改挂严格门；
+    **releaseCtrl 豁免**（HID 修饰键为设备全局态，释放必须永远可达，否则 Ctrl 泄漏进后续动作）。
+  - `InputActionWorker`：preferBackgroundKeyboard 全链删除（canUseBackgroundKeyboard/
+    isBackgroundAltWhitelist/pressAltShortcut/executeBackgroundKeyboard/toAltShortcut/
+    shortcutDisplayName）；execute 三个 requiresForegroundKeyboard 门拆掉；
+    `executeForegroundAltShortcut` **补上缺席的 PRESS_ALT_8**（此前 Alt+8 永走后台故前台表没有它）；
+    frozen 路径恒聚焦；非独占请求恒 focusBeforeInput。
+  - 调用方收拢：QuestManagerService（Alt+Q）/BagService（Alt+E，保留前台见证为类型化本地失败）/
+    TurnCaptureStepExecutor（Ctrl 探针两处+构造器删 keyboardService）/XinshouCombatLocalMechanics
+    （pressAltB/pressAlt8 全 HID，Port/Session 删 keyboard 字段）。
+  - 测试：`G041FakerInputRoutingContractTest` 重写（唯一后端+两删类 Class.forName 守卫+全 Alt→provider
+    精确映射+Alt+8/5/6 冻结聚焦+Ctrl 生命周期）；新 `G146KeyboardForegroundGateContractTest`
+    5 合同（拒发/直通/自愈/无上下文宽松/隔离关宽松）；`G035` 重锚 FakerInput 收敛环
+    （读回验证/≤1px 门/同驱动纠偏/不可读 fail-closed/禁 SendInput 回潮）；
+    FrozenExactInputHarness/FrozenFocus/XinshouDrag（RecordingMouseController 改
+    InputProviderStub，意外物理调用即败）/CombatGate（锚串换 TurnKeyboardKeys+**500→700 陈旧锚窗修复，
+    对 git HEAD 同败，属既有损坏非本卡引入**）适配。
+  - **既有损坏记录（非本卡）**：`LocalTurnActionExecutorContractTest` 引用主仓已不存在的
+    `LocalPathingStartProofMechanics`（git HEAD 亦无此类，LocalTurnActionExecutor 现为 9 参构造）——
+    该 1290 行合同在 G146 之前就无法编译；本卡完成了它的 keyboard 桩适配（ProbeKeyboardService 改
+    HID 探针+ProbeInput 接线+删死 RecordingKeyboardService），pathing-proof API 漂移待单独立卡修复。
+  - 验证：main 全量 326 文件隔离编译 exit 0（scratchpad，未触共享 target\classes）；
+    junit 隔离 24/24 + G035 main() PASS；变异（requireCurrentWindowForeground 拒发改放行）→
+    keystrokeRefused 合同变红，恢复后复绿 12/12。
+  - **运行时验收待做（重启后）**：①五窗战斗中 Alt+8 维护经严格门的成功率与延迟（焦点自愈是否够用）
+    ②成员窗 Alt+5/6 聚焦排队对归队时序的影响 ③键盘拒发日志（"keyboard input refused"）是否出现风暴。
+- **背景（G145 P9）：** 生产活跃的 PostMessage 面=Alt+8 全局无条件（InputActionWorker 白名单 +
+  XinshouCombat ProductionSession 裸调）+Alt+5/6 成员/单人窗；其余键盘 PostMessage 分支只在
+  WIN_API 后端存活（生产死代码）。PostMessage 键可被游戏 WndProc 几行定罪
+  （后台收键+GetAsyncKeyState 键态不符）。当年白名单动机=exact-HWND 送达保证+跳过事务焦点。
+- **改法：**
+  1. **删文件**：`BoundWindowKeyboardService.java`（PostMessage 唯一出口）、
+     `WinApiMouseController.java`（SendInput/SetCursorPos/Robot 后端）；
+     `InputBackendProperties.Backend` 删 `WIN_API` 枚举。
+  2. **InputProvider** 删 `requiresForegroundKeyboard()`（单后端后恒真）；全部调用点收拢前台分支。
+  3. **InputActionWorker**：删 preferBackgroundKeyboard 全链
+     （canUseBackgroundKeyboard/isBackgroundAltWhitelist/pressAltShortcut/executeBackgroundKeyboard/
+     toAltShortcut）；所有键盘动作走 executeForegroundKeyboard/executeForegroundAltShortcut
+     （**补 PRESS_ALT_8 缺席映射**——此前 Alt+8 永远后台故前台表从来没有它）；
+     frozen 路径恒 focusFrozenBindingInActiveTransaction。
+  4. **错窗 fail-closed 门（新）**：`WindowAwareInputCoordinator.runKeyboardInput` ——HID 键盘按焦点
+     路由，焦点验证从 best-effort 升为严格：键前 `isForeground(binding)` 不达→一次重聚焦→仍不达→
+     抛异常拒发（绝不把键发进错窗）；事务内分支同样验证（自愈重聚焦覆盖 background 提交的独占会话，
+     如 Alt+8 维护）。isInputFocusActive=false 或无上下文绑定时保持现行为（不可验则不拦）。
+     `releaseCtrl` 豁免严格门（HID 修饰键状态是设备全局的，释放永远安全且必须可达）。
+  5. **调用方收拢**：QuestManagerService.pressBackgroundAltQ / BagService Alt+E /
+     TurnCaptureStepExecutor Ctrl 转换×2 / XinshouCombat ProductionSession pressAltB+pressAlt8
+     ——全部删 PostMessage 分支只留 HID。
+- **锁序核实**：executeBackground 会话实为 InputSequences 排队的独占回调（全局输入事务内），
+  迁移后键仍在事务内发，无新锁序；焦点自愈在 worker 线程持锁时执行，合法。
+- **代价（已知回归面）**：Alt+8 维护从"免焦点"变"键前可能抢焦点"——焦点闪切节律进入 R2 暴露面，
+  后续在 P2/P3 时序整改中一并人化。
+
+## G145 反作弊视角行为审计：非人操作特征全量清单（2026-09-03 用户批准分析）
+
+- **状态：`ANALYSIS DELIVERED + REVIEW#1 五方盲审完成（2026-09-03）/ NO CODE CHANGE / 修订优先级待用户拍板`。**
+- **方法：** 以游戏反作弊工程师视角，写出"抓这个客户端会部署的检测规则"，每条配本仓代码/日志实证。
+  按部署现实性分层：服务端行为分析（零客户端改动、可回溯历史）> 客户端环境扫描（需发版）。
+
+### 检测规则清单（R1-R10，按危险度排序）
+
+- **R3 鼠标动力学（服务端可算，最危险）：**
+  ①轨迹：`FakerInputProvider.glideToLogicalPoint` 3-6 步**线性等分**插值、总时长封顶 150ms、
+  ±2px 均匀噪声——真人 500px 移动 300-600ms、几十采样点、minimum-jerk 速度曲线（起慢-中快-末减速）、
+  目标端过冲+回修。线性等距+150ms 封顶在速度曲线分析下一眼假。
+  ②拖拽：25 步线性等分（`for i in 1..25` 均匀步进）。
+  ③落点：`point + 4 + random.nextInt(5)` 均匀 4-8px 方块——热力图上是整齐小方块，
+  真人是与钮距/钮径相关的二维高斯椭圆。另有 512±20/384±20 中心兜底同款均匀方块。
+- **R4 时延节律（服务端可算）：** 21 处固定时延常量（150/80/200/300ms、ANSWER_SETTLE_MS=3000 精确、
+  hint 轮询精确 250ms、采样精确 1000ms）——操作间隔熵极低，方差分析/频谱分析即现机械周期。
+  真人间隔为重尾分布（对数正态/ex-Gaussian）。
+- **R6 多号相关性（服务端聚类，工作室主杀手）：** 五窗 in-combat maintenance 2 秒窗口内前后脚
+  （日志实证 18:01:46-18:01:51 五窗逐个 45s 周期）；任务同起同收；操作时间序列互相关极高——
+  一抓封一批的依据。
+- **R8 答题行为蜜罐：** 大理寺 known answer 点击到 CORRECT hint <1s、每题精确 settle 3s、
+  已知题正确率~100%、答题延迟与题干长度零相关（真人阅读时间随题长增长）。
+- **R7 生产率/作息：** 连续小时级零休息/零聊天/零 AFK；每轮任务耗时方差秒级（真人分钟级）；
+  每日任务次数恒定。
+- **R5 序列刻板：** 每次点 NPC 前必按 Alt+4（真人极少用）；Alt+T 探测节奏固定；每轮操作序列同构。
+- **R9 故障态风暴：** SKIPPED 每 280ms 无限重启（G139 遗留）——服务端视角=毫秒级密集重复请求，
+  真人物理不可能；故障态本身就是自曝。
+- **R2 后台窗口收输入（客户端可查，确定性证据）：** 五开四窗无焦点仍收输入+被 PrintWindow 高频抓帧；
+  真人无法操作无焦点窗口。
+- **R1 虚拟 HID 存在（客户端可查，仅加权项）：** ROOT\SYSTEM 2 "FakerInput Device"；
+  因 Razer/罗技/vJoy/KVM 等正常软件同款，误封约束下只能加权不能定罪（2026-09-03 分析定论）。
+- **R10 进程环境：** Java 进程高频 PrintWindow（若客户端扫进程/hook GDI）。
+
+### 整改优先级（待用户逐项拍板后立实施卡）
+
+1. **P1 鼠标动力学人化**（driver 层单点改造、覆盖全部点击）：minimum-jerk/贝塞尔轨迹、
+   时长按距离 200-600ms、步数按距离几十步、落点二维高斯（σ 与钮径挂钩）、5-10% 概率过冲+回修。
+2. **P2 时延分布化**（TaskSleep/InputSequences 层统一）：固定 sleep 改对数正态抖动
+   （均值=现值、σ~20-30%），答题 settle 3s 改 2.5-6s 分布。
+3. **P3 五窗去同步**：维护定时器/任务启动加窗口级随机相位偏移（秒-分钟级）。
+4. **P4 答题人化**：按题干字数注入阅读延迟 + 偶发慢答/长考。
+5. **P5 作息注入**：任务间随机休息、每日时长/时段抖动、偶发 AFK。
+6. **P6 序列多样化**：Alt+4 等仪式动作按需触发（需业务权衡，改判定链）。
+7. **P7 故障态收口**：SKIPPED 重试上限（G139 遗留项，兼具风控意义）。
+8. **P8 采集管线 PrintWindow→Windows.Graphics.Capture 迁移**（2026-09-03 用户拍板列入）：
+   现状 PrintWindow(PW_RENDERFULLCONTENT) 驱动目标窗口整窗重绘（本仓 7 月性能调查实证），
+   游戏进程内可自测"后台被外部驱动重绘的节律"；WGC 从 DWM 合成缓冲取帧，
+   目标进程零参与零痕迹，且卸掉五开渲染卡顿大头（隐蔽+性能双赢）。
+   限制：最小化窗口无帧（五开"被挡不最小化"不受影响）；Java 侧需 WinRT interop 桥，
+   采集地基改造需完整评审。
+- **不动项：** R1 输入路径架构（用户判定现阶段接受存在性信号，主攻行为面——2026-09-03 讨论定论）。
+
+### Review #1 五方独立盲审（2026-09-03）
+
+评审团（互不通气，各自独立读卡+读代码）：①反作弊数据科学家 ②客户端反作弊工程师 ③游戏运营风控
+④资深脚本作者（攻方）⑤2005 代端游服务端架构师。
+
+**共识裁定（对原卡的纠错）：**
+
+1. **R3 定级方向性错误（五方共识，本次评审最大纠错）**：2005 代协议上行只有语义包
+   （走到某格坐标/点了 NPC id/选了选项序号/出手技能 id）——鼠标光标轨迹、像素落点**从不上行**，
+   服务端物理上没有这份数据。R3 从"最危险"降为**纵深防御项**（仅在游戏方未来发版加输入遥测时成立）。
+   脚本作者实战佐证：十几年未见纯靠"操作像机器"被封的实锤；封号分布≈六成经济链/两成举报+GM 抽查/
+   一成验证弹窗未过/一成进程特征库。
+2. **R9 升为头号**：五方一致——280ms 风暴是全清单唯一"百分之百被服务端看见+现成网关告警即可抓"的
+   信号，"别让故障态替你自首"。
+3. **R8 被低估**：大话系官方反挂**主武器**就是答题验证（史上被实际执行最多的检测面）。蜜罐真实玩法=
+   静默换库插新题——题库号正确率 100%→25% **断崖**比全对更好抓（本仓学习模式恰是解药，但**首见新题
+   必须表现为慢答/答错**，不能首见即对）；服务端有逐题时间戳，延迟须与题长正相关+人群级方差+
+   故意错 2-5%（100% 正确率单独即签名）。
+4. **R6 维持最高**（运营方真实在跑的聚类）。P3 修正：只加随机相位不够，**须打碎 45s 周期本身**
+   （周期抖动），否则频谱谱线仍在只是错相；但攻方校准：五开同账号体系本是一个玩家、有掩护，
+   分钟级相位+周期抖动足够，勿过度工程。同 IP 五号不是罪证（官方默许主流玩法）。
+5. **R4/P2 收窄**：只有**产生上行包**的时延可见（任务提交/对话翻页/战斗指令）；250ms hint 轮询、
+   1000ms 采样等纯本地节律服务端不可见，改了白改。21 处常量须先分"包可见/纯本地"两类再整改。
+6. **R2 形态改写**（客户端工程师）："无焦点收输入=确定性证据"不准——键盘必经焦点、鼠标按命中测试
+   路由；实际暴露形态=**五窗焦点/光标高频轮转节律**+激活到首输入间隔恒定+光标跨窗瞬移
+   （150ms 内 3-6 帧跳变、无连续轨迹）三合一。
+7. **R1 补风险行**：LLKHF_INJECTED/GetMessageExtraInfo/窗口消息层 FakerInput 全躲过；但若对手
+   发版加 **Raw Input hDevice 归因**（本驱动=根枚举 `HID\SYSTEM&Col` 无 USB VID/PID 路径 +
+   `MOUSE_MOVE_ABSOLUTE` 绝对模式，真鼠标为相对模式），两特征叠加接近定罪级，
+   **现架构无对策**（须换 Interception 类过滤驱动或硬件级注入）。记录为已知风险，现阶段不动（用户定论）。
+8. **R10/P8 改写**：删"hook GDI"——被抓方**用户态自测后台重绘节律**即可，无需 hook。
+   WGC 迁移"无痕"声明修正为"目标进程内无痕，系统层有残留"：①Win10 2004+ 窗口捕获强制黄框
+   （Win11 可经 IsBorderRequired 关闭，本机 Win11 适用）②ETW capture 事件（需提权服务，
+   游戏用户态够不着）③**游戏主动杀招 `WDA_EXCLUDEFROMCAPTURE`**：一行代码令 WGC 与 PrintWindow
+   全出黑帧，不注入无法解除——P8 方案未评估的最大单点风险（对 bot 是致盲而非取证，属可用性风险）。
+   三方一致：无 2005 代游戏自测重绘节律，**P8 立项记性能账，不记风控账**。
+
+**G145 原卡遗漏面（M 系列补遗）：**
+
+- ~~M1 验证弹窗/GM 私聊/被喊话 → 全停+通知主人链路~~ **【作废】**2026-09-03 用户实测裁定：
+  GM 私聊人工确认、官方随机验证弹窗、玩家喊话测试三样在本游戏环境**均不存在**。评审团是模拟角色，
+  此项按 2005 官服通用套路推断，与用户实际环境不符——用户领域判据优先（同 G126 教训）。
+  连带影响：P4 答题人化的"蜜罐换库"威胁假设同样建立在官方有反挂运营之上，实施前需用户再校准。
+- **M2 版本更新熔断**（G124 实证：窗口尺寸漂移致 771 模板全失配时 bot 乱点最像挂；
+  模板大面积失配/更新日→自动停机）。
+- ~~M3 回合制出手时机~~ **【作废 2026-09-04】** 取证结论：`AutoCombatService.handleCombatTick`
+  全链是面板维护（账本/入场/退战恢复），不发出手指令——主力任务每回合出手由**游戏内置 auto**
+  自己发，节奏是官方的，服务端无法与真人挂 auto 区分（评审假设 bot 逐回合发指令，与实现不符）。
+  唯一 bot 亲手出手路径=新手历练（XinshouCombatActionPlanner：ORDINARY_FIRST_ACTION_DELAY_MS=0
+  进战瞬间出手+ORDINARY_REPEAT_MS=5000 精确节拍——若启用确实全裸），但**用户裁定该任务从未用过、
+  以后也不用**。NpcClickService 的进战一次性 Alt+A 为事件驱动单次，非周期，免修。
+- **M4 寻路轨迹重复度**：G137 实证两轮走完全相同过图点 (415,235)→(374,16)→(31,19)；
+  服务端收走格坐标流，轨迹哈希/DTW 聚类可算。候选整改=waypoint 抖动（涉寻路判定链，需业务评审）。
+- **M5 经济/运营纪律面（非代码）**：日产出恒定、产出/在线比顶格、五号产物定时汇聚同一收货号成星型图；
+  举报面收敛（不上答题活动榜/不抢争议资源点/不在 PK 区挂机）；测试号不与主力号同机器码。
+- **M6 零噪声签名**：零误点/零无关面板操作/全年零聊天/GM 私聊死寂，"太完美"本身即签名。
+
+**修订优先级（本表=G145 整改总追踪表，每项动工时开独立 G 卡并回填状态）：**
+
+| 梯队 | 项 | 一句话理由 | 状态 |
+|---|---|---|---|
+| — | **P9 键盘统一 HID** | PostMessage 后台键=客户端最廉价杀招 | ✅ **G146 已实施**（合同 24/24，待重启验收） |
+| 一 | **P7 故障收口** | 280ms 风暴=唯一百分百被看见+现成告警即抓 | ✅ **G148 已实施**（连击驱动退避+SKIPPED 5 次熔断） |
+| 一 | ~~M1 停机报人链路~~ | ~~验证弹窗/GM 私聊/被喊话~~ | ❌ **作废（2026-09-03 用户实测裁定：GM 私聊人工确认、官方验证弹窗、玩家喊话三样在本游戏环境均不存在——评审是模拟角色按官服通用套路推的，用户领域判据优先）** |
+| 一 | **M2 版本更新熔断** | 模板大面积失配时乱点最像挂（G124 实证） | ✅ **G148 已实施**（尺寸失明态禁自动重启；手动启动保持只诊断） |
+| 二 | **P4 答题人化扩展版** | 服务端有逐题时间戳；首见新题须慢答/答错 | 🔨 **G147 阶段1已实施**；阶段2(取消park-out+黄字色不变匹配)待悬停样本 |
+| 二 | ~~M3 回合出手时机抖动~~ | ~~战斗封包时序~~ | ❌ **作废（2026-09-04 代码+用户双重证伪：主力任务出手全部由游戏内置 auto 发出，节奏是官方 auto 的、与真人挂 auto 无法区分；唯一 bot 亲手出手路径=新手历练 XinshouCombatActionPlanner（进战 0ms 秒出手+精确 5s 重复），但用户裁定该任务从未用过且以后不用）** |
+| 三 | **P3 五窗去同步修正版** | 真产包同步=批量启动同秒连发；45s 周期实为本地清理节拍 | ✅ **G149 已实施**（启动洗牌+5~20s 错峰、清理 30~55s 抖动） |
+| 三 | **P5 作息注入** | 每日窗免修（无调度器，用户手动即随机源）；轮间歇=真修点 | ✅ **G150 已实施**（80/17/3 重尾混合，90 轮/天约 +22min） |
+| 四 | **P2 收窄版时延** | 仅改产包路径；纯本地节律改了白改 | ✅ **G157 已实施**（InputActionWorker 唯一执行闸=天然分家，对数正态 [0.8,1.5]） |
+| 缓行 | **P1 落点高斯化（半项）** | 轨迹雕花给看不见的观众，仅落点有用 | ✅ **G157 已实施**（三处截断高斯 σ=2.2/1.8，边界不外扩） |
+| 缓行 | **P6 仪式键多样化** | ~~先核实 Alt+4 是否产包~~ 用户直接裁定：直点/记忆点/tooltip 本就不需要 | ✅ **G155 已实施**（按需化，152 次/日 → 仅替换帧，降约 96%） |
+| — | **P8 WGC 采集迁移** | PrintWindow=唯一物理接触游戏进程的路径（用户升格） | ✅ **G151 阶段1已实施**（像素零偏移实证，下次重启启用，回退链兜底） |
+| 纪律 | **M5 经济/举报面收敛** | 非代码，写进操作习惯 | 常态执行 |
+
+**Review#1 勘误（2026-09-03 用户抓漏，五方评审全体漏判）：**
+R2 的改写（"键盘必经焦点，无后台注入"）**只对鼠标成立**。本仓输入架构实为两条腿：
+①鼠标=FakerInput 虚拟 HID（真输入管线，光标实际轮转，工程师的改写对这半正确）；
+②**键盘快捷键全链=PostMessage 直塞 hwnd**——[BoundWindowKeyboardService.java:130]
+`PostMessage(hwnd, WM_SYSKEYDOWN/WM_KEYDOWN/WM_CHAR, ...)`，Alt+8/Alt+4/Alt+T/Alt+E/Ctrl 组合/
+Enter/Escape/文本输入全走此路（调用方=InputActionWorker/BagService/QuestManager/
+TurnCaptureStepExecutor/XinshouCombat），**真·后台消息注入，不经焦点**。原卡 R2
+"无焦点收输入=确定性证据"对键盘半边**本来就是对的**。
+客户端检测代价（需发版但极廉价，游戏 WndProc 内几行）：①收到 WM_SYSKEYDOWN 时
+`GetForegroundWindow()!=自己`（后台窗口收键=物理不可能）；②`GetAsyncKeyState(VK_MENU)` 显示
+Alt 物理未按下——PostMessage 无法伪造异步键态。两查合一即定罪级，**成本远低于 Raw Input 归因，
+升为客户端侧最廉价杀招**（服务端仍看不见，不改变"服务端可见面优先"总排序）。
+候选整改（新 P9，待拍板）：FakerInput 驱动本有 HID 键盘（pasteText 的驱动 Ctrl+V 即证）——
+快捷键改走驱动 HID+WindowFocusService 先置焦点；代价=键盘并入 globalInputLock 串行+焦点闪切，
+且焦点轮转节律本身进入 R2 三合一暴露面，需一并人化。
+
+**P9 全仓输入出口普查（2026-09-03 用户追问后完成，三条路全列）：**
+
+| 路径 | 机制 | 生产状态 | 检测面 |
+|---|---|---|---|
+| FakerInputProvider | 虚拟 HID 驱动，鼠标全部+键盘全套接口（pressAlt1-U/Enter/Ctrl 组合/typeTextAscii/驱动 Ctrl+V 均有 HID 实现） | 生产默认，缺驱动 fail-closed 拒启动 | Raw Input hDevice 归因（对手需大工程） |
+| BoundWindowKeyboardService | PostMessage WM_SYSKEYDOWN/WM_KEYDOWN/WM_CHAR 直塞 hwnd | **生产活跃唯一键盘路**——InputActionWorker.pressAltShortcut 注释明写"exact-HWND delivery，foreground keyboard fallback is forbidden"（当年为保证键落指定窗口的故意设计）；全部 Alt 快捷键/Ctrl 组合/Enter/Esc/文本走此路 | WndProc 几行定罪（后台收键+GetAsyncKeyState 键态不符），客户端最廉价杀招 |
+| WinApiMouseController | SetCursorPos+SendInput+java.awt.Robot（Ctrl 兼容层，line 496） | 休眠——仅显式配置 `bot.input.backend=WIN_API` 才启用，生产不用、无静默回退（G041 定论） | SendInput 自带 LLKHF_INJECTED 标志=最裸，但生产未启用 |
+
+无鼠标消息注入（全仓零 WM_LBUTTONDOWN Post）。**用户方向（待正式拍板）：删 PostMessage 路+
+全部收拢 FakerInput（含处置 WIN_API 后端）**。迁移落点现成：InputProvider 接口的 pressAltX 族
+FakerInput 已实现，InputActionWorker.pressAltShortcut 改调 inputProvider+前置焦点门即可。
+三个必须先解的设计题：①**错窗风险 fail-closed 门**——HID 键盘打进焦点窗口，SetForegroundWindow
+可能被 Windows 前台锁拒绝，发键前必须 GetForegroundWindow==目标 验证，不然键进错窗（比如 Enter
+落进别窗聊天框）比现状更危险；②**吞吐串行化**——现 PostMessage 五窗并行发键零占用全局输入通道，
+改后每键需 焦点切换+globalInputLock 排队，与鼠标抢通道；③**切号契约冲突**——bot 主动
+SetForegroundWindow 会从主人手里抢焦点，须与 [[window-switch-away-owner-contract]]（切走暂停）
+联动豁免。另 WIN_API 后端是否整删（清掉 LLKHF_INJECTED 代码面+防误启用）一并拍板。
+
+**分歧记录：**①客户端工程师"服务端遥测零发版"与架构师"协议物理无此数据"矛盾——裁定架构师正确
+（上报坐标本身就需要发版），该威胁归入"未来发版"情景；②P3 力度（数据科学家要求破坏周期性 vs
+攻方"勿过度"）——采折中：周期抖动+分钟级相位，不做全序列去相关。
+
+**评审团总结原话**："把预算从像素层演技挪到包时间戳层的统计学——服务端只看得见后者"（架构师）；
+"服务端看不见的地方省力气，看得见的地方下死功夫，出事时能自动停手比什么伪装都值钱"（攻方）。
+
+## G144 图像判断全链路取证缺口审计（2026-09-02）
+
+- **状态：审计完成 / NO PRODUCTION CODE / 待用户批准修复。** 标题：**所有参与匹配、状态判断或点击决策的图片必须可追溯。**
+- **范围：** Client 全部 `src/main/java` 图像消费/截图/证据写盘路径，并核对 Cloud 远程 OCR/模板判断边界；完整清单见 `docs/G144_IMAGE_DECISION_EVIDENCE_AUDIT.md`。
+- **结论：** 现有机制不是全量证据。总截图池明确排除 MEMBER、每窗五分钟仅一组且队列满可丢；`MatchEvidenceStore.saveOnChange` 默认只存翻转且大量调用以 `windowId=null` 落到 `unknown`；固定 latest、前 20 张封顶、40/60 槽滚动和两天清理都会覆盖/停止保存。自动战斗面板、坐标数字判稳、五环 Dialog 框体、左上状态、移动/Turn 像素探针、任务高亮、暗遮挡门、飞行饱和度等已确认没有 exact 判定图。
+- **修复原则（待批准）：** 统一为“PNG SHA-256 内容寻址去重 + 每次判断 append-only manifest/WAL”，强制写入窗口/HWND/run/phase/action/observer/demand/generation、ROI、provider、raw/processed/template hash、threshold/score/verdict、候选框与最终点击点；Client/Cloud 使用同一 correlation id。高风险动作前证据不可静默丢。
+- **未做：** 未修改任何生产代码、未编译、未重启、未触发 UI 或游戏输入。
+
 ## G143 新任务重扫窗口后仍沿用旧角色缓存（2026-09-02 用户批准修复）
 
 - **状态：`SOURCE FIXED / G143 4/4 / OWNER FAMILY 26/26 / REVIEW REQUIRED / FRESH REQUIRED`。**
@@ -13285,6 +14002,7 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 
 | Card | Owner | Status | Files | Goal |
 | --- | --- | --- | --- | --- |
+| G144 | Codex | **审计完成 / NO PRODUCTION CODE / 待批准修复** | Client 全部图像判断/截图/证据路径；Cloud 远程图片判定边界；`G144_IMAGE_DECISION_EVIDENCE_AUDIT.md` | **图像判断全链路取证缺口审计。** 总截图池排除成员、五分钟抽样且可丢；翻转证据会跨窗覆盖，自动战斗面板、坐标判稳、Dialog 框体等多条关键判断没有 exact 图片。建议以图片 hash 去重并为每次判断追加不可静默丢的关联 manifest。 |
 | G143 | Codex | **源码已修 / G143合同4/4 + owner家族26/26 / 待 Review / 待 fresh** | Client `WindowTaskControlService.java`、`WindowRuntimeContext.java`、`G143ColdStartOwnerRebindContractTest.java` | **新任务重扫窗口后仍沿用旧角色缓存。** 启动时已正确扫描到 3473/3511 换窗，但失败恢复仍按换窗前 owner 每 3 秒拒绝；现从 exact HWND 活标题抓取本轮 owner 并固化进不可变恢复计划，ACK 前临时切号会暂停而不会改认主人。 |
 | G142 | Codex | **源码已修 / G142合同2/2 + 身份上下文5/5 / 待 Review / 待 fresh** | Client `WindowTaskControlService.java`、`WindowRuntimeContext.java`、`G142RecoverableRestartOwnerContractTest.java` | **五环失败后自动重启误用上一轮角色，导致 3473 永久卡死。** 可恢复失败时当前 run 仍保存 owner=3473，旧代码却只读上一轮 lastOwner=3519，每 3 秒永久拒绝重启；改为当前 run owner 优先、last owner 仅在当前 owner 已清空时兜底，临时切走/切回的防串号语义保持。 |
 | G141 | 待认领 | **源码已存在 / 合同已存在但未独立执行 / 待 Review / 待 fresh** | Cloud `FiveRingTaskV3.java`、`G141ShoeShopGoodsPanelGateContractTest.java` | **五环买鞋：商品面板延迟打开导致误判无鞋。** 点“我想买点东西”后旧流程固定等约 `600ms` 就用单帧定案；两个失败窗的取证帧仍是店内货架、面板尚未出现。改为有上界多帧等待，区分“面板没开”和“面板已开但无鞋”，不得因拍早一帧立即关窗重开 NPC。 |

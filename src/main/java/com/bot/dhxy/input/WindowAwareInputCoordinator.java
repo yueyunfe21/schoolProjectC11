@@ -68,6 +68,71 @@ public class WindowAwareInputCoordinator {
         });
     }
 
+    /**
+     * G146: run one HID keyboard action behind a strict foreground gate.
+     *
+     * <p>HID keyboard reports land on whatever window Windows currently has foreground — unlike the
+     * retired PostMessage path there is no per-HWND addressing. Mouse input stays best-effort because
+     * clicks are routed by cursor position, but a keystroke sent while another window holds focus is
+     * delivered to the wrong window. This entry therefore verifies the current context binding is the
+     * foreground window (with one self-healing refocus attempt) and refuses the keystroke otherwise.</p>
+     *
+     * <p>When no window context or native binding is available, or focus isolation is disabled, the
+     * gate cannot verify anything and keeps the permissive legacy behaviour.</p>
+     *
+     * @throws IllegalStateException when the bound window cannot be confirmed foreground
+     */
+    public void runKeyboardInput(String actionName, Runnable action) {
+        if (inputTransactionActive.get()) {
+            requireCurrentWindowForeground(actionName);
+            action.run();
+            return;
+        }
+        globalInputLock.runWithLock(() -> {
+            String previousActionName = currentInputActionName.get();
+            currentInputActionName.set(actionName);
+            try {
+                if (focusCurrentWindowWithoutLock(actionName).abortInput()) {
+                    throw new IllegalStateException(
+                            "keyboard input refused: live binding refresh unavailable: " + actionName);
+                }
+                requireCurrentWindowForeground(actionName);
+                action.run();
+            } finally {
+                restoreActionName(previousActionName);
+            }
+        });
+    }
+
+    /** Strict foreground witness for HID keyboard; one refocus attempt, then fail closed. */
+    private void requireCurrentWindowForeground(String actionName) {
+        if (!windowIsolationProperties.isInputFocusActive()) {
+            return;
+        }
+        Optional<WindowRuntimeContext> contextOptional = windowTaskContextHolder.rawCurrent();
+        if (contextOptional.isEmpty()) {
+            log.warn("Keyboard foreground gate skipped: no window context bound: action={}", actionName);
+            return;
+        }
+        WindowRuntimeContext context = contextOptional.get();
+        WindowNativeBinding binding = context.getNativeBinding();
+        if (binding == null || !binding.hasNativeHandle()) {
+            log.warn("Keyboard foreground gate skipped: no native binding: windowId={} action={}",
+                    context.getWindowId(), actionName);
+            return;
+        }
+        if (windowFocusService.isForeground(binding)) {
+            return;
+        }
+        boolean focused = windowFocusService.focusWithoutLock(binding);
+        windowInteractionMetricsService.recordFocus(context.getWindowId(), actionName + ":keyboard-strict", focused);
+        if (focused && windowFocusService.isForeground(binding)) {
+            return;
+        }
+        throw new IllegalStateException("keyboard input refused: window not foreground after refocus: windowId="
+                + context.getWindowId() + " action=" + actionName);
+    }
+
     public <T> T callInput(String actionName, Supplier<T> action) {
         if (inputTransactionActive.get()) {
             return action.get();

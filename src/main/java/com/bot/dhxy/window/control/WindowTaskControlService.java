@@ -75,6 +75,57 @@ public class WindowTaskControlService {
     private final AtomicLong remoteStartEpoch = new AtomicLong(0L);
     private final Object remoteStartLifecycleMonitor = new Object();
     private final Map<String, String> remoteTerminalRecoveryPending = new ConcurrentHashMap<>();
+    /**
+     * G148-P7：可恢复终态（FAILED/SKIPPED）连续自动重启的按窗计数。此前每次都以 attempt=1 调度，
+     * 现成的退避梯子（250ms→5s）从未升档——G139 事故即 SKIPPED 每 280ms 无限热重启空转一夜。
+     * 计数驱动梯子升档；SUCCESS 终态或手动新启清零。
+     */
+    private final Map<String, Integer> remoteRecoveryStreaks = new ConcurrentHashMap<>();
+    /** G148-P7：SKIPPED=确定性前置不满足（如角色判定失败），重试不改变前置——连续超此数即熔断全停。 */
+    private static final int SKIPPED_RECOVERY_MAX_STREAK = 5;
+
+    /*
+     * G149-P3（2026-09-04 用户拍板：窗间错峰上限 20 秒）：批量启动此前在同一循环里背靠背拉起五窗，
+     * 五个账号的开工封包（接任务/对话/导航）每天同秒连发、恒定顺序、恒定毫秒级滞后——正是多号
+     * 互相关聚类（相关>0.7 且滞后<2s）的定罪级形态。改法：①同组内启动顺序每次洗牌；②窗与窗之间
+     * 5~20 秒随机错峰。队长先于成员的结构性顺序保留（队伍建立依赖）；错峰等待切片轮询取消，
+     * 停止/暂停仍秒级响应。启动之后各窗轮次耗时天然有方差，窗间漂移随时间自行拉开。
+     */
+    private static final long START_STAGGER_MIN_MS = 5_000L;
+    private static final long START_STAGGER_MAX_MS = 20_000L;
+
+    private static long nextStartStaggerMs() {
+        return START_STAGGER_MIN_MS + java.util.concurrent.ThreadLocalRandom.current()
+                .nextLong(START_STAGGER_MAX_MS - START_STAGGER_MIN_MS + 1L);
+    }
+
+    /** G149-P3：同组内洗牌，打掉恒定启动顺序；组间结构（队长先）由调用方保持。 */
+    private static List<String> shuffleGroup(List<String> windowIds) {
+        List<String> shuffled = new ArrayList<>(windowIds);
+        java.util.Collections.shuffle(shuffled, new java.util.Random(
+                java.util.concurrent.ThreadLocalRandom.current().nextLong()));
+        return shuffled;
+    }
+
+    /** G149-P3：窗间错峰等待；切片轮询取消。@return false=启动已被取消/中断。 */
+    private boolean staggerBetweenWindowStarts(long startEpoch) {
+        long deadline = System.currentTimeMillis() + nextStartStaggerMs();
+        while (true) {
+            if (isRemoteStartCancelled(startEpoch)) {
+                return false;
+            }
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0L) {
+                return true;
+            }
+            try {
+                Thread.sleep(Math.min(250L, remaining));
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+    }
     /** 每窗口生命周期 epoch 下限:恢复/续跑/ACK 的 startEpoch 低于它即视为已被显式取消或替换。 */
     private final ConcurrentHashMap<String, Long> remoteWindowEpochFloor = new ConcurrentHashMap<>();
 
@@ -538,18 +589,19 @@ public class WindowTaskControlService {
                     return remoteStartCancelled(ids);
                 }
             }
-            List<String> startOrder = ids.stream()
-                    .sorted((left, right) -> Boolean.compare(
-                            isLocalLeader(preflightByWindow.getOrDefault(right, unknownPreflight(right))),
-                            isLocalLeader(preflightByWindow.getOrDefault(left, unknownPreflight(left)))))
-                    .toList();
+            // G149-P3：同组内洗牌+窗间错峰；队长组仍整体先于成员组（队伍建立依赖）。
+            List<String> leaderOrder = shuffleGroup(ids.stream()
+                    .filter(id -> isLocalLeader(preflightByWindow.getOrDefault(id, unknownPreflight(id))))
+                    .toList());
+            List<String> memberOrder = shuffleGroup(ids.stream()
+                    .filter(id -> !isLocalLeader(preflightByWindow.getOrDefault(id, unknownPreflight(id))))
+                    .toList());
             List<WindowTaskCommandDetail> details = new ArrayList<>();
             // The locally recognized leader starts first. Cloud receives only this already-resolved role fact.
-            for (String windowId : startOrder) {
-                if (!isLocalLeader(preflightByWindow.getOrDefault(windowId, unknownPreflight(windowId)))) {
-                    continue;
-                }
-                if (isRemoteStartCancelled(startEpoch)) {
+            boolean firstWindowStarted = false;
+            for (String windowId : leaderOrder) {
+                if (isRemoteStartCancelled(startEpoch)
+                        || firstWindowStarted && !staggerBetweenWindowStarts(startEpoch)) {
                     details.add(WindowTaskCommandDetail.failed(windowId, "远程启动已被暂停或停止"));
                     continue;
                 }
@@ -564,16 +616,15 @@ public class WindowTaskControlService {
                             windowId, "远程启动已拒绝：" + unsupported.getMessage()));
                     continue;
                 }
+                firstWindowStarted = true;
                 details.add(startOneRemote(deviceId, windowId, List.of(code), toTaskMaxRuns(List.of(code)),
                         TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE, queue, teamSessionKey,
                         preflightByWindow.getOrDefault(windowId, unknownPreflight(windowId)), startEpoch,
                         roleResolutionDeadlineNanos, startupMode, null, null));
             }
             List<CompletableFuture<WindowTaskCommandDetail>> startFutures = new ArrayList<>();
-            for (String windowId : startOrder) {
-                if (isLocalLeader(preflightByWindow.getOrDefault(windowId, unknownPreflight(windowId)))) {
-                    continue;
-                }
+            long memberStaggerMs = 0L;
+            for (String windowId : memberOrder) {
                 if (isRemoteStartCancelled(startEpoch)) {
                     startFutures.add(CompletableFuture.completedFuture(
                             WindowTaskCommandDetail.failed(windowId, "远程启动已被暂停或停止")));
@@ -590,11 +641,15 @@ public class WindowTaskControlService {
                             windowId, "远程启动已拒绝：" + unsupported.getMessage())));
                     continue;
                 }
+                // G149-P3：成员错峰用累计延迟的定时异步；取消由 startOneRemote 入口的生命周期检查兜底。
+                memberStaggerMs += firstWindowStarted || memberStaggerMs > 0L ? nextStartStaggerMs() : 0L;
+                firstWindowStarted = true;
                 startFutures.add(CompletableFuture.supplyAsync(() -> startOneRemote(
                         deviceId, windowId, List.of(code), toTaskMaxRuns(List.of(code)),
                         TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE, queue, teamSessionKey,
                         preflightByWindow.getOrDefault(windowId, unknownPreflight(windowId)), startEpoch,
-                        roleResolutionDeadlineNanos, startupMode, null, null)));
+                        roleResolutionDeadlineNanos, startupMode, null, null),
+                        CompletableFuture.delayedExecutor(memberStaggerMs, TimeUnit.MILLISECONDS)));
             }
             details.addAll(startFutures.stream().map(CompletableFuture::join).toList());
             int successCount = (int) details.stream().filter(WindowTaskCommandDetail::isSuccess).count();
@@ -658,39 +713,43 @@ public class WindowTaskControlService {
                 return remoteStartCancelled(windowIds);
             }
         }
-        List<String> startOrder = windowIds.stream()
-                .sorted((left, right) -> Boolean.compare(
-                        isLocalLeader(preflightByWindow.getOrDefault(right, unknownPreflight(right))),
-                        isLocalLeader(preflightByWindow.getOrDefault(left, unknownPreflight(left)))))
-                .toList();
+        // G149-P3：同组内洗牌+窗间错峰；队长组仍整体先于成员组（队伍建立依赖）。
+        List<String> leaderOrder = shuffleGroup(windowIds.stream()
+                .filter(id -> isLocalLeader(preflightByWindow.getOrDefault(id, unknownPreflight(id))))
+                .toList());
+        List<String> memberOrder = shuffleGroup(windowIds.stream()
+                .filter(id -> !isLocalLeader(preflightByWindow.getOrDefault(id, unknownPreflight(id))))
+                .toList());
         List<WindowTaskCommandDetail> details = new ArrayList<>();
-        for (String windowId : startOrder) {
-            if (!isLocalLeader(preflightByWindow.getOrDefault(windowId, unknownPreflight(windowId)))) {
-                continue;
-            }
-            if (isRemoteStartCancelled(startEpoch)) {
+        boolean firstWindowStarted = false;
+        for (String windowId : leaderOrder) {
+            if (isRemoteStartCancelled(startEpoch)
+                    || firstWindowStarted && !staggerBetweenWindowStarts(startEpoch)) {
                 details.add(WindowTaskCommandDetail.failed(windowId, "远程启动已被暂停或停止"));
                 continue;
             }
+            firstWindowStarted = true;
             details.add(startOneRemote(
                     deviceId, windowId, taskCodes, taskMaxRuns, failurePolicy, queue,
                     teamSessionKey, preflightByWindow.getOrDefault(windowId, unknownPreflight(windowId)),
                     startEpoch, roleResolutionDeadlineNanos, startupMode, null, null));
         }
         List<CompletableFuture<WindowTaskCommandDetail>> startFutures = new ArrayList<>();
-        for (String windowId : startOrder) {
-            if (isLocalLeader(preflightByWindow.getOrDefault(windowId, unknownPreflight(windowId)))) {
-                continue;
-            }
+        long memberStaggerMs = 0L;
+        for (String windowId : memberOrder) {
             if (isRemoteStartCancelled(startEpoch)) {
                 startFutures.add(CompletableFuture.completedFuture(
                         WindowTaskCommandDetail.failed(windowId, "远程启动已被暂停或停止")));
                 continue;
             }
+            // G149-P3：成员错峰用累计延迟的定时异步；取消由 startOneRemote 入口的生命周期检查兜底。
+            memberStaggerMs += firstWindowStarted || memberStaggerMs > 0L ? nextStartStaggerMs() : 0L;
+            firstWindowStarted = true;
             startFutures.add(CompletableFuture.supplyAsync(() -> startOneRemote(
                     deviceId, windowId, taskCodes, taskMaxRuns, failurePolicy, queue,
                     teamSessionKey, preflightByWindow.getOrDefault(windowId, unknownPreflight(windowId)),
-                    startEpoch, roleResolutionDeadlineNanos, startupMode, null, null)));
+                    startEpoch, roleResolutionDeadlineNanos, startupMode, null, null),
+                    CompletableFuture.delayedExecutor(memberStaggerMs, TimeUnit.MILLISECONDS)));
         }
         details.addAll(startFutures.stream().map(CompletableFuture::join).toList());
         int successCount = (int) details.stream().filter(WindowTaskCommandDetail::isSuccess).count();
@@ -746,6 +805,8 @@ public class WindowTaskControlService {
         }
         // 本窗口的新生命周期从此开始:抬 floor,旧 run 留在飞行中的恢复/续跑就此作废(替换语义)。
         remoteWindowEpochFloor.merge(windowId, startEpoch, Math::max);
+        // G148-P7：手动新启=新生命周期，可恢复终态连击账清零。
+        remoteRecoveryStreaks.remove(windowId);
         WindowTaskRunner runner = taskManager.getRunner(windowId).orElse(null);
         if (runner == null) {
             return WindowTaskCommandDetail.failed(windowId, "窗口不存在");
@@ -981,6 +1042,32 @@ public class WindowTaskControlService {
                         windowId, terminal.startRequestId(), terminal.status(), recoveryPlan.startEpoch());
                 return;
             }
+            /*
+             * G148-M2 版本熔断：窗口尺寸不对时自动重启只会带病乱点（G124：771 模板集体失配，
+             * bot 对着错坐标点了两小时最像挂）。两种失明态都熔断：
+             *   ①出生错——注册尺寸本身偏离模板标定基线 1036x783；
+             *   ②中途漂——live 尺寸连续多次偏离注册尺寸（refreshGeometry 保注册尺寸不变，
+             *     捕获仍按旧框走，等效失明）。
+             * 只熔断自动重启链；手动启动维持 G124 定案"只诊断不拦截"（UI 已弹尺寸告警）。
+             */
+            WindowNativeBinding fuseBinding = runner.getWindowContext().getNativeBinding();
+            boolean bornOffCalibration = fuseBinding != null && fuseBinding.hasGeometry()
+                    && !LocalTeamRolePreflightService.isAtCalibratedSize(fuseBinding);
+            boolean driftedMidRun = fuseBinding != null && fuseBinding.hasNativeHandle()
+                    && bindingRefreshService.isGeometryDriftFused(fuseBinding.getNativeHandle());
+            if (bornOffCalibration || driftedMidRun) {
+                remoteTerminalRecoveryPending.remove(windowId);
+                remoteRecoveryStreaks.remove(windowId);
+                String detail = driftedMidRun
+                        ? "live漂移 " + bindingRefreshService.geometryDriftDetail(fuseBinding.getNativeHandle())
+                        : "注册尺寸 " + fuseBinding.getWidth() + "x" + fuseBinding.getHeight() + "≠基线1036x783";
+                log.error("G148-M2 geometry fuse tripped; auto-restart blocked: windowId={} startRequestId={} "
+                                + "status={} detail={}",
+                        windowId, terminal.startRequestId(), terminal.status(), detail);
+                runner.markRemoteStopped("窗口尺寸偏离模板标定基线（" + detail
+                        + "），疑似版本更新/窗口漂移，自动重启已熔断；请把窗口调回 1036x783 后手动重开");
+                return;
+            }
             String previousRecoveryStartRequestId = remoteTerminalRecoveryPending.put(
                     windowId, terminal.startRequestId());
             if (terminal.startRequestId().equals(previousRecoveryStartRequestId)) {
@@ -989,18 +1076,35 @@ public class WindowTaskControlService {
                         windowId, terminal.startRequestId(), terminal.status());
                 return;
             }
-            long retryDelayMs = WindowTurnLoop.failureRetryDelayMs(windowId, 1);
+            // G148-P7：连击计数驱动既有退避梯子升档；SKIPPED 连击封顶后熔断全停。
+            int recoveryStreak = remoteRecoveryStreaks.merge(windowId, 1, Integer::sum);
+            if (terminal.status() == TurnTaskTerminalResult.Status.SKIPPED
+                    && recoveryStreak > SKIPPED_RECOVERY_MAX_STREAK) {
+                remoteTerminalRecoveryPending.remove(windowId);
+                remoteRecoveryStreaks.remove(windowId);
+                log.error("G148-P7 SKIPPED restart budget exhausted; stopping for manual attention: "
+                                + "windowId={} startRequestId={} streak={} reason={}",
+                        windowId, terminal.startRequestId(), recoveryStreak, terminal.reason());
+                runner.markRemoteStopped("连续 " + SKIPPED_RECOVERY_MAX_STREAK
+                        + " 次 SKIPPED（前置条件不满足："+ terminal.reason()
+                        + "），自动重启已熔断，等待人工处理");
+                return;
+            }
+            long retryDelayMs = WindowTurnLoop.failureRetryDelayMs(windowId, recoveryStreak);
             log.warn("Recoverable Cloud terminal retained; restarting exact window task: windowId={} "
-                            + "startRequestId={} status={} reason={} recoveryQueue={} retryDelayMs={}",
+                            + "startRequestId={} status={} reason={} recoveryQueue={} retryDelayMs={} streak={}",
                     windowId, terminal.startRequestId(), terminal.status(), terminal.reason(),
-                    remainingPlan.taskCodes(), retryDelayMs);
+                    remainingPlan.taskCodes(), retryDelayMs, recoveryStreak);
             CompletableFuture.delayedExecutor(retryDelayMs, TimeUnit.MILLISECONDS).execute(
-                    () -> recoverRemoteTerminal(remainingPlan, terminal, 1));
+                    () -> recoverRemoteTerminal(remainingPlan, terminal, recoveryStreak));
             return;
         }
-        if (terminal.status() == TurnTaskTerminalResult.Status.SUCCESS
-                && scheduleNextConfiguredRun(runner, terminal, recoveryPlan)) {
-            return;
+        if (terminal.status() == TurnTaskTerminalResult.Status.SUCCESS) {
+            // G148-P7：成功=前置恢复，连击账清零。
+            remoteRecoveryStreaks.remove(runner.getWindowContext().getWindowId());
+            if (scheduleNextConfiguredRun(runner, terminal, recoveryPlan)) {
+                return;
+            }
         }
         runner.markRemoteStopped("Cloud任务终止：" + terminal.status()
                 + " (" + terminal.startRequestId() + ")");
@@ -1059,7 +1163,7 @@ public class WindowTaskControlService {
         }
         context.updateTaskRunProgress(newCompleted, maxRuns);
         context.retainTaskRunProgressForPause();
-        long retryDelayMs = WindowTurnLoop.failureRetryDelayMs(windowId, 1);
+        long retryDelayMs = nextInterRoundRestMs();
         log.info("Finite task run completed with remaining runs; scheduling next run: windowId={} task={} "
                         + "completedRuns={} totalRuns={} startRequestId={} retryDelayMs={}",
                 windowId, recoveryPlan.taskCodes().get(0), newCompleted, maxRuns,
@@ -1067,6 +1171,36 @@ public class WindowTaskControlService {
         CompletableFuture.delayedExecutor(retryDelayMs, TimeUnit.MILLISECONDS).execute(
                 () -> recoverRemoteTerminal(recoveryPlan, terminal, 1));
         return true;
+    }
+
+    /*
+     * G150-P5（2026-09-04 用户拍板 80/17/3 混合分布）：run 与 run 的成功续跑衔接原为 ~250ms 恒定。
+     * 用户两轮校准的关键认知：①"每轮必歇固定区间"同样是窄带假分布（分布错陷阱），真人是重尾混合
+     * ——大多数轮顺手连开，少数小歇，极少数走开；②长歇占比过高拖节奏。
+     * 终版：80% 顺手连开 2~8s / 17% 小歇 20~60s / 3% 走开 90s~3min。
+     * 只作用于 SUCCESS 续跑；失败恢复路径保持 G148 退避语义不变。五窗独立掷骰。
+     * 注意（2026-09-04 用户纠偏）：这里是 run 级衔接，按每 run 几十轮的配置极少触发；
+     * 真正高频的"修罗轮与轮之间"作息在云端 XiuluoTaskV2#restBetweenRounds（同分布），本处仅兜 run 交界。
+     */
+    private static final double REST_QUICK_PROBABILITY = 0.80D;
+    private static final double REST_SHORT_PROBABILITY = 0.17D;
+    private static final long REST_QUICK_MIN_MS = 2_000L;
+    private static final long REST_QUICK_SPREAD_MS = 6_000L;
+    private static final long REST_SHORT_MIN_MS = 20_000L;
+    private static final long REST_SHORT_SPREAD_MS = 40_000L;
+    private static final long REST_LONG_MIN_MS = 90_000L;
+    private static final long REST_LONG_SPREAD_MS = 90_000L;
+
+    private static long nextInterRoundRestMs() {
+        java.util.concurrent.ThreadLocalRandom random = java.util.concurrent.ThreadLocalRandom.current();
+        double roll = random.nextDouble();
+        if (roll < REST_QUICK_PROBABILITY) {
+            return REST_QUICK_MIN_MS + random.nextLong(REST_QUICK_SPREAD_MS + 1L);
+        }
+        if (roll < REST_QUICK_PROBABILITY + REST_SHORT_PROBABILITY) {
+            return REST_SHORT_MIN_MS + random.nextLong(REST_SHORT_SPREAD_MS + 1L);
+        }
+        return REST_LONG_MIN_MS + random.nextLong(REST_LONG_SPREAD_MS + 1L);
     }
 
     private static final long OWNER_RETURN_RECHECK_MS = 3_000L;

@@ -26,8 +26,7 @@ import java.util.Locale;
  * Owns the connection and report protocol for the FakerInput virtual HID device.
  *
  * <p>The public probe performs only the driver's API handshake and feature-version read. It never sends a
- * keyboard or mouse input report. Real reports are possible only after an explicit {@link #connect()} call,
- * which is not invoked during normal application startup while {@code bot.input.backend=WIN_API}.</p>
+ * keyboard or mouse input report. Real reports are possible only after an explicit {@link #connect()} call.</p>
  */
 @Slf4j
 @Component
