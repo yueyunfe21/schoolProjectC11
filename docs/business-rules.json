@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "rules": [
+    {"id":"BR-RELEASE-006","title":"私有源码与授权R2自动更新分发","source":"docs/CLIENT_RELEASE_PIPELINE.md","heading":"[BR-RELEASE-006] 私有源码与授权 R2 自动更新分发","domains":["release","update","authorization","r2","github-actions"],"crossBoundary":true,"status":"active"},
     {"id":"BR-RELEASE-005","title":"客户端JVM按需伸缩与轻量内存可观测性","source":"docs/CLIENT_RELEASE_PIPELINE.md","heading":"[BR-RELEASE-005] 客户端 JVM 按需伸缩与轻量内存可观测性","domains":["release","client-runtime","memory","diagnostics"],"crossBoundary":false,"status":"active"},
     {"id":"BR-COMMON-BOX-001","title":"通用盒子优先消费与30秒生命周期","source":"docs/业务逻辑.md","heading":"[BR-COMMON-BOX-001] 通用盒子优先消费与30秒生命周期","domains":["common-box","xiuluo","wubei","timing"],"crossBoundary":true,"status":"active"},
     {"id":"BR-RELEASE-004","title":"本地客户端与云端大脑一对一服务","source":"docs/CLIENT_RELEASE_PIPELINE.md","heading":"[BR-RELEASE-004] 本地客户端与云端大脑一对一服务","domains":["release","authorization","client-cloud","isolation"],"crossBoundary":true,"status":"active"},

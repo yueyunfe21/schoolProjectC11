@@ -3,8 +3,8 @@ name: 客户端 Prod 发布
 on:
   workflow_dispatch:
     inputs:
-      publish_public_package:
-        description: '将此包公开发布到 GitHub Releases（不勾选则只生成准备文件）'
+      publish_production_package:
+        description: '将此包晋级到 Prod（R2 授权分发，并在 GitHub Release 归档）'
         required: true
         default: false
         type: boolean
@@ -36,6 +36,10 @@ on:
         description: '当前授权政策 revision（首次为0；不一致则停止，防止覆盖其它修改）'
         required: true
         default: '0'
+        type: string
+      production_confirmation:
+        description: '输入 PUBLISH-ACCEPTED-GAMMA 确认晋级 exact Gamma'
+        required: true
         type: string
 
 permissions:
@@ -93,14 +97,14 @@ jobs:
           name: client-prod-preparation-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/promotion
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 3
           compression-level: 0
       - name: 显示准备阶段边界
         run: |
           @"
           ## Prod 发布准备完成，未正式发布
           已核对原始 Gamma 包及 SHA256，保留原包，没有重新编译。
-          本阶段仅生成发布申请。勾选公开发布后，后续 publish 作业才会上传到 GitHub Releases。
+          本阶段仅生成发布申请。确认正式晋级后，publish 作业才会上传私有 R2 并创建 GitHub 归档 Release。
           未勾选时不创建正式 Release、不更新 latest、不禁用旧版。
           本阶段不激活版本公告；完整升级仍须由实际客户端验收，不能由准备成功代替。
           "@ | Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
@@ -108,10 +112,9 @@ jobs:
 
   publish:
     needs: prepare
-    environment: client-production
-    if: github.ref == 'refs/heads/master' && inputs.publish_public_package
+    if: github.ref == 'refs/heads/master' && github.actor == 'yueyunfe21' && inputs.publish_production_package && inputs.production_confirmation == 'PUBLISH-ACCEPTED-GAMMA'
     runs-on: windows-2022
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       contents: write
       actions: read
@@ -119,13 +122,6 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - name: 确认正式分发已获准启用
-        env:
-          PUBLIC_RELEASE_READY: ${{ vars.CLIENT_PUBLIC_RELEASE_READY }}
-        run: |
-          if ($env:PUBLIC_RELEASE_READY -ne 'true') {
-            throw 'CLIENT_PUBLIC_RELEASE_READY is not enabled. Complete runtime authorization and Gamma acceptance before enabling public distribution.'
-          }
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -134,13 +130,18 @@ jobs:
           artifact-ids: ${{ needs.prepare.outputs.artifact_id }}
           merge-multiple: true
           path: ${{ runner.temp }}/promotion
-      - name: 完整上传后公开成品并公告推荐版（不改变禁版规则）
+      - name: 上传私有 R2、归档 Release 并公告推荐版（不改变禁版规则）
         env:
           GH_TOKEN: ${{ github.token }}
-          PUBLIC_PACKAGE_APPROVED: ${{ inputs.publish_public_package }}
+          PRODUCTION_PACKAGE_APPROVED: ${{ inputs.publish_production_package }}
+          PRODUCTION_CONFIRMATION: ${{ inputs.production_confirmation }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
           CLIENT_UPDATE_SIGNING_KEY: ${{ secrets.CLIENT_UPDATE_SIGNING_KEY }}
           CLIENT_POLICY_API_TOKEN: ${{ secrets.CLIENT_POLICY_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: dhxy-client-updates
           EXPECTED_POLICY_REVISION: ${{ inputs.expected_policy_revision }}
         run: ./scripts/release/publish-client.ps1 -PromotionDirectory "$env:RUNNER_TEMP/promotion"

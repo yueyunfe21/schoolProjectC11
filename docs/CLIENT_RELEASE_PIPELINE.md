@@ -1,5 +1,28 @@
 # 客户端 Gamma → Prod 发布流水线（G184）
 
+## [BR-RELEASE-006] 私有源码与授权 R2 自动更新分发
+
+正式仓库转为私有后，源码、构建历史和长期归档继续保存在私有 GitHub；面向用户的 Prod 成品不再依赖
+GitHub Release 匿名下载，而是保存到私有 Cloudflare R2。R2 只保存已验收 Gamma 原包及其 RSA 签名清单，
+绝不保存源码、授权码或客户端长期下载凭据。D1 只保存推荐版本、精确 R2 对象键、大小、哈希和政策 revision，
+不保存 ZIP 字节。对象键必须带不可变版本号，禁止覆盖 `latest.zip`；生产指针只能在对象上传、远端核验和签名完成后
+通过 D1 revision CAS 切换。R2 默认保留最近三个 Prod，至少经过安全观察期才清理更旧对象；承担旧客户端迁移的
+桥接版必须延长保留，GitHub 私有 Release 可继续保存完整历史。
+
+客户端公开的版本检查接口只返回政策和固定的更新票据入口，不返回 GitHub 下载页。用户点击一次更新后，客户端使用
+首次成功授权时已由 Windows DPAPI 按当前用户保护并持久化的授权码，连同设备指纹、客户端身份、当前版本和目标版本，
+自动向 Worker 请求一次短期更新票据；后续更新不得再次要求用户输入授权码。首次从未成功授权、凭据无法解密、授权失效
+或设备不匹配时必须明确要求重新授权，不能降级成公开下载。更新票据是独立准入，不依赖运行中 session：被禁旧版仍须能
+下载维护者当前允许的推荐版，但只能下载政策中精确目标。Worker 验证许可、设备和目标政策后返回签名清单及短期 R2
+预签名 URL；客户端不向用户展示该 URL，直接下载、复核包内固定公钥签名、大小和 SHA256，再沿 BR-RELEASE-003 的
+外部安装器切换并重启。预签名 URL 是短期 bearer，日志、UI、异常和持久化文件都不得输出或保存完整 URL。
+
+GitHub Free 私有仓库不使用 Environment Secret/保护规则。Prod 使用 `workflow_dispatch`、固定 `master`、精确 Gamma
+run/attempt、触发者和显式确认词门禁；仓库 Secret 仅注入作业内存。签名密钥迁移到 repository secret 后才能移除旧
+`client-production` Environment 依赖。Gamma artifact 只作短期晋级中转，默认保留三天；Prod 仍必须晋级同一个已验收
+Gamma 字节，禁止重建。正式切私有前必须先公开一个同时支持旧 GitHub 下载和新 Worker/R2 下载的桥接客户端，确认用户
+已迁移后才能关闭旧公共入口；不得先私有化导致现有客户端永远拿不到桥接版。
+
 ## [BR-RELEASE-005] 客户端 JVM 按需伸缩与轻量内存可观测性
 
 客户端是长驻桌面程序，不按服务端常驻大堆预热。开发启动与 jpackage 成品必须从同一份受版本控制的
@@ -45,9 +68,9 @@ non-heap、direct/mapped buffer、live线程、注册/运行窗口及输入队�
 
 - Client新增受信下载和外部安装代码，335源码隔离编译通过（未测试）：UI下载→RSA签名→SHA256/大小→再次确认退出→等待真实进程退出与安装锁→新版本目录→原子启动指针→重开。开发树/dirty本地包拒绝自动替换；配置/data复制，新版不开游戏任务。启动失败且已退出时恢复旧指针；新版进程仍活着却未就绪只报未确认，不强杀/不冒险回退。
 - 固定公钥`src/main/resources/update-public-key.pem`；RSA3072私钥仅本机用户DPAPI加密存于`F:\CodexHome\dhxy-release-secrets\update-signing-key.dpapi`，不在Git。DER公钥SHA256 `cd4301a6684d50115419876e3e288b930c5281ec370aeec09742c72ffa8451a8`。不要重新生成来覆盖既有信任身份。
-- 已真实创建GitHub `client-production` Environment，并仅允许master分支；已设置`CLIENT_UPDATE_SIGNING_KEY`环境Secret，GET元数据确认。没有创建Release、没有开启`CLIENT_PUBLIC_RELEASE_READY`、没有合并master/推送代码。Github凭据和签名私钥未打印、未入源码或包。
-- 发布本地脚本现在先做政策revision预检→签名原始Gamma载荷→draft上传ZIP/candidate/distribution/签名清单四项→完整核GitHub资产digest→公开Release→原子CAS写推荐版本。签名不会重构Gamma包，候选必须带相同公钥文件哈希。`activate-version-policy.ps1`仅修改latest/releaseUrl/revision，不清已有allow/revoke/minimum/enforced；发布与D1不能跨系统事务，若最后一步失败会明确“Release已公开但未公告”，不盲重发或删包。脚本尚未执行，只过语法解析。
-- **GitHub仍缺`CLIENT_POLICY_API_TOKEN`环境Secret**：需Cloudflare账号内D1 Edit权限的CI专用token。当前本机Wrangler OAuth虽能部署/改D1，但无API Token创建权限；不能把会过期的个人OAuth/refresh token复制到GitHub充当CI凭据。客户端绝不携带此管理token。官方API依据：[D1参数化查询](https://developers.cloudflare.com/api/resources/d1/subresources/database/methods/query/)、[GitHub加密Secret](https://docs.github.com/en/rest/guides/encrypting-secrets-for-the-rest-api)。
+- G195 已把签名身份迁到 GitHub repository secret，并配置 `R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`CLOUDFLARE_ACCOUNT_ID`、`CLIENT_POLICY_API_TOKEN`；Free 私有仓库不再依赖 `client-production` Environment 或 `CLIENT_PUBLIC_RELEASE_READY`。Secret 元数据已核存在，值不会从 GitHub 读回或打印。
+- 发布链现在执行政策 revision 预检→签名 exact Gamma→不可变版本键上传私有 R2 并核远端大小/哈希 metadata→GitHub Release 归档→原子 CAS 公告 D1。相同键只允许精确同字节重试，绝不覆盖不同内容；`activate-version-policy.ps1`新增精确 manifest/package object key、SHA256 和大小，不清已有 allow/revoke/minimum/enforced。
+- Cloudflare 已创建私有 `dhxy-client-updates`，D1 migration `0005_private_update_distribution.sql` 已备份后应用。Worker deployment `d5ba75e1-17e7-4601-9165-a5f692b96a22` 已加载 R2/D1 bindings 与两项加密 Secret；尚未公告任何 R2 成品，当前推荐版继续使用旧 GitHub 下载路径。
 - **正式隔离边界已裁决**：按BR-RELEASE-004，一个本地客户端对应一个独立大脑，不是每账号一份或每游戏窗口一份。CloudBrainServer目前固定scope/host/runtime和开发bearer，还须落实客户端专属映射和正式授权；尚未改Cloud代码或部署。正式服务器和HTTPS入口仍待提供。
 - G184保持未闭环。客户端没有重启，任何自动安装/签名消费/恢复/发布/禁版行为均未测试。此前276MB开发ZIP早于本轮代码且dirty，不能用来做正式Gamma或声称包含更新器。
 
@@ -161,7 +184,7 @@ PyInstaller onedir打包；无需用户另装Java/Python，但仍需用户事先
 连接地址及每用户token在外部config内配置；没有Cloud地址/token时启动包装脚本明确报错，不偷偷启动本地大脑。
 开发者本机config/application.properties、日志、data、帧截图不入包；包内三个受控JSON为Git跟踪的既有配置种子。
 
-## GitHub启用步骤（当前未执行）
+## GitHub Free 启用与桥接步骤
 
 1. 审核并提交本卡发布文件到dev。不要把其它卡的dirty改动自动混入这次提交。
 2. 开发完成且维护者明确同意进入Gamma后，将相应dev代码合入master，包含全部发布配置与构建输入。
@@ -174,15 +197,9 @@ PyInstaller onedir打包；无需用户另装Java/Python，但仍需用户事先
    按README填写Gamma连接配置。实机验收由用户另行启动，不因打包成功自动获准。
 6. 验收后Actions→客户端Prod发布，在master填写候选runId/attempt，勾选人工确认。
    默认只输出`promotion-request.json`与原包，状态为PREPARED_ONLY，不会重新构建。
-7. 明确要对外提供这个包时，再勾选公开发布，选择optional；publish作业完整上传后才公开Release。
-   required目前只支持准备，不支持正式激活；服务器准入未接通就明确报错，不假装禁用旧版。
-   发布前还须在仓库变量中启用`CLIENT_PUBLIC_RELEASE_READY=true`；只能在真实运行授权门接通并完成Gamma验收后启用。
-   当前验证UI尚不等于任务强制授权，故开关未设置。不能因为“包可以公开下载”就忽略“运行仍需授权”的用户条件。
-8. 用户在Release下载同一成品。`distribution.json`明确purpose=manual-download，自动安装/签名/服务端政策均false。
-   这是可下载软件的通道，不是已可用的自动更新器；后续受信更新清单须单独定义，不能把无签名的distribution.json直接当执行授权。
-9. 当前还没有Release→政策自动写入：维护者确认真实Release公开后，使用授权项目`version-policy.mjs`配置latestVersion和
-   同仓精确版本页`https://github.com/yueyunfe21/schoolProjectC11/releases/tag/client-<version>-b<run>.<attempt>`，客户端才有推荐版可显示。
-   暂不启用enforced；Cloud任务/会话门尚未接，不能凭授权verify拒绝就认为旧任务已停。
+7. Prod 必须勾选正式晋级并输入精确确认词 `PUBLISH-ACCEPTED-GAMMA`；只有账号 `yueyunfe21`、master、exact Gamma provenance 同时成立才运行。required仍须另行批准，不因文件可下载自动禁旧版。
+8. publish 将同一签名成品放入私有 R2 并保留 GitHub Release 归档；桥接期仓库仍公开，旧客户端继续使用 GitHub，新客户端看到 `authorized-r2` 后走 Worker update-ticket。D1 只在两端资产完整核验后 CAS 公告。
+9. 桥接客户端完成迁移前不得把仓库改为 private。迁移完成后，用户无需 GitHub 账号；GitHub Release 仅供维护者历史归档，用户点击更新后由客户端自动提交 DPAPI 保护的既有授权并下载 R2。
 
 ## 2026-09-19 实际上线记录
 

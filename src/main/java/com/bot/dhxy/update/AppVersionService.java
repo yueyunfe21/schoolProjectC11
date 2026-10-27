@@ -66,8 +66,13 @@ public class AppVersionService {
             }
             String latest = data.path("latestVersion").asText();
             String link = data.path("releaseUrl").asText();
+            String downloadMode = data.path("downloadMode").asText("public-github");
+            boolean authorizedDownload = "authorized-r2".equals(downloadMode);
+            if (!authorizedDownload && !"public-github".equals(downloadMode)) {
+                throw new IllegalStateException("Invalid update distribution mode");
+            }
             boolean updateRequired = !permitsVersion(data, currentVersion);
-            if (latest.isEmpty() && link.isEmpty()) {
+            if (latest.isEmpty() && link.isEmpty() && !authorizedDownload) {
                 return ClientUpdateNotice.builder().status(updateRequired ? ClientUpdateNotice.Status.UPDATE_REQUIRED : ClientUpdateNotice.Status.NO_RELEASE)
                         .message(updateRequired ? "此版本已不被允许使用，需要更新；维护者尚未公布可下载的正式版本。" : "目前尚未公布正式客户端版本。").build();
             }
@@ -75,18 +80,19 @@ public class AppVersionService {
             // Only the owner-approved repository's exact version page may be opened, never a
             // command, arbitrary URL, redirect supplied in a policy, or unsigned install script.
             String expectedLink = "https://github.com/yueyunfe21/schoolProjectC11/releases/tag/client-" + latest;
-            if (targetParts == null || !expectedLink.equals(link)) throw new IllegalStateException("Untrusted release page");
+            if (targetParts == null || (!link.isEmpty() && !expectedLink.equals(link)) ||
+                    (!authorizedDownload && !expectedLink.equals(link))) throw new IllegalStateException("Untrusted release source");
             if (!permitsVersion(data, latest)) throw new IllegalStateException("Recommended release is not allowed");
-            URI page = URI.create(link);
+            URI page = authorizedDownload ? null : URI.create(link);
             BigInteger[] installedParts = versionParts(currentVersion);
             if (installedParts == null) {
                 return ClientUpdateNotice.builder().status(ClientUpdateNotice.Status.DEVELOPMENT_BUILD)
-                        .latestVersion(latest).releasePage(page)
+                        .latestVersion(latest).releasePage(page).authorizedDownload(authorizedDownload)
                         .message("当前为开发版本 " + currentVersion + "；已公布正式版 " + latest + "。开发版不自动替换。").build();
             }
             if (updateRequired) {
                 return ClientUpdateNotice.builder().status(ClientUpdateNotice.Status.UPDATE_REQUIRED)
-                        .latestVersion(latest).releasePage(page)
+                        .latestVersion(latest).releasePage(page).authorizedDownload(authorizedDownload)
                         .message("此版本已不被允许使用，请更新到 " + latest + "。暂不更新可保留界面，但不能运行任务。").build();
             }
             boolean newer = false;
@@ -95,7 +101,7 @@ public class AppVersionService {
                 if (comparison != 0) { newer = comparison > 0; break; }
             }
             return ClientUpdateNotice.builder().status(newer ? ClientUpdateNotice.Status.NEW_RELEASE : ClientUpdateNotice.Status.NO_NEWER_RELEASE)
-                    .latestVersion(latest).releasePage(newer ? page : null)
+                    .latestVersion(latest).releasePage(newer ? page : null).authorizedDownload(newer && authorizedDownload)
                     .message(newer ? "发现新版本 " + latest + "。可选择下载更新或稍后；下载完成后还需确认退出安装。"
                             : "当前版本 " + currentVersion + "，未发现更新的正式版本。")
                     .build();

@@ -33,6 +33,7 @@ public class LicenseAuthService {
 
     private final DeviceFingerprintService deviceFingerprintService;
     private final RuntimeAuthorizationState runtimeAuthorization;
+    private final UpdateCredentialStore updateCredentialStore;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(8))
@@ -70,6 +71,15 @@ public class LicenseAuthService {
 
         ObjectNode payload = basePayload(licenseCode);
         LicenseAuthResult verified = post("/api/license/verify", payload);
+        if (verified.success() && Boolean.TRUE.equals(verified.currentDeviceMatched())) {
+            try { updateCredentialStore.save(licenseCode.trim()); }
+            catch (Exception unavailable) {
+                // Authorization itself remains valid; the next update explains that login must be
+                // repeated instead of ever writing the plaintext credential as a fallback.
+                log.warn("Verified update credential could not be persisted with Windows protection: {}",
+                        unavailable.getClass().getSimpleName());
+            }
+        }
         if (!verified.success() || !runtimeAuthorization.requiresSession()) return verified;
         if (!Boolean.TRUE.equals(verified.currentDeviceMatched())) {
             return LicenseAuthResult.failure("DEVICE_MISMATCH", "授权电脑未明确匹配，不能建立运行会话。");

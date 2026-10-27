@@ -1,15 +1,15 @@
 <#
-Publish an accepted, unchanged Gamma package and signed update manifest to the SAME public
-GitHub repository. Version-policy activation is a separate final step, not implied by upload.
-All files are verified before exposing a draft. Existing releases/tags are never overwritten;
-an interrupted upload leaves a private draft for inspection, not a broken public latest release.
-Requires PowerShell 7 (GitHub runner), explicit public-publication input and a scoped Actions token.
+Publish an accepted, unchanged Gamma package to private R2 authorization distribution and keep a
+GitHub Release archive. During the bridge period a public repository also keeps old clients alive;
+after migration the same release becomes private without changing the R2 client path.
 #>
 param([Parameter(Mandatory)][string]$PromotionDirectory)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:GITHUB_REF -ne 'refs/heads/master' -or
-    $env:PUBLIC_PACKAGE_APPROVED -ne 'true') { throw 'Publication requires explicit approval on the master Actions workflow.' }
+    $env:PRODUCTION_PACKAGE_APPROVED -ne 'true' -or $env:PRODUCTION_CONFIRMATION -cne 'PUBLISH-ACCEPTED-GAMMA') {
+    throw 'Publication requires exact confirmation on the master Actions workflow.'
+}
 $repo = $env:GITHUB_REPOSITORY
 if ($repo -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or [string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
     throw 'Repository or Actions token missing.'
@@ -56,7 +56,6 @@ if ([string]::IsNullOrWhiteSpace($request.releaseNotes) -or $request.releaseNote
 $headers = @{ Authorization="Bearer $env:GH_TOKEN"; Accept='application/vnd.github+json'; 'X-GitHub-Api-Version'='2022-11-28' }
 $api = "https://api.github.com/repos/$repo"
 $repository = Invoke-RestMethod -Uri $api -Headers $headers -TimeoutSec 30 -MaximumRedirection 0
-if ($repository.private -ne $false) { throw 'Public download was approved, but this repository is private. Visibility was not changed.' }
 # Independently resolve the accepted run before creating any tag/release. The prepared artifact
 # belongs to this workflow, but it is not by itself proof of the Gamma source branch and attempt.
 $source = Invoke-RestMethod -Uri "$api/actions/runs/$env:CANDIDATE_RUN_ID/attempts/$env:CANDIDATE_RUN_ATTEMPT" -Headers $headers -TimeoutSec 30 -MaximumRedirection 0
@@ -75,7 +74,13 @@ foreach ($uri in @("$api/git/ref/tags/$tag", "$api/releases/tags/$tag")) {
     if ($existing.StatusCode -eq 200) { throw "Tag/release already exists for $tag; inspect it, do not overwrite or republish." }
     if ($existing.StatusCode -ne 404) { throw "Unable to establish release absence: HTTP $($existing.StatusCode)." }
 }
-$body = $request.releaseNotes + "`n`nClient package only. Run requires authorization. Automatic installation and forced-version admission are not activated by this release.`n`nGamma: $($candidate.sourceRunId).$($candidate.sourceRunAttempt)`nSHA256: $($candidate.sha256)"
+# R2 objects are immutable and versioned. A retry may reuse an exact remotely verified object,
+# but a size/hash mismatch at the same key is never overwritten.
+$r2Prefix = "prod/$tag"
+& (Join-Path $PSScriptRoot 'publish-r2-object.ps1') -File $packagePath -ObjectKey "$r2Prefix/$filename"
+& (Join-Path $PSScriptRoot 'publish-r2-object.ps1') -File (Join-Path $PromotionDirectory 'update-manifest.json') `
+    -ObjectKey "$r2Prefix/update-manifest.json"
+$body = $request.releaseNotes + "`n`nClient package archive. User update delivery is license-authorized through private R2. Runtime still requires authorization.`n`nGamma: $($candidate.sourceRunId).$($candidate.sourceRunAttempt)`nSHA256: $($candidate.sha256)"
 $draftBody = @{ tag_name=$tag; target_commitish=$candidate.sourceCommit; name=$tag; body=$body;
     draft=$true; prerelease=$false; make_latest='false' } | ConvertTo-Json
 $draft = Invoke-RestMethod -Method Post -Uri "$api/releases" -Headers $headers -ContentType 'application/json; charset=utf-8' `
@@ -88,7 +93,7 @@ Write-Host "Created private draft $releaseId. Failure from here leaves the draft
 # signed update manifests must have a distinct schema rather than silently trusting this file.
 $downloadUrl = "https://github.com/$repo/releases/download/$tag/$filename"
 $distribution = [ordered]@{
-    schemaVersion=1; product='dhxy-client'; channel='prod'; purpose='manual-download'
+    schemaVersion=1; product='dhxy-client'; channel='prod'; purpose='private-r2-authorized-update'
     version=$candidate.version; buildId=$candidate.buildId; sourceCommit=$candidate.sourceCommit
     packageFile=$filename; downloadUrl=$downloadUrl; sizeBytes=$candidate.sizeBytes; sha256=$candidate.sha256
     automaticInstallationAvailable=$true; serverVersionPolicyActivated=$false; artifactSigned=$true
@@ -128,11 +133,11 @@ if ($published.draft -or $published.prerelease -or $published.tag_name -cne $tag
 }
 & (Join-Path $PSScriptRoot 'activate-version-policy.ps1') -Phase Activate -PromotionDirectory $PromotionDirectory
 @"
-## 客户端文件已公开发布
+## 客户端 Prod 已晋级
 - 版本：$tag
-- Release：https://github.com/$repo/releases/tag/$tag
-- 完整客户端下载：$downloadUrl
+- GitHub 归档：https://github.com/$repo/releases/tag/$tag
+- 用户分发：私有 R2 授权下载（客户端不展示对象 URL）
 - SHA256：$($candidate.sha256)
 - 同一 Gamma 原包，未重新构建。软件运行仍需授权。
-- 成品及签名清单已上传，推荐版本公告已激活；原有允许/撤销/最低版本规则未改，未自动启用强制升级。
+- exact Gamma 与签名清单已上传到版本化 R2 键并核验，推荐版本公告已激活；原有允许/撤销/最低版本规则未改。
 "@ | Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8

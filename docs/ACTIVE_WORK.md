@@ -1,5 +1,19 @@
 # DHXY Active Work
 
+## G195 GitHub Free 私有仓库与 R2 授权更新分发（2026-10-27）
+
+- **当前状态：** Cloudflare 基础设施与 Worker 已部署；Client/发布链已纳入 G195 的 `dev` 提交。D1 仍未公告任何 R2 成品，下一门是桥接 Gamma/Prod 和软件内端到端验收，尚未授权执行。
+- **用户批准与目标：** 用户批准把未来私有 GitHub、Cloudflare R2、D1/Worker 和客户端一键更新链完整搭建起来。用户电脑无需 GitHub 账号；首次成功授权后，后续点击更新不再输入授权码、不展示下载链接，客户端自行下载、验签、安装并重启。R2 默认只保留最近三个 Prod，历史包由私有 GitHub Release 归档。
+- **活动工作树与推送基线：** 唯一 Client/治理目标为 `D:\mavenProject\DHXY-cr271`；shell 已确认 `dev@3ca65d2eba14ae8ed6b0a9793edf43d5dfaa3ea9`，`HEAD == origin/dev`，开始时工作树干净。受保护 `D:\mavenProject\DHXY` 不修改。授权 Worker 目标为 `D:\mavenProject\dhxy-license-worker`，该目录不是 Git 仓，修改前须做窄范围备份。
+- **最新 pushed 对照：** 现有客户端从公开 `/api/client/version-policy` 取得 GitHub Release 页面，`ClientUpdateService` 写死 GitHub asset 基址/主机白名单；Prod workflow 使用 `client-production` Environment，Gamma/Prod artifact 均保留 30 天。现有 Worker 无 R2 binding 或更新票据。推送基线就是当前业务基线，本卡只改变成品分发/授权更新通道，不改变游戏任务、输入、OCR 或版本禁用语义。
+- **批准的安全顺序：** 先发布兼容 GitHub 与 Worker/R2 的桥接客户端，再迁移用户，最后才允许仓库转私有。Prod 必须上传已验收的 exact Gamma 字节到版本化私有 R2 键，远端核验后才 CAS 更新 D1；不覆盖 `latest.zip`。被禁旧版可使用独立更新票据下载允许的推荐版，不能要求仍有运行 session。客户端以 Windows DPAPI 保存首次成功且设备匹配的授权码；凭据、短期 R2 URL 和 Secret 不进日志/UI/Git。
+- **Free 方案边界：** 不依赖 GitHub Environment。Prod 采用 repository secrets、固定 `master`、人工 dispatch、精确 Gamma 来源、触发者和确认词门禁。Gamma artifact 改为三天短期中转；R2 最近三个 Prod 超过安全观察期后才清理，桥接版延长保留。当前绝不直接改仓库可见性，也不删除旧公开 Release。
+- **验证权限：** 用户没有授权测试。本卡不得创建或运行测试、不得启动产品或发送输入；Java 改动仅做独立目录 Maven compile，Worker/脚本只做静态类型/语法校验。实际 R2 开通、密钥配置、迁移和端到端发布若需要账号侧动作，必须明确列为剩余门槛，不能冒称已上线。
+- **实际基础设施进展：** 已创建私有 bucket `dhxy-client-updates`；D1 导出备份为 Worker 本地 `.release-build/g195-d1-backup-20261027/database-before.sql`（30687 bytes），随后 migration 0005 成功，远端无 pending migration。GitHub repository secrets 五项均存在；Worker 两项 R2 凭据均为 `secret_text`。用户知情决定继续使用曾在聊天截图中出现的当前 R2 凭据；这是已接受的密钥轮换风险，不得把它描述为未暴露。
+- **Worker 已部署：** 非 Git Worker 修改前备份在 `.release-build/g195-backup-20261027`；TypeScript `tsc --noEmit` 与 Wrangler dry bundle 成功。线上已从 `d84c4808-590c-4f81-9e83-c712b09e00d8` 部署到 `d5ba75e1-17e7-4601-9165-a5f692b96a22`，100% 流量，具 `DB`、`UPDATE_BUCKET`、account/bucket vars 与两项加密 Secret。当前 D1 的 R2 object key 仍为空，未切用户下载路径。
+- **Client/发布实现与静态验证：** 新增 Windows DPAPI 更新凭据存储、授权后持久化、update-ticket 请求、R2 host 约束及一小时大包下载上限；保留旧 GitHub 桥接。Prod 改 repository secrets、owner/master/确认词/Gamma provenance 门和不可变 R2 上传；相同远端对象仅精确大小/哈希一致时允许幂等重试。Client 341 主源码隔离 compile 成功到 `.release-build/g195-private-r2-client-20261027`；PowerShell/YAML/JSON/diff-check、规则门禁及 Worker 静态检查通过。没有测试、产品运行或游戏输入。
+- **尚未完成：** Client/GitHub workflow 尚未进入 `master`；没有构建或发布桥接 Gamma/Prod，没有 R2 成品、D1 推荐切换、端到端下载安装验收或仓库私有化。R2 最近三个 Prod 的自动安全清理仍需实现或在版本累计前手工执行；桥接版不得被普通清理。
+
 ## G184 软件内自动更新真实 A→B 发布测试（2026-10-26）
 
 - **用户授权与目标：** 用户明确要求现在生成并发布一个可供软件内点击更新的测试新版；用户侧不得手工下载、解压或选择安装目录，点击更新后由客户端后台取包、校验、安装并重启。本轮允许制作和公开一个 `optional` 测试 Release，并激活推荐版本公告；不启用 `required`、不禁用任何旧版、不启动游戏或发送输入。

@@ -1,5 +1,8 @@
 package com.bot.dhxy.update;
 
+import com.bot.dhxy.auth.DeviceFingerprintService;
+import com.bot.dhxy.auth.UpdateCredentialStore;
+import com.bot.dhxy.core.http.BoundedHttpBodyHandler;
 import com.bot.dhxy.model.update.ClientUpdateNotice;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -18,6 +21,7 @@ import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Base64;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -27,15 +31,33 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ClientUpdateService {
     private final String configuredRoot;
     private final String configuredApplication;
+    private final String workerBaseUrl;
+    private final String currentVersion;
+    private final String runtimeClientId;
+    private final String runtimeClientToken;
+    private final DeviceFingerprintService deviceFingerprintService;
+    private final UpdateCredentialStore credentialStore;
     private final AtomicBoolean downloading = new AtomicBoolean();
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
             .followRedirects(HttpClient.Redirect.NEVER).build();
     private final ObjectMapper json = new ObjectMapper();
 
     public ClientUpdateService(@Value("${dhxy.install-root:}") String root,
-            @Value("${dhxy.application-root:}") String application) {
+            @Value("${dhxy.application-root:}") String application,
+            @Value("${license.worker.base-url:https://dhxy-license-worker.yueyunfe.workers.dev}") String workerBaseUrl,
+            @Value("${bot.app-version:0.1.0-dev}") String currentVersion,
+            @Value("${cloud.turn.device-id:dhxy-client}") String runtimeClientId,
+            @Value("${cloud.turn.bearer-token:}") String runtimeClientToken,
+            DeviceFingerprintService deviceFingerprintService,
+            UpdateCredentialStore credentialStore) {
         configuredRoot = root;
         configuredApplication = application;
+        this.workerBaseUrl = workerBaseUrl;
+        this.currentVersion = currentVersion;
+        this.runtimeClientId = runtimeClientId;
+        this.runtimeClientToken = runtimeClientToken;
+        this.deviceFingerprintService = deviceFingerprintService;
+        this.credentialStore = credentialStore;
     }
 
     public boolean installationAvailable() {
@@ -58,12 +80,21 @@ public class ClientUpdateService {
             Path pending = Files.createDirectory(updates.resolve(UUID.randomUUID().toString()));
             String version = notice.getLatestVersion();
             if (version == null || !version.matches("[0-9]+\\.[0-9]+\\.[0-9]+-b[0-9]+\\.[0-9]+")) throw new IOException("版本格式错误");
-            URI base = URI.create(ClientUpdatePackage.RELEASE_BASE + "client-" + version + "/");
             Path envelope = pending.resolve("update-manifest.json");
-            downloadFile(base.resolve("update-manifest.json"), envelope, 65_536);
+            URI archiveUri;
+            if (notice.isAuthorizedDownload()) {
+                UpdateTicket ticket = requestUpdateTicket(version);
+                Files.write(envelope, ticket.manifestBytes(), StandardOpenOption.CREATE_NEW);
+                archiveUri = ticket.downloadUri();
+            } else {
+                URI base = URI.create(ClientUpdatePackage.RELEASE_BASE + "client-" + version + "/");
+                downloadFile(base.resolve("update-manifest.json"), envelope, 65_536);
+                archiveUri = base.resolve(ClientUpdatePackage.verifyManifest(Files.readAllBytes(envelope), version)
+                        .path("packageFile").asText());
+            }
             JsonNode manifest = ClientUpdatePackage.verifyManifest(Files.readAllBytes(envelope), version);
             Path archive = pending.resolve(manifest.path("packageFile").asText());
-            downloadFile(base.resolve(manifest.path("packageFile").asText()), archive, manifest.path("sizeBytes").asLong());
+            downloadFile(archiveUri, archive, manifest.path("sizeBytes").asLong());
             ClientUpdatePackage.verifyArchive(archive, manifest);
             Files.writeString(pending.resolve("version.txt"), version, StandardOpenOption.CREATE_NEW);
             return pending;
@@ -112,7 +143,7 @@ public class ClientUpdateService {
         for (int redirects = 0; redirects <= 5; redirects++) {
             if (!"https".equals(uri.getScheme()) || uri.getUserInfo() != null || uri.getFragment() != null ||
                     (uri.getPort() != -1 && uri.getPort() != 443) ||
-                    !Set.of("github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com").contains(uri.getHost())) {
+                    !isTrustedDownloadHost(uri.getHost())) {
                 throw new IOException("更新下载跳转到了未授权地址");
             }
             HttpResponse<InputStream> response = http.send(HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(30))
@@ -128,7 +159,7 @@ public class ClientUpdateService {
                 // HttpRequest timeout does not bound an InputStream body; close it at the hard
                 // deadline even if the server stalls between chunks.
                 try (var deadline = Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().factory())) {
-                    var timeout = deadline.schedule(() -> { try { body.close(); } catch (IOException ignored) { } }, 10, TimeUnit.MINUTES);
+                    var timeout = deadline.schedule(() -> { try { body.close(); } catch (IOException ignored) { } }, 60, TimeUnit.MINUTES);
                     try (var output = Files.newOutputStream(target, StandardOpenOption.CREATE_NEW)) {
                         long total = 0;
                         byte[] buffer = new byte[65_536];
@@ -145,4 +176,56 @@ public class ClientUpdateService {
         }
         throw new IOException("更新下载跳转次数过多");
     }
+
+    /** Request the exact owner-recommended object without requiring a runtime task session. */
+    private UpdateTicket requestUpdateTicket(String targetVersion) throws Exception {
+        String licenseCode = credentialStore.load().orElseThrow(() ->
+                new IOException("本机尚未保存更新授权，请先在说明页成功验证一次授权码"));
+        URI base = URI.create(workerBaseUrl);
+        if (!"https".equals(base.getScheme()) || base.getHost() == null || base.getUserInfo() != null ||
+                base.getQuery() != null || base.getFragment() != null) throw new IOException("更新授权服务地址无效");
+        var body = json.createObjectNode();
+        body.put("appId", "dhxy");
+        body.put("currentVersion", currentVersion);
+        body.put("targetVersion", targetVersion);
+        body.put("licenseCode", licenseCode);
+        body.put("deviceFingerprint", deviceFingerprintService.getDeviceFingerprint());
+        body.put("clientId", runtimeClientId);
+        body.put("clientToken", runtimeClientToken);
+        HttpRequest request = HttpRequest.newBuilder(base.resolve("/api/client/update-ticket"))
+                .timeout(Duration.ofSeconds(20)).header("Content-Type", "application/json")
+                .header("Accept", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(json.writeValueAsBytes(body))).build();
+        HttpResponse<byte[]> response = http.send(request, new BoundedHttpBodyHandler(262_144));
+        JsonNode root = json.readTree(response.body());
+        if (response.statusCode() != 200 || !root.path("ok").asBoolean(false)) {
+            throw new IOException(root.path("message").asText("更新下载未获授权，请重新验证授权"));
+        }
+        JsonNode data = root.path("data");
+        if (!targetVersion.equals(data.path("version").asText())) throw new IOException("更新票据版本不匹配");
+        byte[] manifestBytes;
+        try { manifestBytes = Base64.getDecoder().decode(data.path("manifestBase64").asText()); }
+        catch (IllegalArgumentException invalid) { throw new IOException("更新票据清单无效", invalid); }
+        if (manifestBytes.length <= 0 || manifestBytes.length > 65_536) throw new IOException("更新清单大小无效");
+        // Verify before trusting packageFile, size or hash fields carried by the ticket.
+        ClientUpdatePackage.verifyManifest(manifestBytes, targetVersion);
+        URI downloadUri = URI.create(data.path("downloadUrl").asText());
+        if (!isR2DownloadHost(downloadUri.getHost()) || !"https".equals(downloadUri.getScheme()) ||
+                downloadUri.getUserInfo() != null || downloadUri.getFragment() != null ||
+                (downloadUri.getPort() != -1 && downloadUri.getPort() != 443)) {
+            throw new IOException("更新票据下载地址无效");
+        }
+        return new UpdateTicket(manifestBytes, downloadUri);
+    }
+
+    private static boolean isTrustedDownloadHost(String host) {
+        return Set.of("github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com").contains(host) ||
+                isR2DownloadHost(host);
+    }
+
+    private static boolean isR2DownloadHost(String host) {
+        return host != null && host.matches("[a-f0-9]{32}\\.r2\\.cloudflarestorage\\.com");
+    }
+
+    private record UpdateTicket(byte[] manifestBytes, URI downloadUri) { }
 }

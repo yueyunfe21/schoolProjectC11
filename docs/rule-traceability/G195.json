@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "card": "G195",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "repositories": {
+    "licenseWorker": "../dhxy-license-worker"
+  },
+  "baseline": {
+    "clientWorktree": "D:/mavenProject/DHXY-cr271",
+    "clientBranch": "dev",
+    "clientCommit": "3ca65d2eba14ae8ed6b0a9793edf43d5dfaa3ea9",
+    "pushedReference": "HEAD == origin/dev; clean at start; protected D:/mavenProject/DHXY not modified",
+    "licenseWorker": "D:/mavenProject/dhxy-license-worker (non-Git; narrow backup required before edits)"
+  },
+  "rules": ["BR-RELEASE-001", "BR-RELEASE-002", "BR-RELEASE-003", "BR-RELEASE-006"],
+  "connectivity": [
+    {
+      "rule": "BR-RELEASE-002",
+      "producer": "Owner-published D1 version policy names the exact allowed recommended target while existing authorization data binds license and device",
+      "transport": "Worker update-ticket reads the same D1 license, device and version-policy authority without requiring a runtime session",
+      "consumer": "A revoked client keeps only the update UI and can request the allowed target; task execution remains denied by the existing runtime gate",
+      "ordering": "License and device validation -> target equals allowed recommendation -> ticket issuance; the current revoked version is not treated as permission to run and is not used to deny recovery download",
+      "contracts": [{"repo":"client","path":"docs/rule-traceability/G195-contract.md","command":"NOT RUN: no test authorization","proves":["Version revocation continues to deny runtime while preserving a narrow recovery-update path"]}]
+    },
+    {
+      "rule": "BR-RELEASE-003",
+      "producer": "Prod signs the exact accepted Gamma manifest and package identity",
+      "transport": "Worker returns the signed manifest and a bounded short-lived R2 URL; client downloads into its existing staging directory",
+      "consumer": "Pinned-key ClientUpdatePackage and existing external installer verify, switch the stable pointer and restart only after user confirmation",
+      "ordering": "Ticket -> manifest signature -> bounded package download -> SHA256/size -> exit confirmation -> parent exit and lock -> atomic version pointer -> restart",
+      "contracts": [{"repo":"client","path":"docs/rule-traceability/G195-contract.md","command":"NOT RUN: no test authorization","proves":["Changing storage does not weaken signature, hash, parent-exit or atomic-pointer installation boundaries"]}]
+    },
+    {
+      "rule": "BR-RELEASE-006",
+      "producer": "Accepted exact Gamma promotion signs the unchanged package and uploads package plus signed manifest to immutable versioned private R2 keys",
+      "transport": "Private R2 objects, D1 exact object identity and revision, authenticated HTTPS update-ticket, short-lived R2 presigned download URL",
+      "consumer": "Client automatically uses a Windows-DPAPI-protected prior successful license, verifies the signed manifest with its pinned public key, verifies package hash/size, then uses the existing external installer",
+      "ordering": "Gamma accepted -> sign exact bytes -> R2 upload -> remote object verification -> D1 CAS announcement -> user clicks update -> automatic credential submission -> update-ticket -> direct R2 download -> signature/hash verification -> user exit confirmation -> install/restart; never announce before object verification and never require runtime session for an update ticket",
+      "contracts": [
+        {
+          "repo": "client",
+          "path": "docs/rule-traceability/G195-contract.md",
+          "command": "NOT RUN: no test authorization",
+          "proves": [
+            "Private GitHub is not a client dependency after bridge migration",
+            "Unlicensed or device-mismatched clients receive no download ticket",
+            "A revoked current version can still download only the allowed recommended target",
+            "R2 URL and authorization material never become an installation trust decision"
+          ]
+        }
+      ]
+    }
+  ],
+  "affectedPaths": [
+    ".github/workflows/client-gamma.yml",
+    ".github/workflows/client-prod.yml",
+    "scripts/release",
+    "src/main/java/com/bot/dhxy/auth",
+    "src/main/java/com/bot/dhxy/update",
+    "src/main/java/com/bot/dhxy/model/update",
+    "docs/CLIENT_RELEASE_PIPELINE.md",
+    {"repo":"licenseWorker","path":"src"},
+    {"repo":"licenseWorker","path":"migrations"},
+    {"repo":"licenseWorker","path":"wrangler.toml"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "Replace public GitHub release downloads with licensed private R2 distribution while preserving exact-Gamma promotion and signed-install trust.",
+    "userDecision": "按 GitHub Free 私有仓库、R2 最近版本、D1/Worker 授权路由和用户一键自动更新方案搭建。",
+    "decisionRecordedAt": "2026-10-27",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G195"
+  },
+  "testStatus": "NOT AUTHORIZED. Do not create or run tests. Static/type/syntax checks and isolated Java compilation only."
+}

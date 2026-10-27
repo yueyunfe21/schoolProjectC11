@@ -63,7 +63,7 @@ jobs:
           name: client-candidate-${{ github.run_attempt }}
           path: ${{ steps.package.outputs.artifact_path }}
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 3
           compression-level: 0
       - name: 显示下载位置及验收边界
         env:
@@ -76,5 +76,5 @@ jobs:
           - Prod 准备时填写运行编号：$env:GITHUB_RUN_ID；尝试编号：$env:GITHUB_RUN_ATTEMPT
           - 自动测试未授权，本流水线只编译/打包；构建成功不等于实战验收通过。
           - 先按 README-client.txt 配置 Gamma Cloud，人工验收后才能申请晋级。
-          - 候选保留 30 天。过期必须重新构建并重新验收，不能冒用旧编号。
+          - GitHub Free 候选只保留 3 天。过期必须重新构建并重新验收，不能冒用旧编号。
           "@ | Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8

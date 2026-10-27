@@ -5,13 +5,18 @@ param([Parameter(Mandatory)][ValidateSet('Check','Activate')][string]$Phase,
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:GITHUB_REF -ne 'refs/heads/master' -or
-    $env:PUBLIC_PACKAGE_APPROVED -ne 'true') { throw 'Policy activation requires explicit production workflow approval.' }
+    $env:PRODUCTION_PACKAGE_APPROVED -ne 'true' -or $env:PRODUCTION_CONFIRMATION -cne 'PUBLISH-ACCEPTED-GAMMA') {
+    throw 'Policy activation requires exact production workflow approval.'
+}
 if ([string]::IsNullOrWhiteSpace($env:CLIENT_POLICY_API_TOKEN) -or
     $env:EXPECTED_POLICY_REVISION -notmatch '^(0|[1-9][0-9]{0,14})$') { throw 'Policy token or expected revision missing.' }
 $candidate = Get-Content -LiteralPath (Join-Path $PromotionDirectory 'candidate.json') -Raw | ConvertFrom-Json
 $version = "$($candidate.version)-b$($candidate.buildId)"
 if ($version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-b[1-9][0-9]*\.[1-9][0-9]*$') { throw 'Invalid candidate version.' }
 $releaseUrl = "https://github.com/yueyunfe21/schoolProjectC11/releases/tag/client-$version"
+$r2Prefix = "prod/client-$version"
+$manifestObjectKey = "$r2Prefix/update-manifest.json"
+$packageObjectKey = "$r2Prefix/$($candidate.packageFile)"
 $api = 'https://api.cloudflare.com/client/v4/accounts/7d67dcb6bec8cdfe2fe1cc399801c55f/d1/database/95fc2c6b-ce9e-4c5b-8d10-8a21581012e4/query'
 $headers = @{ Authorization="Bearer $env:CLIENT_POLICY_API_TOKEN" }
 function Invoke-PolicyQuery([string]$Sql, [object[]]$Parameters) {
@@ -58,8 +63,10 @@ foreach ($name in @($candidate.packageFile, 'update-manifest.json')) {
     }
 }
 # RETURNING is the exact mutated row; do not use meta.changes (audit triggers may add to it).
-$written = Invoke-PolicyQuery 'UPDATE client_version_policies SET revision=revision+1, latest_version=?, release_url=?, updated_at=CURRENT_TIMESTAMP WHERE app_id=? AND revision=? RETURNING revision,latest_version,release_url' @($version,$releaseUrl,'dhxy',[long]$env:EXPECTED_POLICY_REVISION)
+$written = Invoke-PolicyQuery 'UPDATE client_version_policies SET revision=revision+1, latest_version=?, release_url=?, update_manifest_object_key=?, update_package_object_key=?, update_package_sha256=?, update_package_size_bytes=?, updated_at=CURRENT_TIMESTAMP WHERE app_id=? AND revision=? RETURNING revision,latest_version,release_url,update_manifest_object_key,update_package_object_key' @($version,$releaseUrl,$manifestObjectKey,$packageObjectKey,$candidate.sha256,[long]$candidate.sizeBytes,'dhxy',[long]$env:EXPECTED_POLICY_REVISION)
 if (@($written.results).Count -ne 1 -or $written.results[0].latest_version -cne $version -or
+    $written.results[0].update_manifest_object_key -cne $manifestObjectKey -or
+    $written.results[0].update_package_object_key -cne $packageObjectKey -or
     $written.results[0].revision -ne ([long]$env:EXPECTED_POLICY_REVISION + 1)) {
     throw 'Release is public but recommendation CAS failed. Read the policy; do not blindly republish.'
 }

@@ -1,5 +1,16 @@
 window.CR_DASHBOARD_DATA = [
   {
+    "id": "G195",
+    "number": 195,
+    "owner": "Codex",
+    "status": "**实施中 / 规则已批准 / 禁止提前私有化**",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Client 更新授权与下载；Worker R2 ticket；D1 policy；GitHub Free 发布链",
+    "summary": "私有源码仍让无 GitHub 账号用户一键授权更新；先桥接迁移，再切私有。",
+    "verification": "需复核"
+  },
+  {
     "id": "G194",
     "number": 194,
     "owner": "Codex",

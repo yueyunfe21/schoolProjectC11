@@ -1612,7 +1612,8 @@ public class MainWindowController {
                 boolean canInstall = notice.hasInstallableRelease() && clientUpdateService.installationAvailable();
                 ButtonType download = new ButtonType(canInstall ? "下载更新" : "打开下载页");
                 ButtonType later = new ButtonType(required ? "暂不更新（不能运行）" : "稍后");
-                alert.getButtonTypes().setAll(notice.getReleasePage() == null ? List.of(ButtonType.OK) : List.of(download, later));
+                boolean hasAction = canInstall || notice.getReleasePage() != null;
+                alert.getButtonTypes().setAll(hasAction ? List.of(download, later) : List.of(ButtonType.OK));
                 alert.setOnHidden(event -> {
                     if (alert.getResult() == download) {
                         if (canInstall) {

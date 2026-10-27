@@ -12,10 +12,11 @@ public class ClientUpdateNotice {
     String message;
     String latestVersion;
     URI releasePage;
+    boolean authorizedDownload;
 
     /** A revoked build may need the allowed recommended package even if its version number is lower. */
     public boolean hasInstallableRelease() {
-        return releasePage != null && latestVersion != null && !latestVersion.isBlank() &&
+        return (authorizedDownload || releasePage != null) && latestVersion != null && !latestVersion.isBlank() &&
                 (status == Status.NEW_RELEASE || status == Status.UPDATE_REQUIRED);
     }
 
