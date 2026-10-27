@@ -2,7 +2,7 @@
 
 ## G195 GitHub Free 私有仓库与 R2 授权更新分发（2026-10-27）
 
-- **状态：基础设施与 Worker 已部署 / Client 与发布链已提交到 `dev` / 待桥接 Gamma、Prod 与软件内端到端验收。** 当前 D1 尚未公告 R2 对象，因此线上旧客户端行为未切换；仓库仍须保持公开直到桥接迁移完成。
+- **状态：基础设施与 Worker 已部署 / 桥接 Gamma 构建成功 / 待人工验收、Prod 与软件内端到端验收。** 当前 D1 尚未公告 R2 对象，因此线上旧客户端行为未切换；仓库仍须保持公开直到桥接迁移完成。
 - **目标与用户裁决：** 用户批准把未来私有 GitHub 的客户端发布改为私有 R2 授权分发。用户无需 GitHub 账号；首次成功授权后，点击更新一次即可自动提交本机保存的授权、下载、验签、安装并重启，不显示或要求点击 ZIP/R2 链接。R2 默认保留最近三个 Prod，GitHub 私有 Release 保存历史。
 - **实施基线：** Client/治理只改 `D:\mavenProject\DHXY-cr271`，`dev@3ca65d2eba14ae8ed6b0a9793edf43d5dfaa3ea9` 与 `origin/dev` 一致且开工时干净；保护树 `D:\mavenProject\DHXY` 不修改。Worker 位于非 Git 目录 `D:\mavenProject\dhxy-license-worker`，任何修改先窄备份。现有 pushed 代码仍公开读取 GitHub Release、使用 Environment Secret 和 30 天 artifact；无 R2 ticket。
 - **批准架构：** exact Gamma 晋级后先签名，再上传不可变版本键到私有 R2，远端核验成功后用 revision CAS 公告 D1 对象身份。客户端用 DPAPI 保护已验证授权码；独立 update-ticket 不要求 runtime session，允许被禁旧版下载当前允许目标，但 Worker 必须验证许可、设备、客户端身份和精确目标。返回的短期 R2 bearer URL 不入日志、UI或磁盘；最终执行仍由固定公钥、SHA256/大小与 G184 外部安装器控制。
@@ -10,7 +10,8 @@
 - **验证门：** 本卡无测试授权；只允许隔离 Java compile 与 TypeScript/PowerShell 静态校验。真实 R2 资源、Secrets、D1 migration、Worker deploy、桥接 Gamma/Prod 和私有化均须逐项记录实际结果；未完成前不得写“用户已可用”。
 - **实际基础设施：** 私有 `dhxy-client-updates` 已创建；D1 30687-byte 备份后 migration 0005 已应用且无 pending。GitHub 五项 repository secrets 与 Worker 两项 `secret_text` 已核存在。用户知情接受当前 R2 凭据曾出现在聊天截图而暂不轮换的风险。Worker TypeScript/dry bundle 成功，线上 `d5ba75e1-17e7-4601-9165-a5f692b96a22` 已 100% 部署并持有 R2/D1 bindings；此前 `d84c4808` 保留可回滚。
 - **实现与静态结果：** Client 以 Windows DPAPI 保护成功授权码，update-ticket 自动提交许可/设备/客户端/版本，严格接受 R2 S3 host；现有 GitHub 下载保留为桥接。Prod workflow 使用 Free 可用的 repository secrets、owner/master/确认词和 exact Gamma 门，先核不可变 R2 再 CAS D1。341 主源码隔离 compile、TS、Wrangler dry bundle、PowerShell/YAML/JSON/diff-check及规则门均通过；无测试/产品运行/输入。
-- **未闭环：** Client/workflow 已纳入 G195 的 `dev` 提交；尚未合入 `master`，桥接 Gamma/Prod、R2 实际成品、D1 切换、软件内下载/验签/安装/重启和最终私有化均未发生。三版本安全清理尚未自动化，桥接版必须长期保留。
+- **桥接 Gamma：** 用户批准当前 `dev` 进入 Gamma；`master` 以安全 fast-forward 更新到 `f7858d4f`，Actions run `40576376602.1` 于 2026-10-27 成功。artifact `client-candidate-1`（ID `12766513545`，280066537 bytes，artifact digest `sha256:09dc5bd2821200c9271d5f811a0b913260736f03d79e8e47dc10ad36651286d3`）保存至 2026-10-30；该结果仅证明候选构建成功，不等于人工验收或 Prod 发布。
+- **未闭环：** 桥接 Gamma 尚未人工验收；Prod、R2 实际成品、D1 切换、软件内下载/验签/安装/重启和最终私有化均未发生。三版本安全清理尚未自动化，桥接版必须长期保留。
 
 ## G194 跨绿链飞行状态连续性与失效边界（2026-10-25）
 

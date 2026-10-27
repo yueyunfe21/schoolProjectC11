@@ -2,7 +2,7 @@
 
 ## G195 GitHub Free 私有仓库与 R2 授权更新分发（2026-10-27）
 
-- **当前状态：** Cloudflare 基础设施与 Worker 已部署；Client/发布链已纳入 G195 的 `dev` 提交。D1 仍未公告任何 R2 成品，下一门是桥接 Gamma/Prod 和软件内端到端验收，尚未授权执行。
+- **当前状态：** Cloudflare 基础设施与 Worker 已部署；用户已批准桥接 Gamma，`master` fast-forward 到 `f7858d4f` 后 Actions run `40576376602.1` 构建成功。D1 仍未公告任何 R2 成品；下一门是人工验收该 Gamma，之后才可申请 Prod 和软件内端到端验收。
 - **用户批准与目标：** 用户批准把未来私有 GitHub、Cloudflare R2、D1/Worker 和客户端一键更新链完整搭建起来。用户电脑无需 GitHub 账号；首次成功授权后，后续点击更新不再输入授权码、不展示下载链接，客户端自行下载、验签、安装并重启。R2 默认只保留最近三个 Prod，历史包由私有 GitHub Release 归档。
 - **活动工作树与推送基线：** 唯一 Client/治理目标为 `D:\mavenProject\DHXY-cr271`；shell 已确认 `dev@3ca65d2eba14ae8ed6b0a9793edf43d5dfaa3ea9`，`HEAD == origin/dev`，开始时工作树干净。受保护 `D:\mavenProject\DHXY` 不修改。授权 Worker 目标为 `D:\mavenProject\dhxy-license-worker`，该目录不是 Git 仓，修改前须做窄范围备份。
 - **最新 pushed 对照：** 现有客户端从公开 `/api/client/version-policy` 取得 GitHub Release 页面，`ClientUpdateService` 写死 GitHub asset 基址/主机白名单；Prod workflow 使用 `client-production` Environment，Gamma/Prod artifact 均保留 30 天。现有 Worker 无 R2 binding 或更新票据。推送基线就是当前业务基线，本卡只改变成品分发/授权更新通道，不改变游戏任务、输入、OCR 或版本禁用语义。
@@ -12,7 +12,8 @@
 - **实际基础设施进展：** 已创建私有 bucket `dhxy-client-updates`；D1 导出备份为 Worker 本地 `.release-build/g195-d1-backup-20261027/database-before.sql`（30687 bytes），随后 migration 0005 成功，远端无 pending migration。GitHub repository secrets 五项均存在；Worker 两项 R2 凭据均为 `secret_text`。用户知情决定继续使用曾在聊天截图中出现的当前 R2 凭据；这是已接受的密钥轮换风险，不得把它描述为未暴露。
 - **Worker 已部署：** 非 Git Worker 修改前备份在 `.release-build/g195-backup-20261027`；TypeScript `tsc --noEmit` 与 Wrangler dry bundle 成功。线上已从 `d84c4808-590c-4f81-9e83-c712b09e00d8` 部署到 `d5ba75e1-17e7-4601-9165-a5f692b96a22`，100% 流量，具 `DB`、`UPDATE_BUCKET`、account/bucket vars 与两项加密 Secret。当前 D1 的 R2 object key 仍为空，未切用户下载路径。
 - **Client/发布实现与静态验证：** 新增 Windows DPAPI 更新凭据存储、授权后持久化、update-ticket 请求、R2 host 约束及一小时大包下载上限；保留旧 GitHub 桥接。Prod 改 repository secrets、owner/master/确认词/Gamma provenance 门和不可变 R2 上传；相同远端对象仅精确大小/哈希一致时允许幂等重试。Client 341 主源码隔离 compile 成功到 `.release-build/g195-private-r2-client-20261027`；PowerShell/YAML/JSON/diff-check、规则门禁及 Worker 静态检查通过。没有测试、产品运行或游戏输入。
-- **尚未完成：** Client/GitHub workflow 尚未进入 `master`；没有构建或发布桥接 Gamma/Prod，没有 R2 成品、D1 推荐切换、端到端下载安装验收或仓库私有化。R2 最近三个 Prod 的自动安全清理仍需实现或在版本累计前手工执行；桥接版不得被普通清理。
+- **Gamma 构建结果：** run `40576376602.1` 成功，artifact `client-candidate-1`（ID `12766513545`）为 280066537 bytes，GitHub artifact digest `sha256:09dc5bd2821200c9271d5f811a0b913260736f03d79e8e47dc10ad36651286d3`，2026-10-30 过期。构建成功不代表人工验收通过，也没有触发 Prod。
+- **尚未完成：** 尚未人工验收桥接 Gamma；没有发布 Prod、R2 成品、D1 推荐切换、端到端下载安装验收或仓库私有化。R2 最近三个 Prod 的自动安全清理仍需实现或在版本累计前手工执行；桥接版不得被普通清理。
 
 ## G184 软件内自动更新真实 A→B 发布测试（2026-10-26）
 
