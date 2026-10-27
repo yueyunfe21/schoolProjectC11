@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "card": "G170",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "repositories": {"cloud": "../dhxy-cloud-brain"},
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "22363574",
+    "cloudCommit": "c10078142bdc769717cf8980ffcf56e2e45da8aa",
+    "pushedReference": "Cloud origin/dev verified with git ls-remote on 2026-09-10"
+  },
+  "rules": ["BR-WUBEI-002"],
+  "affectedPaths": [{"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java"}],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "Pushed Wubei ignores combat cleanup return and parks on cleared pathing; this violates the documented combat handoff and pre-battle budget lifecycle.",
+    "userDecision": "修改（批准此前说明的进战阶段切换、战斗唤醒及旧入战计时收尾方案）",
+    "decisionRecordedAt": "2026-09-10",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G170"
+  },
+  "connectivity": [{
+    "rule": "BR-WUBEI-002",
+    "producer": "Existing Client Runner combat edge publication (unchanged)",
+    "transport": "Existing COMBAT_STATE_CHANGED -> CloudWholeTaskReadyEventState exact-run retained entry/exit (unchanged)",
+    "consumer": "WubeiTask.runRoundPhases / consumePendingCombatEntryCleanup / tickWaitBattleFinish",
+    "ordering": "Ready watermark before phase consumption; exact entry handoff before old phase; cleanup ACK independent of entry acceptance; existing combat recovery consumes exit.",
+    "contracts": [{
+      "path": "docs/PACKAGE_ARCHITECTURE.md",
+      "command": "NOT_RUN: G170 contract specification only; executable contracts suspended by current no-test override, pending specific user test authorization.",
+      "proves": ["Planned: combat cleanup cannot leave task waiting on empty pathing", "Planned: entry/exit before park is retained", "Planned: cleanup retry does not repeat stage handoff", "Planned: combat ends pre-battle budget without changing classification"]
+    }]
+  }],
+  "verification": [
+    {"name": "isolated production compilation", "result": "PASS", "evidence": "javac --release 21 with Lombok; exit 0; output Temp/dhxy-g170-compile-227e0136f057418daaf11d9becabc48e"},
+    {"name": "source handoff inspection", "result": "COMPLETE_NOT_TESTED", "evidence": "Reviewed distinct entry/cleanup watermarks, exact exit after entry, pre-phase wait watermark and unchanged monster classification/postcombat policy; runtime verification remains pending."}
+  ],
+  "testStatus": "SPECIFICATION_ONLY: no executable contract created or run under current no-test override. Metadata gate is not proof of behavior. Production compile and source inspection only."
+}

@@ -1,0 +1,80 @@
+name: 客户端 Gamma 候选包
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'src/main/**'
+      - 'pom.xml'
+      - 'images/template/**'
+      - 'config/*.json'
+      - 'release/**'
+      - 'scripts/release/**'
+      - 'scripts/wgc_capture_sidecar.py'
+      - '.github/workflows/client-gamma.yml'
+  workflow_dispatch:
+
+# Building a candidate cannot create a release or change a production policy.
+permissions:
+  contents: read
+
+concurrency:
+  group: client-gamma-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/master'
+    runs-on: windows-2022
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: 构建截图组件（只打包，不运行截图）
+        run: |
+          python -m pip install -r release/requirements-build.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Capture build dependencies failed.' }
+          python -m PyInstaller --noconfirm --onedir --console --name dhxy-capture `
+            --distpath "$env:RUNNER_TEMP/capture-dist" --workpath "$env:RUNNER_TEMP/capture-work" `
+            --specpath "$env:RUNNER_TEMP" scripts/wgc_capture_sidecar.py
+          if ($LASTEXITCODE -ne 0) { throw 'Capture packaging failed.' }
+      - name: 隔离构建客户端完整包（不运行测试或游戏）
+        id: package
+        run: |
+          ./scripts/release/build-client.ps1 -BuildId "$env:GITHUB_RUN_ID.$env:GITHUB_RUN_ATTEMPT" `
+            -CaptureBundle "$env:RUNNER_TEMP/capture-dist/dhxy-capture" `
+            -OutputRoot "$env:GITHUB_WORKSPACE/.release-build/client-package"
+      - name: 保存唯一候选包
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: client-candidate-${{ github.run_attempt }}
+          path: ${{ steps.package.outputs.artifact_path }}
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - name: 显示下载位置及验收边界
+        env:
+          CANDIDATE: ${{ steps.package.outputs.candidate }}
+        run: |
+          @"
+          ## Gamma 候选包已构建，尚未验收或发布
+          - 候选：$env:CANDIDATE
+          - 本页 Artifacts 下载 client-candidate-$env:GITHUB_RUN_ATTEMPT
+          - Prod 准备时填写运行编号：$env:GITHUB_RUN_ID；尝试编号：$env:GITHUB_RUN_ATTEMPT
+          - 自动测试未授权，本流水线只编译/打包；构建成功不等于实战验收通过。
+          - 先按 README-client.txt 配置 Gamma Cloud，人工验收后才能申请晋级。
+          - 候选保留 30 天。过期必须重新构建并重新验收，不能冒用旧编号。
+          "@ | Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8

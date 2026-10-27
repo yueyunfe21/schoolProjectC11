@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "card": "G177",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "repositories": {"cloud": "../dhxy-cloud-brain"},
+  "baseline": {"clientBranch": "dev", "clientCommit": "2236357413ffc64621626917ca4a66183895390d", "cloudCommit": "c10078142bdc769717cf8980ffcf56e2e45da8aa", "pushedReference": "ls-remote verified 2026-09-10; both touched production files equal origin/dev"},
+  "rules": ["BR-MAINTENANCE-001"],
+  "affectedPaths": [{"repo": "client", "path": "src/main/java/com/bot/dhxy/window/observation/OpenCvLocalMaintenanceBroadcastHandler.java"}, {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/DialogService.java"}],
+  "businessDifference": {"kind": "USER_APPROVED", "conflictSummary": "Shared fixed healer ROI clips one legitimate layout; preserve repair region and all other behaviour", "userDecision": "同一个框可以把两个都覆盖到；可以啊，就是你确认你测试确认下来就改就可以", "decisionRecordedAt": "2026-09-10", "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G177"},
+  "connectivity": [{"rule": "BR-MAINTENANCE-001", "producer": "Bound-window capture requested by common maintenance path", "transport": "Cloud captureDialogValidationImage and Client GameClientTracker.captureToMemory preserve raw frame/ROI origin", "consumer": "DialogService.tryClickMaintenanceBroadcastOption and OpenCvLocalMaintenanceBroadcastHandler.findMatch", "ordering": "Same template and threshold; healer then repair; subregion match center translated before atomic input; success reporting unchanged", "contracts": [{"repo": "client", "path": "scripts/G177DoctorFrameCompare.java", "command": "Isolated javac/java image replay; pending lossless inputs", "proves": ["both doctor layouts match unchanged template", "repair search scope and match offsets unchanged", "both production ROI definitions agree"]}]}],
+  "testStatus": "Implemented; both isolated javac passed. Real Wubei lossless replay: old .146162, expanded .997632, center319,376. Super-doctor uses existing JPEG layout evidence; user explicitly declined another capture and requested only ROI change. No double-layout lossless PASS claim, no extended contracts or game input; runtime pending."
+}

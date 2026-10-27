@@ -55,7 +55,15 @@ public final class TurnTransportException extends Exception {
         return cloudErrorCode;
     }
 
+    /** Exact authorization denial is terminal, not a network retry or a fabricated task outcome. */
+    public boolean isRuntimeAuthorizationDenied() {
+        return kind == Kind.AUTHORIZATION || (kind == Kind.HTTP_STATUS && Integer.valueOf(403).equals(httpStatus) &&
+                com.bot.dhxy.model.auth.RuntimeAuthorizationCode.fromWire(cloudErrorCode) !=
+                        com.bot.dhxy.model.auth.RuntimeAuthorizationCode.UNKNOWN);
+    }
+
     public enum Kind {
+        AUTHORIZATION,
         INVALID_CONFIGURATION,
         REQUEST_CONTRACT,
         SERIALIZATION,

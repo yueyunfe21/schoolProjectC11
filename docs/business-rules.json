@@ -1,6 +1,85 @@
 {
   "schemaVersion": 1,
   "rules": [
+    {"id":"BR-RELEASE-005","title":"客户端JVM按需伸缩与轻量内存可观测性","source":"docs/CLIENT_RELEASE_PIPELINE.md","heading":"[BR-RELEASE-005] 客户端 JVM 按需伸缩与轻量内存可观测性","domains":["release","client-runtime","memory","diagnostics"],"crossBoundary":false,"status":"active"},
+    {"id":"BR-COMMON-BOX-001","title":"通用盒子优先消费与30秒生命周期","source":"docs/业务逻辑.md","heading":"[BR-COMMON-BOX-001] 通用盒子优先消费与30秒生命周期","domains":["common-box","xiuluo","wubei","timing"],"crossBoundary":true,"status":"active"},
+    {"id":"BR-RELEASE-004","title":"本地客户端与云端大脑一对一服务","source":"docs/CLIENT_RELEASE_PIPELINE.md","heading":"[BR-RELEASE-004] 本地客户端与云端大脑一对一服务","domains":["release","authorization","client-cloud","isolation"],"crossBoundary":true,"status":"active"},
+    {"id":"BR-RELEASE-003","title":"用户确认后的受信安装与旧版保留","source":"docs/CLIENT_RELEASE_PIPELINE.md","heading":"[BR-RELEASE-003] 用户确认后的受信安装与旧版保留","domains":["release","update","lifecycle"],"crossBoundary":true,"status":"active"},
+    {"id":"BR-RELEASE-002","title":"授权服务版本政策与测试码兼容","source":"docs/CLIENT_RELEASE_PIPELINE.md","heading":"[BR-RELEASE-002] 授权服务版本政策与测试码兼容","domains":["release","authorization"],"crossBoundary":true,"status":"active"},
+    {"id":"BR-RELEASE-001","title":"客户端独立发布与同产物晋级","source":"docs/CLIENT_RELEASE_PIPELINE.md","heading":"[BR-RELEASE-001] 客户端独立发布与同产物晋级","domains":["release"],"crossBoundary":false,"status":"active"},
+    {"id":"BR-WUBEI-013","title":"五倍关闭全部提前道具预扫","source":"docs/业务逻辑.md","heading":"[BR-WUBEI-013] 五倍关闭全部提前道具预扫","domains":["wubei","bag","client-cloud"],"crossBoundary":true,"status":"active"},
+    {"id":"BR-WUBEI-012","title":"修罗与五倍共用七档成功轮间休息","source":"docs/业务逻辑.md","heading":"[BR-WUBEI-012] 修罗与五倍共用七档成功轮间休息","domains":["xiuluo","wubei","timing"],"crossBoundary":false,"status":"active"},
+    {"id":"BR-WUBEI-011","title":"五倍暂时禁用普通回程道具预扫","source":"docs/业务逻辑.md","heading":"[BR-WUBEI-011] 五倍暂时禁用普通回程道具预扫","domains":["wubei","bag","client-cloud"],"crossBoundary":true,"status":"active"},
+    {"id":"BR-WUBEI-010","title":"五倍实际绿链点击后延迟两秒确保飞行","source":"docs/业务逻辑.md","heading":"[BR-WUBEI-010] 五倍实际绿链点击后延迟两秒确保飞行","domains":["wubei","flight","client-cloud"],"crossBoundary":true,"status":"active"},
+    {"id":"BR-FLIGHT-001","title":"飞行初筛与有界按键差分确认","source":"docs/业务逻辑.md","heading":"[BR-FLIGHT-001] 飞行初筛与有界按键差分确认","domains":["flight","observation","input"],"crossBoundary":false,"status":"active"},
+    {"id":"BR-WUBEI-009","title":"停步缺模板失败必须有效到恢复接管","source":"docs/业务逻辑.md","heading":"[BR-WUBEI-009] 停步缺模板失败必须有效到恢复接管","domains":["wubei","runner","recovery","client-cloud"],"crossBoundary":true,"status":"active"},
+    {"id":"BR-NPC-003","title":"启动记忆持续复用与连续三次失败停用","source":"docs/业务逻辑.md","heading":"[BR-NPC-003] 启动记忆持续复用与连续三次失败停用","domains":["npc","memory","client-cloud"],"crossBoundary":true,"status":"active"},
+    {"id":"BR-WUBEI-008","title":"面板连续识别失败第三次即终止","source":"docs/业务逻辑.md","heading":"[BR-WUBEI-008] 面板连续识别失败第三次即终止","domains":["wubei","recovery"],"crossBoundary":false,"status":"active"},
+    {"id":"BR-WUBEI-007","title":"五倍共用本地入战执行与确认重试","source":"docs/业务逻辑.md","heading":"[BR-WUBEI-007] 五倍共用本地入战执行与确认重试","domains":["wubei","combat","runner","client-cloud"],"crossBoundary":true,"status":"active"},
+    {"id":"BR-WUBEI-006","title":"绿链等待与镜像必须属于本次寻路","source":"docs/业务逻辑.md","heading":"[BR-WUBEI-006] 绿链等待与镜像必须属于本次寻路","domains":["wubei","pathing","client-cloud"],"crossBoundary":true,"status":"active"},
+    {
+      "id": "BR-MAINTENANCE-001",
+      "title": "共用医宝宝选项覆盖两种排版，修装备范围不变",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-MAINTENANCE-001] 共用医宝宝选项覆盖两种排版，修装备范围不变",
+      "domains": ["maintenance", "template", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-WUBEI-005",
+      "title": "白龙马出现提示单在途与最新待处理帧",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-WUBEI-005] 白龙马出现提示单在途与最新待处理帧",
+      "domains": ["wubei", "dialog", "observation", "client-cloud", "lifecycle"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-WUBEI-004",
+      "title": "五倍意外退战按任务事实续接，回城失败不等于战斗",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-WUBEI-004] 五倍意外退战按任务事实续接，回城失败不等于战斗",
+      "domains": ["wubei", "combat", "recovery", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-NPC-002",
+      "title": "角落场景 NPC 多点点击记忆",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-NPC-002] 角落场景 NPC 多点点击记忆",
+      "domains": ["npc", "memory", "input", "client-cloud", "lifecycle"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-WUBEI-003",
+      "title": "清障已点击入战选项后禁止重按绿链",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-WUBEI-003] 清障已点击入战选项后禁止重按绿链",
+      "domains": ["wubei", "dialog", "combat", "state-machine"],
+      "crossBoundary": false,
+      "status": "active"
+    },
+    {
+      "id": "BR-WUBEI-002",
+      "title": "进战事实接续战斗等待与结束入战预算",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-WUBEI-002] 进战事实接续战斗等待与结束入战预算",
+      "domains": ["wubei", "combat", "runner", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-WUBEI-001",
+      "title": "归队等待续接与接任务位置检查",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-WUBEI-001] 归队等待续接与接任务位置检查",
+      "domains": ["wubei", "state-machine", "navigation", "npc-click"],
+      "crossBoundary": false,
+      "status": "active"
+    },
     {
       "id": "BR-AUTOBATTLE-001",
       "title": "独立自动战斗战中只维护面板并在Runner脱战后补给",

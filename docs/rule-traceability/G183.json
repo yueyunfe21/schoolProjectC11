@@ -1,0 +1,25 @@
+{
+  "schemaVersion":1,
+  "card":"G183",
+  "changeType":"business",
+  "status":"SUPERSEDED_BY_G185",
+  "repositories":{"cloud":"../dhxy-cloud-brain"},
+  "baseline":{
+    "clientBranch":"dev",
+    "clientCommit":"2236357413ffc64621626917ca4a66183895390d",
+    "cloudCommit":"c10078142bdc769717cf8980ffcf56e2e45da8aa",
+    "pushedReference":"2026-09-13 ls-remote verified both. Xiuluo pushed success-next-round rest present; Wubei pushed/current rest absent; all existing dirty preserved."
+  },
+  "rules":["BR-WUBEI-012"],
+  "affectedPaths":[{"repo":"cloud","path":"src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java"}],
+  "businessDifference":{
+    "kind":"USER_APPROVED",
+    "conflictSummary":"Wubei originally immediately started next internal round; user explicitly requests Xiuluo-equivalent inter-round rest after seeing diagnosis and distribution.",
+    "userDecision":"统一一下，补一下五倍的这个（承接上一答复明确分布和成功轮间边界）",
+    "decisionRecordedAt":"2026-09-13",
+    "cardReference":"docs/PACKAGE_ARCHITECTURE.md#G183"
+  },
+  "implementationStatus":"Historical implementation. The Wubei success-plus-next-round placement remains valid, but G185 replaces the duplicated 80/17/3 distribution and private task methods with one shared seven-band policy.",
+  "compilation":"Cloud WubeiTask plus current source dependencies isolated javac exit0; temp dhxy-g183-cloud-cad4099c095a4733a7e39cd40202bc14",
+  "testStatus":"NOT RUN: no test authorization; isolated javac only. Acceptance specification: success plus next-round gate, Xiuluo-identical distribution, final/failure no rest, cooperative stop/pause."
+}

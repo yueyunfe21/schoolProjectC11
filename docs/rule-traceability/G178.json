@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "card": "G178",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "repositories": {"cloud": "../dhxy-cloud-brain"},
+  "baseline": {"clientBranch":"dev","clientCommit":"2236357413ffc64621626917ca4a66183895390d","cloudCommit":"c10078142bdc769717cf8980ffcf56e2e45da8aa","pushedReference":"ls-remote verified 2026-09-10; old prefix-only gate exists in pushed Cloud; unrelated dirty preserved"},
+  "rules":["BR-WUBEI-006"],
+  "affectedPaths":[{"repo":"cloud","path":"src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java"},{"repo":"cloud","path":"src/main/java/com/yueyunfe/dhxy/cloudbrain/remote/CloudWholeTaskReadyEventState.java"}],
+  "businessDifference":{"kind":"USER_APPROVED","conflictSummary":"Old-leg terminals and mirror accepted as new-leg completion","userDecision":"为什么第二段点击绿链可以收到第一段停的信号；去做修改","decisionRecordedAt":"2026-09-10","cardReference":"docs/PACKAGE_ARCHITECTURE.md#G178"},
+  "connectivity":[{"rule":"BR-WUBEI-006","producer":"WubeiTask creates fresh TurnPathingIntent and retains its ID","transport":"registerPathing -> Client Runner observation -> ready event and Cloud mirror with pathing intent","consumer":"parkAfterYieldIfNeeded / isCurrentTrackerPathingSnapshot / resolveProbeAfterPathing / arrival FIFO registration","ordering":"Retain generated identity before registration; filter candidates before newest selection; exact mirror before use; other wake types unchanged; clear across lifecycle","contracts":[{"repo":"client","path":"docs/rule-traceability/G178-contract.md","command":"NOT RUN: test family not authorized; specification only","proves":["old terminal cannot mask valid combat or new terminal","stale mirror cannot authorize item","FIFO receives newly registered ID","reset/reclick run and HWND isolation"]}]}],
+  "testStatus":"Implemented Cloud WubeiTask + CloudWholeTaskReadyEventState. Isolated javac exit0, scratch dhxy-g178-cloud-f3e34a9cc8704df3a9d2448224117cb1; no tests authorized/created/run, contract MD is specification only. No runtime target/classes writes, restart or game input; runtime acceptance pending."
+}

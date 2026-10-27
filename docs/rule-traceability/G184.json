@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "card": "G184",
+  "changeType": "business",
+  "repositories": {
+    "licenseWorker": "../dhxy-license-worker",
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "status": "APPROVED_IMPLEMENTATION",
+  "updateOnlyStartup20260921": {
+    "rule": "BR-RELEASE-003",
+    "producer": "Packaged root launcher detects absent Cloud setup and selects explicit dhxy.update-only=true",
+    "transport": "Process command-line flag carried through Spring RuntimeAuthorizationState; blank binding accepted only in this mode",
+    "consumer": "UI update services stay available; runtime authority denies all tasks and transport; input-device and capture startup omitted",
+    "ordering": "Mode fixed before Spring/input startup, no fake credentials; update restarts through the same root launcher",
+    "contracts": "Fresh isolated package/update validation only; no game input or current-client restart"
+  },
+  "sessionDeployment20260920": "Worker 6419544f-a955-4361-896a-a1dc53f2539f 100% at 2026-09-21T02:26:55Z (local Sep20). Migration0004 applied, no pending migrations. Backup29141bytes .release-build/g184-session-backup-20260920/database-before.sql. Read-only primaryDB: 3active legacy-test licenses; policies revision0/enforced0; zero bindings/sessions. TS/noEmit, dry bundle and owner script syntax exit0; no session requests or behavior tests. Cloud/Client consumers and in-flight revocation remain unwired. Previous deployment79649e1f available for rollback; no rollback performed.",
+  "runtimeAdmissionConnectivity": {
+    "rule": "BR-RELEASE-002",
+    "producer": "Operator-provisioned client/license binding plus bound client OPEN credentials",
+    "transport": "HTTPS session OPEN/CHECK/CLOSE; random token hash in one-current-session-per-client D1 table",
+    "consumer": "LicenseAuthService formal verify opens Worker session; HttpsTurnClient and sibling observation send the same in-memory token; ClientBrainInstance checks Worker before every dedicated handler",
+    "ordering": "Explicit matching-device verify -> OPEN -> shared in-memory permit -> X-DHXY-Session on both transports -> Cloud binding -> current primary-policy CHECK -> handler. Known authorization403 removes exact-session permit, broadcasts all-window stop/queue cleanup and gates HID reports. Old producers surviving into a new login and Cloud in-flight execution remain incomplete",
+    "contracts": "docs/rule-traceability/G184-contract.md; NOT RUN / no test authorization"
+  },
+  "forcedUpdateDecision20260920": "普通发布兼容允许版本；显式禁版立即撤销新请求和已有任务/会话权限，不等当前轮或人为宽限。客户端停止任务/后续输入并取消待执行动作，明确提示需更新而非普通断网重试；保留更新UI，升级后重新授权且不自动恢复任务。服务端必须执行撤销；网络传播和已完成输入不可虚称零延迟撤回。运行中撤销接线仍待实施，不启用政策或测试。",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "2236357413ffc64621626917ca4a66183895390d",
+    "pushedReference": "2026-09-18 ls-remote verified; default master 0468cc1; pom/update/config match origin/dev; no workflow at baseline; preserve unrelated dirty."
+  },
+  "rules": [
+    "BR-RELEASE-001",
+    "BR-RELEASE-002",
+    "BR-RELEASE-003",
+    "BR-RELEASE-004"
+  ],
+  "connectivity": [
+    {
+      "rule": "BR-RELEASE-002",
+      "producer": "Authenticated owner CLI persists app-scoped version policy; LicenseAuthService.basePayload includes current build",
+      "transport": "Cloudflare D1 client_version_policies and license verify/status JSON appVersion",
+      "consumer": "Worker verify/status consume app-scoped policy before successful authorization",
+      "ordering": "Backup -> additive migration preserving legacy test records -> compile -> deploy; revoked before allowlist/minimum; no policy activation in this pass",
+      "contracts": [
+        {
+          "repo": "client",
+          "path": "docs/rule-traceability/G184-contract.md",
+          "command": "NOT RUN: no test authorization",
+          "proves": [
+            "version transport on verify/status; revoked priority; legacy preserves testing only while policy disabled; policy changes alone cannot be described as a Cloud task gate"
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "BR-RELEASE-003",
+      "producer": "Prod signs exact accepted Gamma metadata",
+      "transport": "Bounded HTTPS envelope and hashed ZIP",
+      "consumer": "Pinned-key verifier and external installer; stable launcher consumes version pointer",
+      "ordering": "User requests download -> signature and hash -> user confirms exit -> actual parent exit/session lock -> extract and preserve configuration -> atomic pointer -> restart with autoStart=false",
+      "contracts": [
+        {
+          "repo": "client",
+          "path": "docs/rule-traceability/G184-contract.md",
+          "command": "NOT RUN: no test authorization",
+          "proves": [
+            "Tampered identity/signature/ZIP fails before install; process alive or lock busy forbids switch; extraction failure preserves previous version"
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "BR-RELEASE-004",
+      "producer": "Operator instance generator + owner-only Worker binding registry; no real instances registered",
+      "transport": "Dedicated clientId/binding token plus Worker session over HTTPS headers on turn and observation",
+      "consumer": "ClientBrainInstance private-directory lock and authenticated ingress; parsed device metadata checked against exclusive process clientId",
+      "ordering": "Authenticate client -> resolve exclusive brain ownership -> validate request/window binding -> consume only that client's data; never trust a self-declared client ID alone",
+      "contracts": [
+        {
+          "repo": "client",
+          "path": "docs/rule-traceability/G184-contract.md",
+          "command": "NOT RUN: no test authorization; code compiled, formal instances not deployed",
+          "proves": [
+            "Two clients cannot share runtime/data or consume each other's screenshots/receipts; multiple windows within one client retain window isolation"
+          ]
+        }
+      ]
+    }
+  ],
+  "additionalConnectivityNote": "BR-RELEASE-003: Prod signs exact Gamma payload -> bounded HTTPS envelope/ZIP -> pinned-key ClientUpdatePackage -> external installer after parent exit/session lock -> atomic launcher pointer. See G184-contract.md; not tested.",
+  "affectedPaths": [
+    {"repo":"cloud","path":"src/main/java/com/yueyunfe/dhxy/cloudbrain/ClientBrainInstance.java"},
+    {"repo":"cloud","path":"src/main/java/com/yueyunfe/dhxy/cloudbrain/CloudBrainServer.java"},
+    {"repo":"cloud","path":"src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/CloudTurnExchange.java"},
+    {"repo":"cloud","path":"src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudTurnTaskRuntime.java"},
+    {"repo":"cloud","path":"src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudMapSurveySessionService.java"},
+    "pom.xml",
+    "scripts/release",
+    ".github/workflows",
+    "release",
+    "docs/CLIENT_RELEASE_PIPELINE.md",
+    "src/main/java/com/bot/dhxy/core/http",
+    "src/main/java/com/bot/dhxy/model",
+    "src/main/java/com/bot/dhxy/cloud/turn/WindowTurnLoop.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/TurnLoopFactory.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/TurnTransportException.java",
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/bot/dhxy/core/http"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain"
+    },
+    {
+      "repo": "cloud",
+      "path": "pom.xml"
+    },
+    "src/main/java/com/bot/dhxy/cloud/turn/HttpsTurnClient.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/TurnConfiguration.java",
+    "src/main/java/com/bot/dhxy/window/observation/HttpsObservationClient.java",
+    "src/main/java/com/bot/dhxy/update",
+    "src/main/resources",
+    "src/main/java/com/bot/dhxy/AutoBot.java",
+    "src/main/java/com/bot/dhxy/auth/LicenseAuthService.java",
+    "src/main/java/com/bot/dhxy/update/AppVersionService.java",
+    "src/main/java/com/bot/dhxy/ui/MainWindowController.java",
+    "src/main/java/com/bot/dhxy/model/update/ClientUpdateNotice.java",
+    {
+      "repo": "licenseWorker",
+      "path": "src/index.ts"
+    },
+    {
+      "repo": "licenseWorker",
+      "path": "src/version-policy.ts"
+    },
+    {
+      "repo": "licenseWorker",
+      "path": "src"
+    },
+    {
+      "repo": "licenseWorker",
+      "path": "migrations"
+    },
+    {
+      "repo": "licenseWorker",
+      "path": "migrations/0003_client_version_policies.sql"
+    },
+    {
+      "repo": "licenseWorker",
+      "path": "scripts/version-policy.mjs"
+    },
+    "src/main/java/com/bot/dhxy/auth",
+    "src/main/java/com/bot/dhxy/input",
+    "src/main/java/com/bot/dhxy/driver/fakerinput/FakerInputDevice.java",
+    "src/main/java/com/bot/dhxy/window/control/WindowTaskControlService.java"
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "User-approved one-client-one-brain and immediate forced-version revocation. Dedicated process/session ingress implemented, but active-run-wide cancellation is not complete; no full-chain claim.",
+    "userDecision": "一个本地客户端对应的是一个大脑，就是一对一的映射关系，一对一的服务关系。此前公开包/授权运行、允许部署授权Worker、保留本人测试数据及不开禁版决定不变。",
+    "decisionRecordedAt": "2026-09-20",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G184"
+  },
+  "branchDecision20260919": "master gates aligned in Gamma push/dispatch, preparation provenance and Prod jobs. dev remains Alpha; no branch merge, default change or push.",
+  "implementationStatus": "Worker session API deployed6419544f. Client loop generation inherited by new observation/maintenance threads; preflight/startOne drain gates re-login. Cloud non-revivable inherited Session, admission/final CHECK, 2s monitor, all-runtime/map-survey/command withdrawal compiled. Old HTTP must exit before new Session; current changes invalidate in-flight admission checks. No behavioral verification or formal deployment; required/public release stays blocked.",
+  "deployment": "Worker 6419544f-a955-4361-896a-a1dc53f2539f 100% at 2026-09-21T02:26:55Z (local Sep20). Migration0004 applied, no pending migrations. Backup29141bytes .release-build/g184-session-backup-20260920/database-before.sql. Read-only primaryDB: 3active legacy-test licenses; policies revision0/enforced0; zero bindings/sessions. TS/noEmit, dry bundle and owner script syntax exit0; no session requests or behavior tests. Cloud/Client consumers and in-flight revocation remain unwired. Previous deployment79649e1f available for rollback; no rollback performed.",
+  "remaining": "Isolation decision resolved; still require formal server/HTTPS, CI-only D1 Edit token (Wrangler OAuth cannot create durable API tokens), and explicit behavior-test/Gamma acceptance authorization. Workflows/code remain uncommitted/unpushed, no release created. CLIENT_PUBLIC_RELEASE_READY remains unset; required publication blocked until actual task/session admission. No user secret values printed or committed.",
+  "compilation": "331-source isolated Maven compile, dependencies, jar, jpackage and pinned WGC PyInstaller package exit0. .release-build/g184-local-package/artifacts; SHA256 e37728b8296958799fc8ad6b1349e59b10caaf7ba7c56f7b0fe819b46bf48934; dirty local package explicitly non-promotable.",
+  "latestCompilation": "Client339 sources compile exit0 .release-build/g184-producer-authority-20260920,12.026s,2026-09-20T23:05:53-04:00; Cloud691 sources compile exit0 .release-build/g184-cloud-revocation-final-20260920,17.615s,2026-09-20T23:14:36-04:00. No tests, product starts, captures, input or target/classes writes.",
+  "testStatus": "NOT AUTHORIZED. No automated or live behavior tests, no fake verify requests, no UI/capture/input. Deployments and D1 schema/configuration read-only checks only; no contract claims. Client compile success is not runtime acceptance.",
+  "pendingRuntimeGates": [
+    "Client all-window entry/lifecycle/input gates compiled but untested; verify event ordering, retained request futures, release-only cleanup and join/monitor interactions",
+    "Compiled Client fix: immutable loop generation inherited by child threads, input/HTTP deny old producers; preflight/startOne drain before activation. Async pool coverage/concurrent execution remains untested",
+    "Compiled Cloud fix: runtime/map-survey/command withdrawal, final HTTP authorization, independent 2s current-session checker. Validate actual worker interruption/late outcomes/final body/unknown network and new session races before release",
+    "Both transport denials now join shared state/UI stop path; verify exact-sent-token fencing and stale successful responses under concurrent login",
+    "Per-request Worker CHECK latency/load has not been evaluated; no unapproved positive cache or claimed runtime readiness"
+  ],
+  "deploymentHistory20260919": "Worker 79649e1f-0328-42da-b1af-7c1e19d27e7f at dhxy-license-worker.yueyunfe.workers.dev, 100% via deployment metadata. D1 migrations 0002/0003 applied; three legacy-test codes active, both policies revision0/enforced0/empty lists. Full database backup26729 bytes and original source/config under .release-build/g184-auth-backup-20260919, excluded from Git/packages. No codes deleted or issued, no policy apply. Local worker remains non-Git; May16 deployed baseline retained. No renew route enabled.",
+  "clientRevocationConnectivity": {
+    "rule": "BR-RELEASE-002",
+    "producer": "Known authorization403 tied to sent session token",
+    "transport": "Synchronous permission removal, then independent-thread non-secret revoked event; login activation barred until cleanup completes",
+    "consumer": "All-window lifecycle invalidation and loop stop; queue generation and HID report gate",
+    "ordering": "Clear permission before broadcast; enqueue and native write synchronize against revoke; neutral releases stay permitted; no new login while revocation dispatch remains active",
+    "contracts": "G184-contract.md pending, no tests authorized"
+  }
+}

@@ -74,10 +74,21 @@ public class NpcClickSmartQueueMessage {
 
     @JsonIgnore
     public boolean isOrdinaryClickCandidate() {
-        return type == Type.FIXED_POINT
+        return !isDisabledPurpleClick() && (type == Type.FIXED_POINT
                 || type == Type.TOOLTIP
-                || type == Type.YELLOW_NAME
-                || type == Type.PURPLE_FORMULA;
+                || type == Type.YELLOW_NAME);
+    }
+
+    /**
+     * Global G173 execution ban, including old/late wire messages with a generic message type.
+     * Historical verified MEMORY points use LEARNED_MEMORY, not these targeting strategies.
+     * @return true when the type or strategy denotes a disabled purple-name click
+     */
+    @JsonIgnore
+    public boolean isDisabledPurpleClick() {
+        String name = strategy == null ? "" : strategy.trim().toUpperCase(java.util.Locale.ROOT);
+        return type == Type.PURPLE_FORMULA || "PURPLE_FORMULA".equals(name)
+                || "PLAYER_ANCHOR_FORMULA".equals(name) || "NPC_PLAYER_ANCHOR_FORMULA".equals(name);
     }
 
     @JsonIgnore
@@ -90,6 +101,7 @@ public class NpcClickSmartQueueMessage {
         FIXED_POINT,
         TOOLTIP,
         YELLOW_NAME,
+        /** Decode-only legacy value; globally forbidden for execution (G173). */
         PURPLE_FORMULA,
         CTRL_CANDIDATES,
         /**

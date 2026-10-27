@@ -11,6 +11,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.beans.factory.annotation.Value;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Map;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
@@ -25,6 +30,13 @@ public class AutoBot implements CommandLineRunner {
     private final GlobalEmergencyStopHotkeyService emergencyStopHotkeyService;
     private final GameWindowRegistrationService gameWindowRegistrationService;
 
+    @Value("${dhxy.install-root:}")
+    private String packagedInstallRoot;
+    @Value("${bot.app-version:0.1.0-dev}")
+    private String packagedVersion;
+    @Value("${dhxy.update-only:false}")
+    private boolean updateOnly;
+
     public static void main(String[] args) {
         SpringApplicationBuilder builder = new SpringApplicationBuilder(AutoBot.class);
         builder.headless(false).run(args);
@@ -35,13 +47,24 @@ public class AutoBot implements CommandLineRunner {
         log.info("Spring container ready.");
         log.info("Available window tasks: {}", Arrays.toString(TaskType.values()));
         log.info("Current task config: {}", taskRunProperties.toLogText());
-        emergencyStopHotkeyService.start();
+        if (!updateOnly) emergencyStopHotkeyService.start();
 
         if (taskRunProperties.isShowUi()) {
             mainWindowService.showMainWindow();
+            // Passive receipt only in a packaged launch, after Spring and the UI are ready.
+            // It authorizes no game action and the separate installer still checks a live PID.
+            if (!packagedInstallRoot.isBlank()) {
+                try {
+                    Files.write(Path.of(packagedInstallRoot).resolve("update-ready.json"),
+                            new ObjectMapper().writeValueAsBytes(Map.of("version", packagedVersion,
+                                    "pid", ProcessHandle.current().pid(), "startedAtMs", System.currentTimeMillis())));
+                } catch (Exception failure) {
+                    log.warn("Cannot write packaged update readiness: {}", failure.getClass().getSimpleName());
+                }
+            }
         }
 
-        if (!taskRunProperties.isAutoStart()) {
+        if (updateOnly || !taskRunProperties.isAutoStart()) {
             log.info("autoStart=false; waiting for UI window registration/start command.");
             return;
         }

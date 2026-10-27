@@ -1,5 +1,658 @@
 # DHXY Package Architecture
 
+## G194 跨绿链飞行状态连续性与失效边界（2026-10-25）
+
+- **状态：已实现 / 双端隔离编译与合同5/5通过 / 待fresh实跑。** 用户观察白龙马 first-probe 已飞行，显形镜未召出目标后转 second-probe 却重复判断。Client `WindowRuntimeContext` 虽有 `taskQueueStartupFlyingState`，但它只是队列启动阶段一次性证据，当前 Cloud 没有调用方消费；G181 `CloudFlightAdjustmentService.adjust` 的状态则完全局限于单次调用。五倍每次 tracker 绿链成功都会无条件新建 adjustment，所以 second-probe 及其重试必然复检。
+- **现场证据：** `logs/archive/cloud-brain-console.20261025-134358.log` 中同一 `hwnd-710F5E`/WUBEI run：09:20:01 first-probe `S=0.066063 / ASSUMED_TARGET / 1229ms`；09:20:25 使用显形镜未召出目标；09:20:29 转 second-probe；09:20:35 新 attempt `S=0.315910`，两次 Alt+C 后09:20:41结束，耗时9076ms。后续同一 second-probe 再次点击仍各新建 attempt、重复两次 Alt+C，其中09:21:04一轮耗时9583ms；中间没有进入战斗。
+- **图片与根因边界：** 两次使用相同屏幕 ROI `[1565,366,1632,404]`，保存的真实 `roi.png` 分别是灰绿色与黄褐色地表，证明换地图后背景分布改变并触发阈值分支。不能再依靠重复采样把状态当作跨地图真值，也不能只调阈值宣称解决连续性问题。
+- **用户裁决与实现：** 飞行状态代表整支队伍，由 exact leader HWND 保存；成员随队长飞行，不检测、不切换、不保存独立状态，多队由各自队长隔离。机制下沉公共 `CloudFlightAdjustmentService`，不限制 taskCode；任何以后调用它的队长任务均可复用，当前只有五倍调用。公共服务在等待/采样前读状态，命中直接跳过像素和Alt+C，G181成功后写回；startup观察可作初值。Runner精确入战记`NOT_FLYING`，队长真实Alt+C执行前清为UNKNOWN，角色/HWND/玩家/run边界清空；换地图、绿链、寻路和显形镜不清。
+- **验证与fresh门：** Client 340、Cloud 692 主源码分别隔离编译成功，双仓协议hash一致。常规Maven定向测试被既有测试树缺失`LocalPathingStartProofMechanics`阻断；G194单文件通过JUnit 1.10.2隔离运行5/5，覆盖成员无状态、多个队长隔离、角色/HWND/run失效、入战后迟到FLYING写入被拒、公共服务无五倍专用分支与两个物理失效点。未重启/输入；fresh须看到first-probe后second-probe复用日志且不再采样/按Alt+C，入战后状态变NOT_FLYING。
+
+## G193 五倍与修罗医宝宝坐标随机层级核对（2026-10-25）
+
+- **状态：`INVESTIGATION COMPLETE / NO PRODUCTION CODE / USER DECISION PENDING`。** 用户观察五倍去医宝宝似乎总点同一坐标，要求核对修罗随机逻辑。本卡对照 Cloud 两条任务、公共导航解析器、公共 NPC 点击与 Client fresh 输入日志；未修改业务代码、未重启、未发送输入。
+- **逻辑地图目标：** 五倍以宝象国 `(95,126)` 直接构造每次 `NavigationRequest`，没有任务级坐标随机；修罗以灵兽村 `(116,70)` 为基准，每次导航前对 X/Y 独立增加 `-1/0/+1`，共九种逻辑目标组合。这是两者当前真实差异。
+- **实际屏幕点击：** 两者的 `NavigationRequest` 都沿用默认小地图点击随机，逻辑点转换后 X/Y 各有 `[-4,+4]px` 抖动且不会同时为0。Client fresh 日志中同一窗口两次五倍医宝宝小地图点击是 `(1220,677)` 与 `(1222,684)`，所以“五倍屏幕点击完全固定”不成立；它只是缺少修罗那一层逻辑坐标抖动。NPC 本体点击还会随 tooltip/OCR/记忆候选变化，记忆点重放另有截断高斯小抖动。
+- **建议边界：** 若用户批准统一，应该把维护 NPC 的逻辑地图目标抖动下沉为公共可配置策略，五倍/修罗均使用每轴 `1` 个地图单位；不要把修罗的私有 `randomizedNpcTargetPoint` 再复制进五倍。现有小地图像素随机、NPC 识别/点击、模板、到达判定与维护时机保持不变。
+
+## G192 prepared action 与 Dialog Interest 生命周期脱节（2026-10-25）
+
+- **状态：`IMPLEMENTED / ISOLATED COMPILE + CONTRACT 8/8 PASSED / FRESH RUNTIME PENDING`。** 用户指出 G190 不应被理解为显形镜专用修复，并明确批准改成公共机制。显形镜只是首个暴露点；真正缺口是由 Dialog Interest 产生的 `PreparedDialogAction` 在发布后丢失 `interestId`，Cloud 因而无法在原 interest 被撤销或替换时通用退休旧动作。
+- **现有协议已经给出权威身份：** `ObservationDialogInterestFact` 的 `interestId` 是一次 dialog 需求的稳定代次，inactive clear 仍保留旧 id；同一上传内的 Dialog ROI 与 `ObservationPreparedDialogFact` 已按 interest id、revision、observerSeq 做精确复核。缺失只发生在转换/发布后的 `PreparedDialogAction`，不是 Client 没有发送撤销，也不是任务 phase 天生只能自己清理。
+- **横向影响：** 旧 `CloudWholeTaskObserver.probeAttention` 同时服务五倍 `WUBEI_ACCEPT_TASK` 与修罗兼容族的 `XIULUO_ENTER_BATTLE`（修罗、新手历练、抓鬼、鬼王）；Client-prepared Dialog 转换同样丢失发布后的来源代次。五环 demand 链和 G175 五倍故事 mailbox 已有各自的 in-flight/interest 退休逻辑，说明正确方向本来就是 interest 生命周期，而不是针对显形镜增加更多任务分支。
+- **不能直接泛清单槽：** `CloudDialogPreparedActionState` 还承载 tracker 绿链、route 与机械动作；它自己不知道哪个动作由 Dialog Interest 授权。若仅凭“当前 operation 不匹配”或“没有 active interest”清槽，会误删仍合法的非 Dialog 动作，也会把网络暂缺事实错误当成明确撤销。
+- **实施：** Client/Cloud 同名 `PreparedDialogAction` 增加可空 `dialogInterestId`；旧公共 Dialog、G175 mailbox、五环 demand/ABSENT、Client-prepared 转换和修罗兼容族 stopped-static 发布均写入准确 id。observer 每轮在任务专属探针前统一对账，只处理带 lineage 的槽动作：相同 active id 保留；明确 inactive 或不同的新 active id按 exact actionId CAS 退休；事实缺失不清，lineage 为空不清。inactive clear 没有 taskCode，公共读取仍按准确 run/window/HWND 接受其 retained id。G190 五倍 phase 守卫继续作为末端安全带。
+- **验证：** Cloud 692 与 Client 340 个主源码分别在 `.release-build/g192-dialog-interest-lifecycle` 隔离编译通过。G192 通用合同 3 项、G190 回归 2 项、G118 五环跨链回归 3 项合计 `8/8` 通过，覆盖保留、撤销、替换、缺失、非 Dialog、lineage 发布和 exact actionId 退休。Cloud 完整 `package` 的主源码阶段通过，随后仍被仓库既有 234 测试树的旧签名错误阻断。未重启或发送输入；fresh 运行需验证旧动作退休后新动作接管，且 tracker/route/mechanical 不出现该退休日志。
+
+## G191 五倍回城道具位于背包最右格时被扫描 ROI 截断（2026-10-25）
+
+- **状态：`IMPLEMENTED / REPLAY + ISOLATED COMPILE PASSED / FRESH RUNTIME PENDING`。** 只读审计约 11:00 队长 `hwnd-710F5E` 的五倍回城失败。`Alt+E`、背包锚点、任务页与输入链均正常；真正失败点是本地模板 `bag/wubei_return_item.png` 在主背包扫描图中未达到阈值。
+- **连续现场：** `10:42:10.064` 道具位于内侧格时运行时命中 `score=1.000`，随后使用成功；`10:43:35` 起道具移动到最右格，`10:43`、`10:57`、`10:59` 共三组、每组两次正式使用均失败，Cloud 才按既有规则进入 `ROUTE_TO_MAIN_TASK` 普通导航回城。所谓“靠手动回城”实际是程序的地图/导航 fallback，不是没有执行回城分支。
+- **像素根因：** `BagService.MAIN_BAG` 当前扫描矩形宽度为 `312px`，现场 `(899,732)-(1211,940)`；六列背包网格的真实右边界约在相对 `x=328`。失败帧最佳候选左上角为 `(285,120)`，模板宽 `27px`，候选右边正好贴住截图边界 `285+27=312`，说明最右格道具被裁掉。残缺候选仅 `score=0.761158`，低于全局 `BAG_ITEM_MATCH_RATE=0.85`；四张 `10:59` miss 图哈希一致且均保留该残缺图标。
+- **基线与边界：** Client `D:\mavenProject\DHXY-cr271` 为 `dev@2236357413ffc64621626917ca4a66183895390d`，`BagService.java` 与 `origin/dev` 无差异；模板自 `dc0ac9ed` 后无本地改动。受保护 `D:\mavenProject\DHXY` 未修改。该问题不是模板阈值突然失效，也不是任务页切换、Cloud 或输入失败，而是长期存在的主背包 ROI 右边缺口在道具移到最右格后首次稳定暴露。
+- **实现：** 用户批准后仅将 `MAIN_BAG.gridW` 从 `312` 扩到完整网格宽度 `328`，全局阈值仍为 `0.85`，业务模板、回城重试与 fallback 顺序均未改变。当前页扫描和切页扫描共用这一布局，因此无需复制第二条路径。
+- **真实几何对照：** 复用完整窗口原帧 `images/test-cases/bag/wuhuan-6056-main-bag-zhengli-anchor.png`，当前 `anchor_cunkuan.png` 实测 `score=1.000`、中心 `(217,394)`；按生产公式从 `(41,435)` 分别裁 `312x208` 与 `328x208`。输出 `images/test-cases/bag/g191/main-bag-grid-312-current.png`、`main-bag-grid-328-proposed.png` 和标记对照 `main-bag-grid-312-vs-328-marked.png`。对照图确认旧宽度在第六格内部结束，新增16px会纳入第六格剩余部分与完整右边框；这是实际原帧裁图，不是补色或合成背包内容。
+- **回放与编译：** 在真实完整背包原帧上把仓库真实 `wubei_return_item.png` 放到第六格边缘，使用生产同款 `TM_CCOEFF_NORMED` 回放：旧 `312px` 得分 `0.370`、不命中；新 `328px` 得分 `1.000`、命中框与点击点均在道具中心。标记输出为 `images/test-cases/bag/g191/edge-return-item-replay-comparison.png`；该边缘位置是合成 testcase，不冒充11点缺失像素的现场原帧。Client 340 个主源码隔离编译到 `.release-build/g191-main-bag-roi` 成功，`javap` 确认成品 `MAIN_BAG` 常量为 `328`。fresh 验收需在真实道具再次位于最右格时看到扫描右边界为 `startX+328`、模板命中且 `action=USE success=true`。
+
+## G190 五倍接任务旧帧重发占槽，队长卡在显形镜故事等待（2026-10-25）
+
+- **状态：`IMPLEMENTED / ISOLATED PACKAGE PASSED / FRESH CLOUD RESTART PENDING`。** 09:49 队长 `hwnd-710F5E` 不动并非没拿到 turn、输入队列阻塞或寻路未结束；09:48:03 起任务每 5 秒正常醒来，但等待 `WUBEI_PROBE_STORY` 时唯一 prepared-action 槽一直被过期的 `WUBEI_ACCEPT_TASK` 占用，到 09:49:58 已等待 `120031ms`。用户已批准 task phase 权威的首修，Cloud `WubeiTask` 已实施。
+- **现场语义澄清：** 这是用户看到的“显形镜已经使用、白龙马已经出现，却不点击白龙马”同一事故。09:47:56.990 已对 `wubei_probe_item.png` 执行 `action=USE`，09:47:58.490 本地回报成功，Cloud 09:47:58.492 也记录 `probe item used=true`。此时正确业务动作确实是确认用镜后的故事提示并点击白龙马；日志里的 `WUBEI_ACCEPT_TASK` 不是当前业务还在接任务，而是更早接任务阶段留下的垃圾槽内容，正是它阻止当前 `WUBEI_PROBE_STORY` 结果发布，令白龙马点击链没有开始。
+- **精确竞态：** 09:47:29.122 第一条接任务动作 `c815488f-...` 发布，09:47:29.183 被消费；Client 09:47:29.184 清除接任务 interest，随后完成点击。但 observerSeq `2078` 已在 09:47:29.152（清除前 32ms）按旧 interest 截图并发送。Cloud 在 09:47:30.214 才处理完该在途旧帧，又发布第二条 `WUBEI_ACCEPT_TASK`（actionId `3659bc09-...`）。09:47:31.424 Client 才从下一次观察回包应用不含 dialog 的 interest 集，无法追溯撤销已发布的第二条动作。
+- **为什么永久卡住：** 09:47:33.145 Tracker 已正确识别 `宝象谜情|显形镜` 并进入探查链；09:48:02.386 第一段寻路终结后，业务需要发布/消费 `WUBEI_PROBE_STORY`。`CloudDialogPreparedActionState` 单槽不会覆盖无关动作，所以每次只得到 `mismatch=operation`，旧 `WUBEI_ACCEPT_TASK` 又没有该阶段的消费者或退休条件。G175 邮箱/回执围栏当前只在 operations 精确等于 `[WUBEI_PROBE_STORY]` 时启用；`WUBEI_ACCEPT_TASK` 仍走旧的周期 ROI `prepareParkedDialog -> publish` 路径，因此未受 G175 的领取、退休和消费回执保护。
+- **源码缺口：** `WubeiTask.consumeCurrentPreparedBeforeNormalPhase` 在每个 phase 边界会看到槽中动作；它把 `WUBEI_ACCEPT_TASK` 转给 `consumePreparedAcceptBeforeNormalPhase`。后者发现 `state.phase() != ACCEPT_TASK` 时只记录 `accept-prepared-phase-mismatch` 并返回 `null`，没有调用 `clearForRunOwnerActionId`。因此代码已经知道动作不属于当前 phase，却仍让它无限占槽；`verifiedWithin` 只限制是否消费，不负责自动删除。
+- **实施：** `consumeCurrentPreparedBeforeNormalPhase` 在动作年龄门之前检查 phase；当且仅当槽中是 `WUBEI_ACCEPT_TASK` 且当前 phase 已不是 `ACCEPT_TASK` 时，按刚观察到的 exact actionId 调 `clearForRunOwnerActionId` 并继续当前 phase。`waitForPreparedProbeStory` 循环内增加同一复核，封住“最后一次 phase 边界检查之后旧帧才完成发布”的更小竞态窗口。合法 `ACCEPT_TASK` 仍进入原消费路径；下一轮重新进入 `ACCEPT_TASK` 不会被清；没有把点击类 accept 接进 G175 只读邮箱，也没有新增点击或修改 OCR/ROI/坐标。
+- **并发/隔离保证：** 清理由当前 context 先 `peekBoundSlot`，再用 actionId 条件 CAS；`CloudDialogPreparedActionState` 会复核 run owner、窗口/HWND 绑定及当前 actionId。若期间已被新故事结果或别的动作替换，CAS 返回 false，新动作保留；没有使用泛清槽，也不会跨窗口删除。生产端完整 interest 代次生命周期仍可作为后续架构收口，但不再是本次现场恢复的前置条件。
+- **验证：** 使用正确隔离目录 `-Ddhxy.build.directory=.release-build/g190-phase-owned-accept-r1` 完成主源码编译和 shaded jar 打包，Maven `BUILD SUCCESS`。新增 `G190PhaseOwnedAcceptRetirementContractTest` 已在隔离目录单独编译并用 JUnit Console 执行，`2/2` 通过、0 失败；既有 `G118WuhuanTitleRearmCrossChainContractTest` 针对相同 exact-action 退休/槽移交语义单独执行 `3/3` 通过；另有独立源码合同 10 项通过。验证覆盖 phase 门、准确 actionId、退休先于年龄门、合法 accept 仍可消费、story 等待内退休先于 story 消费，以及底层 actionId 比较、CAS 和替换后新动作存活。常规 Maven 定向命令仍会先编译整个测试树，并被仓库已有一批无关旧测试的构造参数/协议签名错误阻断；这是既有测试树阻塞，不是 G190 主源码或合同失败。未重启、未发送游戏输入；下次五倍实跑前必须完整重启 Cloud，验收日志应出现 `phase-incompatible accept retired` 或 `probe-story wait retired stale accept`，随后正常取得 `WUBEI_PROBE_STORY` 并点击白龙马。
+
+## G189 五倍关闭全部提前道具预扫（2026-10-25）
+
+- **状态：`IMPLEMENTED / ISOLATED COMPILE PASSED / FRESH CLOUD RESTART PENDING`。** 用户依据 G188 的 09:25 实跑归因，明确批准“预扫先全部关掉”。本卡将 G182 的“只关普通回程预扫、保留显形镜 required 记录”扩大为五倍统一关闭所有提前开包预扫。
+- **全仓盘点：** 五倍主动预扫共四个入口：普通回程道具的绿链后、寻路中、战斗中三处，以及显形镜第一次绿链后的 `afterTrackerGreenRequired(PROBE_ITEM_TEMPLATE)` 一处。前三处已由 G182 false 门关闭，后一处是本次实跑仍开包的唯一五倍例外。`useCached/completeRound/invalidate` 只读写预扫状态，不会凭空打开包裹；协议和共享服务只是能力定义。修罗和新手历练各自已有 false 门，本卡不改其它任务。
+- **实施：** Cloud `WubeiTask` 将 `RETURN_ITEM_PRESCAN_ENABLED` 收口为语义完整的 `ITEM_PRESCAN_ENABLED=false`；绿链成功后的显形镜 required 与普通回程 `afterTrackerGreen` 一起置于总门内，寻路中和战斗中普通入口也使用同一门。没有删除共享 `ReturnItemPrescanService`，避免影响其它任务。
+- **保留行为：** 显形镜真正需要使用时仍走原 `executeFindAndUseFromBack(... PROBE_ITEM_TEMPLATE ...)`，会在使用时现找现用；战后正式回城无缓存时仍走 `FIND_AND_USE_TASK_PAGE` 并验证回到宝象国。模板、ROI、点击坐标、白龙马/NPC、飞行、任务 phase 和 Client 包裹执行均不改。新规则 BR-WUBEI-013 明确替代 BR-WUBEI-011 对显形镜专用预扫的保留边界。
+- **验证与部署验收：** 静态调用盘点确认五倍四个主动预扫调用均位于 `ITEM_PRESCAN_ENABLED=false` 门内。首次 Maven 错用 `project.build.directory`（本项目实际真源为 `dhxy.build.directory`），虽 compile exit 0，却在 Cloud PID `374000` 运行时刷新了活动 `target/classes`，`WubeiTask.class` 时间为 `09:33:41`；不得把该运行实例继续视为安全 fresh。随后改用正确属性输出到 `.release-build/g189-all-prescan-off-r2`，`-DskipTests compile` 再次 exit 0；`javap` 确认五倍、修罗、新手历练三个成品类的主动预扫派发调用均为 0，同时五倍保留 `executeFindAndUseFromBack`、`useCached` 和 `FIND_AND_USE_TASK_PAGE`。下一次跑任务前必须完整重启 Cloud。重启后五倍绿链后、寻路中、战斗中均不得再出现 `return-item-prescan strategy selected/prescan success` 或 Client `start task-page item prescan`；真正使用显形镜及正式回城仍应出现对应 `action=USE`。未运行测试、未主动重启、未发送游戏输入。
+
+## G188 五倍白龙马接任务后开包归因（2026-10-25）
+
+- **状态：`INVESTIGATED / FOLLOW-UP APPROVED AS G189`。** 只读核对 09:24 开始的第 7 轮五倍。该轮于 `09:25:04.481` 接任务成功，`09:25:07.902` 识别为 `宝象谜情|显形镜`，随后在第一次绿链后于 `09:25:18.122` 打开包裹；Client 明确记录 `start task-page item prescan: template=bag/wubei_probe_item.png source=wubei:probe-mirror-slot:first-probe:after-tracker-green`，`09:25:20.138` 命中 `(1143,855)`。因此这次接任务后的开包是在记录显形镜位置，不是普通回程道具预扫；用户随后批准 G189 将该例外也关闭。
+- **与 G182 的关系：** G182 的 `RETURN_ITEM_PRESCAN_ENABLED=false` 只关闭普通 `wubei_return_item.png` 在绿链后、寻路中、战斗中的三处预扫；G182 卡和源码注释都明确保留显形镜 required 位置记录以及正式回城。当前 `WubeiTask` 的探查分支仍无条件调用 `afterTrackerGreenRequired(... PROBE_ITEM_TEMPLATE ...)`，普通任务才受 false 开关控制，所以本轮行为符合 G182 当时的批准边界，并非该开关失效或普通预扫漏关。
+- **时间线澄清：** `09:24:46.165` 还发生过一次 `wubei_return_item.png action=USE`，它属于上一轮战斗结束后的正式回城，`09:24:50.372` 已验证回到宝象国；这不是预扫。用户所指“接完任务后查看道具”对应的是次轮 `09:25:18` 的 `wubei_probe_item.png` 预扫，`09:25:47` 才真正使用该显形镜，之后 `09:26:25` 点击白龙马。
+- **证据与边界：** 实际匹配证据为 `images/temp/match-evidence/bag-item-current-page/20261025_092520_138_unknown_PRESENT_score-1.000.png`，模板为 `images/template/bag/wubei_probe_item.png`，分数 `1.000`；未修改生产代码、未运行测试、未重启或发送额外输入。若用户现在要连显形镜提前开包也取消，须另行批准新的业务差异；不能把 G182 的“普通回程预扫关闭”解释为已经覆盖显形镜专用记录。
+
+## G187 客户端空闲内存与 JVM 伸缩治理（2026-10-20）
+
+- **状态：`IMPLEMENTED / ISOLATED COMPILE PASSED / FRESH RESTART PENDING`。** 用户确认在没有运行游戏任务时客户端仍长期占用较大内存后，批准把客户端从服务端式大堆预热改为桌面程序的按需伸缩策略，并补足可核对的 JVM 内存日志。
+- **现场与根因：** 当前 `DHXY Robot 控制台` JVM 已运行约 8.3 天；采样时工作集约 `0.9～2.1GiB`、private bytes 约 `8.6GiB`、历史峰值工作集约 `5.3GiB`。业务日志显示任务、ObservationRunner 和 turn loop 已正常停止，不是仍有任务偷偷运行。两个启动入口都写死 `-Xms2g -XX:G1HeapRegionSize=16m`，却没有显式 `-Xmx`；在 31.9GiB 主机上 HotSpot 自动给出约 8GiB 最大堆。JVM 会保留已提交堆用于后续复用，任务停止不等于立即归还操作系统，因此“空闲还占大内存”首先是启动策略问题，现有日志又无法区分 live heap、已提交堆、direct buffer 与线程。
+- **用户批准方案：** 本地开发启动和 jpackage 成品必须读取同一份 JVM 选项真源：`-Xms512m`、`-Xmx6g`、`-XX:G1HeapRegionSize=16m`、`-XX:G1PeriodicGCInterval=300000`。先保留 6GiB 上限，避免在尚无真实 live-heap 峰值证据时直接压到 4GiB；16MiB region 继续避免约3MiB整窗帧被4MiB region判成 humongous。禁止在业务热路径调用 `System.gc()`。
+- **诊断边界：** 启动完成、任务开始/停止以及每5分钟只读取 JVM MXBean、direct/mapped buffer、线程数、注册/运行窗口数与输入队列长度并打一行结构化日志；不截图、不扫描文件、不写大图、不改变输入、任务 phase 或 GC 业务判定。新参数只在下次重启生效，本卡不自动重启正在运行的客户端。
+- **实施与验证：** 新增 `config/client-jvm.options` 单一真源；本地重启脚本与 G184 jpackage 构建脚本均读取、过滤并拒绝非法空白参数。新增 `ClientMemoryMetricsService`，由 `WindowTaskRunner` 在已提交生命周期状态后记录开始/暂停/停止，应用就绪和守护线程每5分钟记录同一格式；公共记录入口吞掉诊断异常，日志失败绝不改写任务结果。规则门初次暴露既有 `BR-COMMON-BOX-001` 与单段DOMAIN正则不兼容，门禁已只扩展为允许多段大写DOMAIN，随后 G187 门禁通过。两个PowerShell脚本语法解析通过、JSON解析通过；最终340个主源码使用 `.release-build/g187-memory-policy-20261020-3` 隔离Maven compile成功（19.212s），未写活动 `target/classes`。未运行测试、产品、截图或输入。fresh 重启后需用 `[client-memory]` 日志比较空闲时 `heapUsed/heapCommitted` 和系统工作集，再决定是否把 `-Xmx6g` 收到 `4g`，不能凭工作集单值直接下结论。
+
+## G186 队长盒子优先于轮间随机等待（2026-10-12）
+
+- **状态：`IMPLEMENTED / CONTRACT PASSED / FRESH RUNTIME PENDING`。** 用户确认队长盒子只有约30秒有效期后，批准把修罗/五倍顺序调整为“成功轮归队完成 → 先点队长盒子 → 再进入轮间随机等待”。本卡修复 G185 长等待与通用盒子 pending TTL 的直接冲突。
+- **根因与证据：** `CommonBoxService`从匹配时刻创建30秒 pending；修罗/五倍回城只检测，旧消费点位于下一轮接任务后的维护/绿链阶段。G185随机等待在完整成功轮与下一轮之间执行2～180秒，因此50秒等待必然让 pending 在消费前过期；归队耗时也会侵蚀TTL，最后一轮则没有下一轮消费入口。队员盒子由 `AutoCombatService` 在FREE安全回合按盒子优先级消费，不属于本卡问题。
+- **实施：** 修罗和五倍在 `roundResult == SUCCESS` 后、`progress.recordRoundCompleted()` 前直接调用现有 `commonBoxService.consumePendingBoxIfAllowed(...)`。此处已经完成正常回城与归队门；消费发生在 G185 `shouldStartNextRound()` 门之前，所以有下一轮先点后休息，最后一轮也会尝试。无pending、开关关闭、已过期或未匹配时沿公共服务既有返回继续，不新增重试或私有点击逻辑。
+- **边界：** 不改30秒TTL、模板/ROI/坐标、Cloud本地机械点击、输入队列、任务phase、队员消费或G185概率。点击失败仍保留pending到TTL，STOPPED/不确定终端仍由公共服务按原规则上抛；不把编译或合同冒充fresh运行。
+- **验证与验收门：** Cloud 主源码 692 个文件 Maven compile 成功；G186 定向顺序合同 2/2 通过，与 G185 合并定向运行共 6/6 通过。合同固定两个任务均为成功门后盒子消费、再记完成、再有条件随机休息，并证明消费不受“还有下一轮”限制。仍需重启新 Cloud fresh 实跑；存在有效 pending 时日志必须先见 `[common-box] COMMON_BOX_CLICKED ... round-success-box-before-rest`，后见 `[inter-round-rest] G185`；最后一轮应有盒子消费尝试但无 G185 休息。编译与合同不冒充运行验收。
+
+## G185 修罗与五倍共用七档拟人轮间休息（2026-10-12）
+
+- **状态：`IMPLEMENTED / CONTRACT PASSED / FRESH RUNTIME PENDING`。** 2026-10-12 实跑取证：五倍第 1 轮在 `10:39:58.157` 抽中 `54533ms`，第 2 轮在 `10:42:04.438` 抽中 `178957ms`；`10:45:03.653` 等待结束后第 3 轮立即启动，`10:45:07.193` 降魔侍卫记忆点点击 `VERIFIED`。结论是旧三档主动休息，不是 NPC 点不到。用户随后明确批准把修罗/五倍改为同一公共函数并细分概率。
+- **根因与基线：** Cloud 最新推送 `c10078142bdc769717cf8980ffcf56e2e45da8aa` 只有修罗 G150 三档实现；五倍休息属于当前 G183 dirty，直接复制修罗的掷骰/睡眠方法。两边数值相同但没有共同真源，后续调整容易漂移。Client 治理基线为 `2236357413ffc64621626917ca4a66183895390d`；目标树 `D:\mavenProject\DHXY-cr271`，Cloud 树 `D:\mavenProject\DHXY-cloud-brain`，禁止改受保护 `D:\mavenProject\DHXY`。
+- **批准后的唯一分布：** `70% 2～6s / 20% 6～12s / 7% 12～25s / 2% 25～45s / 0.7% 45～75s / 0.25% 75～140s / 0.05% 140～180s`。各档在闭区间内按毫秒均匀抽取；90%不超过12秒、97%不超过25秒、99%不超过45秒，140～180秒单次概率0.05%。旧 `80/17/3` 分布被本卡替代，不得再由任一任务私有保存。
+- **实施边界：** 提取一个真实公共策略，修罗与五倍在既有 `SUCCESS + shouldStartNextRound()` 门后直接调用；公共入口统一掷骰、记录 task/round/band/restMs，并按最多1000ms调用 `TaskSleep.sleepOrStop`。最后一轮、失败/停止、每场内部战斗、Client run 续跑都不新增等待；不触碰 NPC、回城、维护、输入队列或任务 phase。
+- **实施与验证：** Cloud 新增 `HumanizedInterRoundRest`；`XiuluoTaskV2`、`WubeiTask`只保留同一公共调用，旧私有三档实现删除。Maven 主源码 692 文件编译成功；`G185HumanizedInterRoundRestContractTest`定向运行 4/4 通过，覆盖七档边界/毫秒范围、非法掷骰和双任务单一接线。全量 Maven `test` 在执行本卡前被仓库既有旧测试的构造器/协议签名漂移阻断，这一独立测试债不算 G185 失败，也不被隐藏。运行验收需重启新 Cloud 后核对公共 `[inter-round-rest] G185` 日志，不能用编译冒充 fresh。
+
+## G184 软件更新、可选升级与服务端禁用旧版（2026-09-18）
+
+- **2026-09-21 fresh 启动包实际交付（不是跨电脑升级已通过）：** 已修 `Start-DHXY.ps1` 的无 Cloud 配置直接退出；缺少正式 UUID/地址/token 时显式 update-only，保留更新界面、不启动 capture/FakerInput/全局热键，RuntimeAuthorizationState 拒绝会话激活、任务/输入/传输；常规配置运行保持原路径。Spring transport 仅此模式接受空 token，不注入假凭据。安装包首次显示即检查版本，不依赖登录大脑成功。例子补 UUID，README 同步。
+- **打包链实查与修复：** 首包内容发现缺少 `runtime/bin/javaw.exe`，而外部安装器依赖它；JDK21 本机 jpackage help 确认默认 `--strip-native-commands`。构建显式保留 native commands，并在生成 ZIP 前确认 java/javaw 都存在。首包 `.release-build/g184-fresh-package-20260921` 为已知不完整，勿使用；未删除，保留诊断。
+- **本轮产物与边界：** 最终339源码隔离 compile 10.611s / jar 1.289s 均 exit0，jpackage/ZIP exit0。有效 fresh 启动包 `.release-build/g184-fresh-package-20260921-r2/artifacts/client-0.1.0-b20260921.2-windows-x64.zip`，277207693字节，SHA256 `6d53e1ade9172cb70937b094dc846a0306884aedb5d6a4b9ffa9f4ac32ea39a9`。只读 ZIP 确认根启动器、EXE、JAR、java/javaw 和配置例子；PS解析通过。此为 dirty=true / NOT_TESTED 本地预验包，不是已验收Gamma，现有保护不允许它自动替换或晋级Prod。独立 UI 启动验证已向用户询问，尚未运行；没有游戏输入、活动客户端重启或活动 target 写入。第二台真正升级还需干净候选A/B、远端工作流/公告凭据、人工验收和真实发布，不能把此包说成整条已打通。
+
+- **2026-09-21 用户明确当前优先交付：两台电脑之间的客户端更新。** 用户尚未买服务器，但要求本机发布新版后另一台电脑在软件内发现/下载/确认安装/重开。此链使用 GitHub 成品分发与已部署 Worker 公告，不依赖正式大脑服务器；此前将服务器缺失作为整条客户端更新的阻断是错误，应分开跟踪。下一步完成远端工作流与公告发布凭据、先交付包含更新器的基准包 A，再用新版 B 做真实升级验收。源码 push 不自动等于 Prod 发布，仍保持 dev→master/Gamma→人工验收→同包晋级。当前只有源码/编译证据，没有第二台安装或升级成功证据，不得声称打通。正式大脑部署与运行中禁版验收仍属于未完成的原目标，不能借拆分缩减目标；不运行游戏、不关闭用户现有客户端。
+
+- **当前收尾状态：等待用户条件，目标未完成。** 连续三轮核查均缺正式服务器/HTTPS信息、CI 专用 Cloudflare D1 凭据和运行验收许可；没有待完成的后台编译/部署作业。只读 GitHub API 证据：签名 secret 元数据 200；环境/仓库 `CLIENT_POLICY_API_TOKEN` 均 404；发布开关 `CLIENT_PUBLIC_RELEASE_READY` 404。不继续自动空转，不发布未验收 Gamma、不启禁版、不运行游戏或测试。Owner 仍为当前 Codex；用户提供部署条件后继续正式实例部署/绑定、获准验证、同包晋级和发布。现有隔离编译只证明源码可编译，不能关闭卡；安装说明旧阶段文案也待最终同步，旧本地包不可用作新候选。
+
+- **2026-09-20 23:14 云端运行撤权源码交付：** `ClientBrainInstance`新增当前Session不可复活许可、请求/子worker继承与每2秒独立CHECK；入口与最终回复均重新CHECK，普通网络失败503而非假称禁版。明确拒绝先作废permit，再经Server接Runtime全窗stop、MapSurvey中断并保留占位直至执行结束、Exchange撤全部未决动作并唤醒long-poll。Exchange发布锁内校验permit，等待回执不持许可锁，旧worker不能借新会话发命令；元数据/回执/continuation/等待后的动作投影亦核许可。HTTP wrapper属性每请求独立，最终回复拒绝不发原业务body；已有请求未退出不接新Session，异步CHECK期间current变化拒绝重试，旧拒绝不撤新登录。未强杀进程，不更改任务算法、输入坐标或正常phase。
+- **编译和剩余边界：** Cloud691源码两次隔离compile exit0，最终`.release-build/g184-cloud-revocation-final-20260920`，17.615s/23:14:36-04:00；Client339源码最新`.release-build/g184-producer-authority-20260920`，12.026s/23:05:53-04:00。没有运行行为测试、产品/游戏输入或重启，未部署正式大脑、未推送/发布Gamma/Prod、未启禁版。核心源码链已有实现，但并发撤权/异步池覆盖、最终发送边界/停止时延、性能与完整安装/回滚还未获行为验证，不能关闭卡或称已打通。正式服务器/HTTPS与CI专用D1 token仍缺，已非阻断地询问服务器资源；继续做授权范围内的收尾，不重复扩大UI功能。
+
+- **2026-09-20 23:05 旧线程跨登录源码补齐：** RuntimeAuthorizationState使用可继承执行代际；生产Factory创建Loop时固化，runLoop绑定，new Thread创建的观察/上传/维护子线程继承旧权限。读取会话token、输入入队与HID均拒绝过期代际；InputWorker仍按精确请求重绑。Control记录已进入startOne的活动数，撤权在锁外确认它们和批量预检退出（最多30秒），期间许可为空，失败要求重启而非允许旧任务续做。Client339源码隔离compile exit0 `.release-build/g184-producer-authority-20260920`，12.026s，23:05:53-04:00。仅编译未测试，线程继承之外的异步池/退出覆盖仍需静态复查；Cloud在途撤销未完成。用户询问耗时：目标工具确认active、累计3757秒，非编译卡住；已告知整体尚未完成，禁止将该编译称全链验收。
+
+- **2026-09-20 23:00 客户端撤权接线交付（覆盖下面旧阶段缺口）：** `RuntimeAuthorizationState`统一正式许可/代际，两HTTP通道按实际发送的会话撤权，旧403不伤新会话；先清许可，再独立线程发不含secret事件，避免transport worker与UI停止的join/monitor环。`InputActionQueue`四发布点统一代际入队、撤权优先清队；Worker整段回调绑定代际，`FakerInputDevice`每条非中立HID报告发送前校验，松开键鼠继续允许。`WindowTaskControlService`四启动入口、恢复代际与MapSurvey接许可门，事件撤所有窗口epoch/handle并hard stop；`WindowTurnLoop.revokeRuntimeAuthorization`完成未决启动/Survey future但不伪造业务terminal。MapSurvey等待前一ACK不能持Control锁，保留精确loop引用避免跨新登录误投。UI收到事件提示更新/重新授权。清理失败不能恢复许可；未改正常游戏点击/识别算法。
+- **本次验证：** Client339源码隔离Maven compile exit0，最终`.release-build/g184-client-revocation-final-20260920`，10.257s，2026-09-20T23:00:03-04:00。相关diff whitespace检查通过；无测试/运行/截图/输入/重启/活动target/classes写入；未推送/发版/启用政策。上一目标轮只澄清语义无进展，本轮已修改生产接线且完成编译，继续实施。
+- **P1仍未闭环（当前Codex负责续做）：** ①Cloud每请求入口CHECK之外，活动worker/未决命令、长轮询最终返回以及无新业务请求时的撤销仍缺；②现有输入代际固定在“入队”，已出队的旧请求被挡，但旧turn/observation/preflight生产者若在重新授权后才入队，仍可能获得新代际。必须沿生产者寿命固定授权或确认全部旧生产者退出，不能仅以stop已发出/事件监听返回作为退出证明；`awaitObservationTeardown`已有可用真实边界。③仅编译未验运行锁序/停止时延/签名安装/完整Gamma。正式公共发布和required保持阻断，不能称全链完成。对应待验清单已追加这些竞态。
+
+- **2026-09-20 登录/请求消费本地交付：** Client正式verify且currentDeviceMatched=true后OPEN，内存会话经turn和observation共同发送X-DHXY-Session；Cloud专属模式绑定后每次CHECK当前主库政策/许可，无允许缓存，未获许可不交handler。固定授权HTTPS、256KiB接收期硬限额和全程有界Future，不打印凭据。明确403授权/绑定/版本码使WindowTurnLoop保留lastFailure并退出，不按网络重试、不捏造业务FAILED；未知错误保留原逻辑。UPDATE_REQUIRED更新入口覆盖验证被拒、较高版本已禁但推荐成品较低、目标本身被禁/缺包等分支；签名/用户确认仍必经。Client337源码隔离compile exit0 `.release-build/g184-session-ui-20260920`，Cloud691源码exit0 `.release-build/g184-session-consumer-20260920`；共享收包helper同字节。未测试/运行/重启/部署大脑/发布包，政策仍关闭。
+- **P1/运行撤销未完成，Owner当前Codex继续：** `ClientBrainInstance.doFilter`只在handler前核准，已开始worker及长轮询还可能在撤权后返回；需主动撤销活动worker/未决命令及最终发送栅栏。`WindowTurnLoop`单窗退出后由UI同步abort不能替代全窗即时通知，observation错误还未接统一路径；`WindowTaskControlService`启动/恢复preflight在Cloud授权前可能发本地输入，需正式会话门。`WindowTaskRunner.abortRemoteRun`明确保持已开始原子输入事务，故不能声称立即停止所有后续点击；需专用撤权处理只保留释放键鼠清理。涉及文件：上述类、InputActionWorker/Queue、两传输和LicenseAuthService；不得覆盖其它卡dirty。后续验收要覆盖启动前无许可、运行中禁版、既有长轮询/动作已排队/原子事务进行中、并发重新登录和网络不可用；当前无测试授权，只列待验，公共发版/required继续阻断。每请求Worker往返的性能亦未验，不能偷加宽限缓存。
+
+- **2026-09-20 运行会话生产者交付（覆盖旧阶段状态）：** Worker新增严格OPEN/CHECK/CLOSE，绑定secret/正式许可/电脑/固定版本均符合才发随机256位会话；每客户端一个当前会话，DB仅存哈希。CHECK单SQL联结主库当前绑定/会话/许可/政策，不使用允许缓存；OPEN条件写防读后变更，CLOSE精确token避免误删新登录。owner `brain-binding.mjs`只登记已明确归属且绑定的正式许可，拒绝覆盖，不自动迁移本人测试码。TS/noEmit、Worker打包、脚本语法exit0，未运行请求/测试。DB完整备份29141字节在`.release-build/g184-session-backup-20260920/database-before.sql`（敏感，禁止入Git）后应用0004并部署`6419544f-a955-4361-896a-a1dc53f2539f`，2026-09-21T02:26:55Z，部署列表100%确认；无待迁移，3个legacy-test仍active，两政策revision0/enforced0、实例/会话表均0。旧部署79649e1f可回退，未执行。Cloud/Client尚未消费新API，活动任务撤销/输入停止仍未实现，不能称强制更新已通。
+- **一对一代码实际进展：** Cloud `ClientBrainInstance`校验私有work/config/tmp、UUID/secret/端口并持目录锁，四HTTP context先校验专属绑定，parsed deviceId再对照；私有OCR工作目录/端口且不复用未知已有OCR。Client两HTTP通道统一带客户端ID，operator配置/启动脚本共用同一JAR并单独目录/锁。Cloud最终690源码隔离compile exit0在`.release-build/g184-instance-final-20260920`；Client335源码在`.release-build/g184-instance-20260920` exit0；旧隔离shaded包早于最后OCR调整，不能用于部署。没有实例运行/重启/游戏输入，绑定token仍不等于license准入；正式服务器/HTTPS和CI专用政策token仍缺。
+
+- **2026-09-20 强制更新裁决：** 普通更新保留受支持旧版；维护者禁用旧版时立即撤销新请求和运行中任务/会话权限，不等当前轮，不设人为宽限。客户端停止任务及后续输入、取消待执行动作，显示“此版本已停用，请更新”，不可当普通断网反复重连；保留UI/下载，更新后重新授权且不自动恢复任务。云端必须真正拒绝，不靠弹窗自觉。允许版本无需陪同停服；网络传播和已经完成的物理输入不能声称零延迟撤回。已落BR-RELEASE-002，运行中撤销仍待接线/验收，未启用禁版、未发布或测试。
+
+- **最新用户裁决，解除下方历史隔离选择阻断：** 明确“一个本地客户端对应一个大脑，一对一映射、一对一服务”。按客户端分配专属实例、运行状态与数据，不把账号作为共享大脑的理由；同一客户端的多个游戏窗口仍属于该客户端专属大脑，内部窗口绑定保持隔离。共用程序版本/服务器不等于共用运行中大脑。已写BR-RELEASE-004并更新追踪；本轮只落文档，Cloud路由/授权/实例生命周期尚未实施，不能声称部署完成。正式服务器、CI政策凭据及测试验收授权仍待补齐。
+
+- **持续目标阻断审计：** 实施轮和随后两轮自动继续均遇同一未决正式隔离选择；最近一轮只读复核，无新进展，不属于等待运行中进程。追踪仍为`BLOCKED_USER_DECISION / UNRESOLVED`，没有用户新裁决。持续目标转`blocked`等用户，非完成、非用户暂停；保留现有写集。恢复入口是明确选择每用户独立实例或共享多用户管理，然后更新权威规则与追踪门再继续Cloud实现；CI政策凭据、正式服务器和测试授权缺口仍按上述记录保留。
+
+- **2026-09-20 持续实施最新记录（覆盖旧阶段描述）：** 已补`ClientUpdatePackage/Service/Installer`、签名清单脚本、稳定根启动器及UI二次退出确认。335源码隔离compile exit0（`.release-build/g184-updater-20260920`），PS语法解析通过；未测试/重启/输入/target写入。验签与哈希后才安装，等待真实PID退出+跨进程锁，新版本目录保留旧版和配置/data，原子指针切换，启动不确认不强杀。开发版/dirty包不自动替换。
+- **实际远端配置：** 已用现有GitHub管理员登录创建`client-production` Environment，分支策略仅master；`CLIENT_UPDATE_SIGNING_KEY` Secret已设置并读回元数据。私钥DPAPI密文仅`F:\CodexHome\dhxy-release-secrets\update-signing-key.dpapi`，公钥在Client资源，未打印私钥/凭据。未开启公开分发开关、未发布Release、未提交推送、未合并master。
+- **发布公告接线已写未运行：** 精确Gamma公钥/原包→签名→四资产draft完整验证→公开→D1 revision CAS推荐公告；不改变既有禁用/允许/最低版本/enforced。required仍阻断。CI尚缺`CLIENT_POLICY_API_TOKEN`，本机Wrangler OAuth无创建永久API token权限，不复制个人OAuth或refresh token充数。
+- **P1/正式多用户授权边界待用户裁决：** `CloudBrainServer.start`只创建一个固定`CloudServiceScope`、单host/runtime，gateway是共享开发bearer；`RemoteTaskRunEndpoint`注释已明确body scope只是hint。不能在现状上把“verify拒绝”称为多用户任务隔离/撤销完成。选择A每用户独立进程/数据目录（建议先保留稳定业务），选择B共享多用户host管理（需新增隔离层）。已向用户提问，Cloud相关代码未动。正式服务器/HTTPS尚无，仍需用户提供或选择；真正启用还需用户授权更新行为测试和验收Gamma。本卡未闭环、不标完成。
+
+- **2026-09-19 授权迁移裁决解除及部署交付（覆盖下面旧阻断）：** 用户确认无外部用户、仅本人测试；保留3条测试码、绑定和到期数据。先用Wrangler完整导出库26729字节到`.release-build/g184-auth-backup-20260919/database-before.sql`（敏感备份禁止入Git/发行包），备份worker源/配置；应用既有0002和新增0003（现有测试码标legacy-test，未来正式码显式分应用），只读确认3条均active。两个政策初始revision=0/enforced=0/名单空，无推荐版本、没有禁任何版。TypeScript编译/Worker打包exit0后，已部署到`https://dhxy-license-worker.yueyunfe.workers.dev`，版本`79649e1f-0328-42da-b1af-7c1e19d27e7f`，部署列表100%新版本，无待迁移。旧版`07ad5af4-d5dd-4ebc-b11b-3396dde109e3`可作为回退目标，未执行回退；加法数据库兼容旧代码，不自动删库恢复。
+- **授权生产接线与边界：** worker `src/version-policy.ts`统一读取/判定；真实verify/status在成功授权前消费，精确撤销优先、允许名单及最低版本按数字比较；disabled保持测试，enforced会拒绝无版本/非法版本和未分软件的legacy-test。解绑不受版本限制。本地未上线renew不随此次发布，保留旧线上无此路由，避免开放客户端自选免费续期。新增公开只读`/api/client/version-policy?appId=dhxy`不代表授权；管理走`D:\mavenProject\dhxy-license-worker\scripts\version-policy.mjs`的Cloudflare登录身份和revision更新，带变更历史，无公共写API。管理apply未运行，版本策略默认关闭。
+- **客户端更新提示已写/未重启：** `LicenseAuthService.basePayload`统一版本到verify/status；`AppVersionService.checkForUpdate`消费真实政策，8秒后台读取、无授权码/设备信息、禁止重定向，区分未公布/无更新/新版本/开发版/不可用；下载页限定同仓精确版本URL。`MainWindowController`说明页检查按钮、授权验证成功后新正式版提示（可稍后）已接，当前只打开下载页、不自动下载执行/退出/重启；开发版不自动提示。新增`model/update/ClientUpdateNotice`。两次隔离Maven编译exit0，最新332源码；无测试/UI启动/截图/输入，活动target未写，现运行Client未改变。
+- **未闭环项必须保留：** GitHub工作流仍未提交推送/运行；Release成功后还没有自动激活D1推荐版本（现在需维护者真实发布后设置），签名和下载替换重启未接；授权API拒绝不等于Cloud任务入口/运行中会话能被撤销，后者未接、大脑仍未正式部署。公共发版开关仍关闭，不能把本轮服务端上线冒称全部自动升级/强制停旧版完成。worker项目不是Git仓，本轮源码在其实际目录，不能说这些改动已经入库；变更后index.ts SHA256=`7fb81739b4690352fa7a9b59bd43047c36b00f4dc22c66680573c293470baab4`、version-policy.ts=`dab54c08fb3da816383216d05855e7434c36b1bb8d8023968a8b14523db0cda9`。
+
+- **2026-09-19 当前交付：** master Gamma三处来源门及Prod门已对齐，新增`publish-client.ps1`和独立contents:write作业；公开发布需手动勾选且`CLIENT_PUBLIC_RELEASE_READY=true`，默认只准备。来源再次核验同仓master/run/attempt/commit与原包哈希，先draft，再上传ZIP/candidate.json/distribution.json并核对GitHub资产size/digest，全部完整才公开并设latest；不覆盖/删除既有tag或Release，失败留draft供检查。required在准入未接通前拒绝。4个PS脚本语法解析、diff空白检查通过；无测试、GitHub执行、合并/提交/推送或Release创建。文件分发代码已写≠网站按钮已启用，更≠客户端自动升级闭环。
+- **P1/部署冲突，等待用户确认旧码归属：** 用户已准修改部署license-worker且Cloudflare登录恢复成功。线上唯一部署2026-05-16，版本`07ad5af4-d5dd-4ebc-b11b-3396dde109e3`；只读下载基线`.release-build/g184-worker-baseline-20260919/deployed-worker.multipart`仅verify/status/unbind路由，无appId/renew。D1 `PRAGMA table_info(licenses)`返回9列、无app_id（rows_written=0）。本地`D:\mavenProject\dhxy-license-worker`不是Git仓，`src/index.ts`已全路径读app_id且多出renew，`migrations/0002_add_app_id.sql`默认把旧码归dhxy-auto-battle。直接部署会查缺列；自动迁移可能让现有主程序旧码失效。选择A：确认旧码均属旧工具后沿用该迁移、主程序新发专属码；选择B：如旧码已混用于主程序，先明确归属清单/兼容迁移，不能全量盲分。推荐先确认旧码用途，再按实际归属保留现有可用性。当前worker源文件未动，未改库/部署；通常“允许部署”不等于批准给旧码改用途。需要新的用户裁决后才能继续授权服务实现。
+- **P1/真实准入缺口：** Client `getLatestVerifiedLicenseCode`消费仅诊断，验证UI并未等同任务入口强制授权；`WindowTaskControlService`现无license门。不得在公共安装包上只写“需授权”就称已落实。后续必须连通任务入口、Cloud准入/有界会话、版本策略和更新入口；当前正式大脑未部署，未发放开发token给用户。`CLIENT_PUBLIC_RELEASE_READY`未设置，当前脚本不能直接公开分发不具备运行授权门的包。签名/更新器/旧版禁用仍未实现，不能继续沿用下方历史“只缺默认分支选择”的总结。
+
+- **2026-09-19 继续实施与公开分发授权：** 用户要求继续并明确“安装包可公开下载，运行仍需授权”。本轮先对齐master Gamma来源与Prod分支门，补真实GitHub Release文件上传/完整性核对/最后公开步骤；不执行实际发布、分支合并、自动测试或任务输入。强制模式在服务端未接通前须明确失败，不能公告“已强制”。正式Cloud HTTPS地址及授权服务修改/部署授权已询问。更新器/签名/版本准入未完成时仍不得称全部打通。
+
+- **2026-09-19 用户更正分支约定（覆盖下方旧建议）：** `dev=Alpha开发 → 合入master=Gamma候选/验收 → 人工晋级同一成品到Prod`。保留master默认分支，不再要求选择改dev。Prod是正式发布渠道，不要求新增prod分支。当前本地`client-gamma.yml`及`prepare-promotion.ps1`仍将dev视为Gamma来源，须在启用前同步调整触发分支、手动分支限制及来源校验；本轮只记录决定并解释打包，不实施分支合并、推送或工作流变更。ZIP只是编译后程序/依赖/资源的分发容器，可由流水线自动生成并上传GitHub制品/Release或托管存储；Git源码上传本身不会生成用户可运行软件。安装格式并非用户已指定为ZIP。完整更新器、分发和准入缺口保持不变。
+
+- **本轮交付：发布基础已写入本地，未提交/推送/启用GitHub。** 新增`client-gamma.yml`（dev构建，contents只读）和`client-prod.yml`（仅人工晋级准备，contents/actions只读），固定官方Action SHA；候选以runId.attempt区分、保存30天，晋级精确验证来源/成功run/attempt/artifactId及包SHA256，不执行候选代码、不重建包。准备产物明确`PREPARED_ONLY / productionActivated=false`，当前没有伪造正式Release或旧版禁用。POM仅加独立输出目录参数和release profile；所有已有任务源码、输入后端及Cloud部署未改。
+- **真实编译/打包证据：** 全量331个Client源码隔离compile exit0；当前打包脚本实际执行compile、依赖复制、jar、jpackage、固定依赖WGC PyInstaller onedir，均exit0。产物`.release-build/g184-local-package/artifacts/client-0.1.0-b20260918.1-windows-x64.zip`，276660450字节，SHA256=`e37728b8296958799fc8ad6b1349e59b10caaf7ba7c56f7b0fe819b46bf48934`；ZIP1398项，已只读检查入口/截图组件/配置及JAR Class-Path。该包是`dirty=true / NOT_TESTED`的本地构建，不是GitHub候选，晋级会拒绝。PowerShell三脚本解析无语法错误；未运行测试、产品/截图组件、未截图/输入或重启。构建初次输出到C盘触发Maven跨盘root错误，已改同D盘隔离输出并钉入构建脚本；活动target/classes未动。
+- **未完成与启用门：** GitHub当前默认master、开发dev且仓库public（只读API核实），本轮不改变默认分支/可见性、不混交其它卡dirty。须用户选择默认分支改dev或将发布入口窄同步master后，才能提交/推送启用网页按钮。正式包公开/授权下载已询问待答；正式托管/签名、UI更新提示下载替换、服务器最低版本/精确撤销/指定版本准入尚未实现，不得称整条自动更新闭环已完成。详细操作与写集在`docs/CLIENT_RELEASE_PIPELINE.md`。
+
+- **2026-09-18 已批准开工：** 用户要求先搭发布基础、之后再上Gamma。本轮实施客户端独立构建/候选留存/手动晋级准备，不动Cloud运行态。以下“待批准/未实施”段落为此前讨论记录，以本条和后续交付为准。权威实施边界见`docs/CLIENT_RELEASE_PIPELINE.md`；正式分发权限、默认分支工作流同步及运行时更新器/准入仍需接通，不允许占位流水线显示“正式发布成功”。
+
+- **发布按钮具体入口（解释，尚未配置）：** 建议在GitHub网页的客户端仓库→Actions→我们配置的“发布客户端到Prod”工作流→Run workflow，填写固定候选版本及更新策略后运行。GitHub自带的是Run workflow入口，不是开箱即有Gamma→Prod按钮；须先将支持workflow_dispatch的定义放入默认分支并配置发布步骤/权限。有写权限的维护者操作，普通用户不去GitHub点发布；客户端只在正式清单成功激活后提示更新。官网手动工作流文档已复核，当前仍未创建工作流。
+
+- **用户确认的发布边界（覆盖前文可能产生的两仓强绑定理解）：** 用户只安装/下载本地UI客户端，纯大脑Cloud仅由维护者部署在服务器，绝不随客户端更新包分发。两仓独立版本、独立构建及发布入口；客户端候选经Gamma验证后晋级正式下载渠道，才触发客户端更新提醒；Cloud发布到正式服务器不自动生成客户端新版本或下载提醒。两边仅维护协议兼容要求；只有Cloud变更确实要求新客户端时才协调发布、待所需Cloud就绪后激活客户端公告/版本准入。前述固定两仓清单仅适用于需要协调的发布及兼容追溯，不要求每轮绑定两仓产物；不存在“每次发布均生成Client新build”的默认要求。云端仍负责客户端版本准入，但准入政策不是云端程序下载。当前仅修订方案，未实施。
+
+- **仓库、worktree与环境澄清（方案，未实施）：** 保持现有Client/Cloud两仓，各自原Git地址不因Gamma/Prod再复制；两仓对应软件组件，不对应发布环境。worktree是同仓的本地工作目录，不是部署环境，不必新增。建议继续dev，push生成固定候选编号；Gamma验证后手动选择该候选，将同一成品晋级Prod。无需一开始另建gamma/prod分支；release清单固定两仓commit/版本/哈希。Gamma/Prod分别持有运行配置、凭据及更新渠道，可有不同服务地址，但那不是Git地址。GitHub Environments只管理部署目标相关配置/保护，不会自动创建服务器或客户端更新器。官方依据https://git-scm.com/docs/git-worktree 与https://docs.github.com/en/actions/concepts/workflows-and-actions/deployment-environments 。
+
+- **追加用户期望：Gamma→Prod手动晋级流水线（方案讨论，未授权部署）。** Gamma按用户语境解释为内部测试/预发布状态；普通push仅形成候选，不触达正式用户。建议GitHub Actions自动构建并固定候选发布编号、Client/Cloud各自commit及产物哈希；内部验收后用户在“发布到Prod”手动workflow中选择该候选和可选/强制策略，晋级已确认的同一成品，不重新读取两仓浮动latest拼装版本。生产配置/凭据与Gamma隔离，不能把Gamma数据库/测试授权/密钥一并推入Prod。
+- **晋级成功的定义：** 成品包上传且完整可取→按兼容关系部署必要Cloud改动并检查健康→最后激活正式版本清单和准入政策。失败不切正式公告，不让用户收到无法下载或与Cloud不兼容的版本。用户客户端正常联网启动/授权时只查询Prod清单，版本需要升级才提示；离线不能保证提示，不能把检查失败当“已是最新版”。后续只修改Cloud且Client协议仍兼容时，不必强制用户下载同内容客户端；是否每次发布均生成Client新build由发布规则定案。
+- **操作面：** GitHub支持Actions页Run workflow（workflow_dispatch）手动按钮，可选择候选发布编号并输入更新说明/策略。最初可由用户自己点击，无需先开发管理后台；环境required reviewers是另一个可选审批能力，私有仓可用性与套餐有关，不把它当免费必有前提。官方依据https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow 及https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments 。本轮只补设计，未新建workflow、Release、环境、服务器策略或运行测试。
+
+- **状态：现状调查与方案草案，待用户批准；未实施。** 用户要登录提示新版本、可稍后升级、同意后下载并重开，同时能撤销某个旧版本或强制使用指定版本。治理Client DHXY-cr271，Cloud dhxy-cloud-brain；本轮只读源码/Git和公开官方资料，所有方案均非已部署能力，不修改历史稳定业务。
+- **旧入口为何消失：** 6月23日`docs/superpowers/specs/2026-06-23-update-framework-design.md`明确旧方案仅mock检查、默认关闭、无下载替换；6月30日“remove obsolete debug tooling”提交删除UpdateCheckService/MockUpdateManifestProvider等8类及侧栏/说明页检查更新按钮。当前`AppVersionService`只读bot.app-version并显示，`MainWindowController.buildAboutPanel`仅版本标签。不是UI藏到另一页，也不是已有完整自动更新链。
+- **现有版本/授权缺口：** application.properties第31/125行license.worker.app-version=0.0.1与bot.app-version=0.1.0-dev是两份真源；LicenseAuthService.verify会传版本，refreshStatus不传，license-worker/src/index.ts只将appVersion记审计日志，没有版本准入策略。当前授权UI是手动授权码验证，不应描述为已具完整登录会话和服务端版本封禁。Cloud版本/会话准入须另行真实接线，不能仅在JavaFX禁按钮。
+- **建议发布模型：** Git push保存代码，与对外发布分离；发布指定tag/版本→构建完整Windows成品包→签名/哈希及兼容元数据→上传Release或可稳定访问的对象存储→包可用后再激活版本政策。自动构建可由发布tag触发，不每次dev push强推给用户。私有源码可继续私有；公开制品仓只放成品，若制品也私有则服务端授权短时下载链接，绝不向客户端嵌GitHub访问令牌。GitHub Releases是文件分发，不是旧版本禁用权威。
+- **建议政策：** 区分latest推荐版、最低可用build、精确撤销build清单；需仅允许指定版本时使用明确允许清单，不只一个mandatory布尔。例推荐1.5.0/最低1.3.0/撤销1.4.2，允许版可稍后，低于底线或被撤销版必须升级才能获得任务服务。服务端保存政策修订/生效时间，拒绝旧缓存覆盖新政策；升级说明、包大小、平台、兼容协议、校验/签名及下载地址随清单发布，签名私钥不得在客户端。
+- **建议用户流程：** 打开客户端→授权/版本政策检查→允许则提示“立即下载/稍后”，保持手动检查入口；强制则可更新/退出而不能启动任务。下载进暂存目录并显示进度，校验可信签名与SHA256，完整成功后才请求停止本软件任务、撤销输入并退出；独立更新器等旧进程退出后安装到新版本目录，保留设置/凭据/用户数据及旧程序，切换启动路径并重开UI，不自动恢复游戏点击。安装失败不破坏旧目录；回退版本也必须仍获服务端允许。首版完整包，不先做增量补丁。打包需含实际依赖和必需图像资源，模板/Client/Cloud协议兼容一并校验，不分发开发target目录或Git源码zip冒充安装包。
+- **强制能力边界：** 登录、新建任务及有界会话续期/心跳在服务端检查准入，不仅启动时弹窗；运行中禁版通过会话到期/撤权停止后续授权与客户端安全停工，不声称瞬间终止离线程序。完全离线无限运行与随时强制禁版互相冲突；建议失联后不授予新任务，现有会话仅有限宽限。具体宽限时长及普通/紧急撤销时机待用户定案。版本自报可被篡改，服务端能力/会话门和签名包提高可信度但不承诺防篡改绝对可靠。旧客户端无更新器需要首次手工安装新版，不可能仅push让它凭空学会更新。
+- **实施顺序建议：** 统一build版本真源/打包格式→发行包与发布渠道→政策API及服务器准入→登录提示/手动检查/下载器→外部更新器/恢复→断网、坏包、安装中断、禁用版本的授权验证。下载渠道选GitHub Releases还是对象存储、是否公开成品、运行中撤销宽限需用户确认。用户只要求先讲思路，本轮不立已批准业务规则、不写实现、不测试/部署。
+- **官方依据：** https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases 支持发布可下载二进制制品；https://docs.github.com/en/rest/releases/releases 支持release/asset元数据。这些支持分发能力，不证明本项目已打通更新，也不替代自有服务端准入。
+
+## G183 修罗与五倍拟人化接线只读盘点（2026-09-13）
+
+- **2026-10-12 状态更新：** G183 证明并补齐的“五倍成功轮间休息”边界仍保留，但其复制的 `80/17/3` 三档分布及任务私有实现已由 G185 七档公共策略替代；以下内容仅作历史证据，不再是当前有效时长规则。
+- **实施交付：** Cloud `WubeiTask`在SUCCESS进度报告后增加`shouldStartNextRound`门及`restBetweenRounds`；掷骰边界与修罗逐项相同，单个方法内抽时长并按最多1000ms切片调用原TaskSleep，无新服务/输入/协议层，无包装函数链。日志`[wubei] G183 inter-round rest: round=... restMs=...`带窗口前缀，便于区分主动休息与卡死。只改五倍，保留G179～G182 dirty。
+- **验证交付：** 当前五倍及源码依赖隔离javac exit0，产物`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g183-cloud-cad4099c095a4733a7e39cd40202bc14`；无target/classes写入、无测试/游戏/重启。源码复核失败分支在休息前返回、末轮门false、不在黄袍单场出口插等待；这不是已执行的行为合同。待更新Cloud后运行核对日志/实际等待、末轮与停止暂停。状态为已实施未测试待部署，下面只读调查/待批准为此前历史。
+
+- **追加用户裁决：已批准补五倍轮间休息。** “统一一下，补一下五倍”明确采用刚才解释的修罗80/17/3、2～8秒/20～60秒/90～180秒同分布，在五倍SUCCESS进度记录后且还有下一轮处执行；BR-WUBEI-012登记。只改Cloud WubeiTask，最后一轮不等、失败不等、内部恢复不改、1秒切片可停止暂停；不会误挂到每场黄袍战斗。仅隔离编译，原调查记录保留为实施前证据。
+
+- **状态：调查完成，未批准移植。** 用户不确定五倍是否触发修罗的一系列拟人化，当前仅对照源码与光牛的滑子°正在运行的五倍日志，不改业务、不新增休息/点击。当前dev推送基线Client2236357/Cloudc100781（前轮ls-remote已核），XiuluoTaskV2与InputActionWorker对推送无dirty；推送五倍轮间也无rest，不能说是本轮飞行或预扫禁用删掉了它。
+- **明确未接：任务内部轮间休息。** 修罗`XiuluoTaskV2:498/544`成功且还有下一轮时restBetweenRounds，G150定案80% 2～8秒、17% 20～60秒、3% 90～180秒；五倍`WubeiTask:479`报告进度后直接下一轮，没有这段。Client仓Cloud日志8244/8245：19:31:16.148 round21 finished，16.152 round22 started，4ms。当前Cloud日志无G150 inter-round rest。客户端`WindowTaskControlService:1161`虽有同分布，但仅有限整run终态续跑，此次同run completed=21/unlimited不满足，不是每场五倍休息。
+- **共用且有运行证据：NPC落点微调。** Client `NpcArrivalFrameFifoLocalExecutor:481/525/715`真实MEMORY/候选点击经jitterForExecution（有界Gaussian）；Client日志14474行19:33:35.053及14760行19:34:44.745为同队长NPC提交，base与jittered不同。本项确认调用与偏移发生，不凭这些日志宣称视觉匹配正确或长期分布实测通过。
+- **共用且已接，日志不提供随机实值：输入节奏。** Client `InputActionWorker.execute:481/504`点击时长/序列SLEEP在执行时乘随机因子；frozen真实执行入口708行调用同execute，Client14502/14526行19:33:39.492/42.797五倍接任务/绿链输入走该入口。INPUT_TRACE显示的是原始InputAction，150/300不等于实际随机后时长；本轮未做分布测试，不把单次日志当已测随机因子。
+- **共用且有执行记录：战斗维护错峰。** Cloud `AutoCombatService.maybeRunInCombatUiClean:555`首拍进战基础延迟后随机偏置、后续30～55秒，task/observer共用；Cloud7887/8156/8418/8683/8933行19:29:29.234、19:30:49.437、19:32:07.371、19:33:11.468、19:34:11.415同run有in-combat maintenance记录。不能拿跨战斗间隔直接当单场定时器采样分布。
+- **共用但仅启动时：多窗启动打散。** Client控制器当前1～3秒（91/92行，已是用户后续调整；旧G149卡5～20秒是历史），不在任务轮间触发。此次不以缺少stagger日志推断功能失效；未做批量启动验证。答题阅读/答后等待属大理寺专用，不应自动接到五倍。
+- **后续方向（待用户明确批准）：** 如果要求五倍也按修罗每轮休息，应在五倍内部SUCCESS进度完成后、仍有下一轮的相同位置接现成规则，保持最后一轮不等、失败恢复不变、停止可中断；不要只改Client run续跑点，也不要把全部功能重写一套。是否采用完全相同分布需用户确认后登记业务规则。本轮不称现有G149/G150/G157全量fresh通过，无测试/编译/新截图/输入/重启。
+
+## G182 五倍暂时禁用普通回程道具预扫（2026-09-13）
+
+- **交付：** 仅Cloud `WubeiTask`新增同修罗的`RETURN_ITEM_PRESCAN_ENABLED=false`，普通绿链后/寻路中/战斗中三入口已加门。未修改显形镜required记录、正式回城或共享服务。当前Wubei及源码依赖隔离javac exit0，产物`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g182-cloud-4857ba8a203c4e348a0f24b27eeb9adc`；未测试、未写target/classes、未重启/输入。普通预扫禁用需Cloud部署后生效；“召唤”指代仍待用户澄清，不冒称额外功能已关闭。
+
+- **状态：已批准实施。** 用户明确取消19:27提前开包并对照修罗。最新推送修罗`XiuluoTaskV2`已有G088常量`RETURN_ITEM_PRESCAN_ENABLED=false`，拦绿链后/寻路中调用；五倍三个普通回程预扫入口仍无开关，不是飞行功能新增。19:27现场证据已记G181并展示聊天。
+- **批准差异：** BR-WUBEI-011替代旧“绿链后预扫”，新增同名false常量，关闭普通`RETURN_ITEM_TEMPLATE`绿链后、寻路中、战斗中三入口；共享service/Client不改。正式回城useCached、无缓存find-use与地图验证保留，按修罗现状而非另造缓存机制。
+- **范围澄清：** 显形镜required位置记录另有生产用途，不由本次普通回程预扫取消推导删除。用户“召唤出来这个先禁用”指代未明确，已问，暂不改显形镜/召唤业务。后续若确认须先补决策，不能以本卡普通预扫授权扩写。
+- **验证门：** 只隔离编译、不运行测试/游戏/截图。源码核对普通三入口均受false门，显形镜required与真正回城链仍在；运行时普通绿链/寻路/战斗不再出现RETURN_ITEM模板预扫，正式回城仍可开包找物；此为未执行验收规格，不是运行通过。
+
+## G181 可复用飞行初筛与按键差分确认（2026-09-13）
+
+- **G194 fresh 退修关联与修复：** 2026-10-25 白龙马实跑证明 G181 单次调整没有跨绿链连续状态：first-probe 已返回 `ASSUMED_TARGET`，无战斗转 second-probe 仍重新采样并多次执行两次 Alt+C；换地图后同一固定 ROI 的地表颜色明显变化，单次耗时达9秒以上。G194已补公共队长队伍状态及入战/Alt+C失效，双端隔离编译与合同5/5通过；待fresh实跑后才能关闭退修。
+
+- **19:27开包裹只读核对（不是新增飞行探测）：** 光牛的滑子°第19轮，Cloud日志7409行19:27:02.869绿链成功，7414/7415行04.946飞行初筛S=0.04570318→ASSUMED_TARGET，本次未按Alt+C；7423行同秒回程道具策略选AFTER_TRACKER_GREEN。Client13075行05.029开始`bag/wubei_return_item.png`预扫，05.231开包、06.947当前页命中缓存屏幕绝对点(558,770)，06.948开始关包；Cloud7427行07.714缓存成功，宏全程约2.768s。本次只预扫/缓存，不是使用回程物、不是检测飞行、不是显形镜位置扫描。`ReturnItemPrescanService`对推送零diff，最新推送WubeiTask已有afterTrackerGreen调用；业务MD五倍直接tracker规则第5条保留此边界。策略按轮从绿链后/寻路中/战斗中择一，done/inProgress防本轮重复执行；回城阶段useCached优先使用此点。现场图`images/temp/match-evidence/bag-item-current-page/20260913_192706_947_unknown_PRESENT_score-1.000.png`及模板`images/template/bag/wubei_return_item.png`已查并随答复展示，日志score1.000，未重跑匹配。未发现本片段预扫违背既定业务，不新增错误计数；仅文档，未改代码/测试/输入/重启，不以此给其它开放卡验收。
+
+### 19:11后两项限定返修交付：绿链后两秒＋实际采样留证
+
+- **用户明确批准：** 只把绿链完成后的初始等待1000ms改2000ms，并落实图片取证；初筛0.17/0.23、差分0.02、按后1500ms、失败继续寻路全部不改。不能声称已根治19:11视觉误判。
+- **生产写集：** Cloud `WubeiTask`两入口三个调用处统一`greenClickCompletedAtMs + 2_000L`；`CloudFlightAdjustmentService`消费日志补token/capturedAtMs/geometry。Client `WindowObservationSampler`同一共享帧只裁一次飞行ROI，直接调用原`FlyingSaturationLocalMechanics.classify`，此ROI同时用于计算与保存；该分类器及其它任务调用不改。`MatchEvidenceStore.saveSample`复用已有有界后台writer，复制像素后异步编码写盘，未新增截图/上传或模板匹配。
+- **取证路径/关联：** Client `images/temp/match-evidence/flight-adjustment/<window>/<token>-seq-<seq>-at-<capture>/`（Windows非法字符替为下划线），每组`frame.png`完整共享原帧、`roi.png`实际计算区域、`sample.txt`记window/run/token/observerSeq/capture毫秒/屏幕绝对LTRB矩形/均值/像素数。Cloud消费token+seq+capture精确选图，按键ACK同attempt关联；`:0`为首按前，`:1/:2`为对应按键后的采样阶段。保存成功才打印`[sample-evidence] saved`，队列满/写盘失败报精确样本缺口，不改变业务结论、不冒充已存图。仅flight interest约500ms采样期间保存，不改全局截图归档频率。
+- **验证边界：** 双仓当前源码依赖隔离javac exit0，Client显式编译Sampler/MatchEvidenceStore、Cloud显式编译WubeiTask/CloudFlightAdjustmentService；输出分别系统Temp的`dhxy-g181-evidence-client-3541cbd6f56541c8b2fcb7f2c427ac2f`、`dhxy-g181-delay-cloud-84a9b6acaf244d6e82a5ca39aa2f75e9`。未写target/classes、未运行测试/回放/实际落盘探针、未重启/游戏输入。两端需部署新产物后生效；下次用户运行需核对两秒门与实际saved文件、消费/ACK链，原P1保持待取证而非通过验收。
+
+### P1 19:11运行退修：初筛触发误切，差分又误确认（仅调查，待批准修复）
+
+- **角色/运行：** 光牛的滑子°（387545229），hwnd-60B9A，run=`remote-turn-b3a29326-63eb-4813-82e7-7a6d605875a2`，attempt=`71ca9d79-4d38-4afb-b7e8-8dbec4b7de84`。用户确认本已飞行，自动按键后变成落地。
+- **精确时间链：** Client仓`logs/cloud-brain-console.log:4132`19:11:34.515接任务成功；4167行38.050绿链成功；4180行39.905，seq1198，S=0.2922386395411252，TOGGLE_REQUESTED；4182行40.280首按ACK；4190/4191行43.644，seq1204，S=0.21680845127670945、delta=-0.07543018826441578，CONFIRMED_TARGET/FLYING退出。Client`logs/dhxy-console.log:10004/10006`40.012真实PRESS_ALT_C、40.278 result=true。不是只发布没执行，也不是尚未到绿链门。
+- **可证原因与边界：** `FlightStateAdjustment.classifyInitial/observe`将S>0.23视为可能落地并触发首按；后帧只要下降超过0.02便确认飞行，本次因此没有第二次纠正。结合用户实见，两道视觉判断均未正确表达实际状态。新帧/同ROI/输入ACK只能证明时序，不能证明变化由飞行切换造成；并无独立飞行真值校验。不能仅提高初始阈值便宣称修复，也不能据此宣称所有场景差分方向写反。
+- **P1取证缺口：** `FlyingSaturationLocalMechanics.sample`裁固定逻辑ROI(688,71,67,38)、算均值后flush；`WindowObservationSampler`新interest仅发布数值/token/geometry，未保存本次两张精确ROI。当前没有可绑定seq1198/1204的事故像素，不能把附近destination hint裁图或历史截图冒充按前/按后图。移动背景/遮挡/缩放是否导致本次错误仍待像素证据；历史G081报告已发现无本链按键组内跨度0.1149，说明0.02不是排除场景噪声的证明。
+- **修复责任/方向（Codex，待用户批准）：** 首先在现有采样点保留参与决策的同帧原图、ROI、seq/时间/attempt/geometry及按键回执；再以真实飞行/落地标注核实ROI和差分判据，禁止仅凭两个均值的变化声称切换成功。涉及`FlyingSaturationLocalMechanics`、`WindowObservationSampler`、`CloudFlightAdjustmentService`及`FlightStateAdjustment`的具体行为改法须另获用户批准；保持BR-WUBEI-010绿链后1秒/无法确认继续寻路，不擅自停任务、强制停步或加盲按。运行验收需覆盖本已飞行不被切落地、真实落地可升空、移动噪声不冒充确认；当前无测试授权。
+- **关联卡与状态：** 本次已进入WubeiTask和G181逻辑，旧注册阻断已不在此run复现；不以此宣称G179本地入战或G180记忆复用全面通过。本轮只读日志源码并登记文档，未修改生产、未编译/测试/截图/输入/重启。错误账本E39分类证据非排他与E29不留判定原图各登记一次。
+
+### P1 运行退修：缺失注册已补，隔离编译通过（尚未部署验证）
+
+- **修复交付：** 用户“赶紧修”后，Cloud `CloudTurnRuntimeConfiguration.java:103`追加真正的`CloudFlightAdjustmentService.class`至@Import，仅一条注册及说明注释，飞行业务零改动。已核GameContext/CloudWholeTaskReadyEventState同在真实host清单。配置类、飞行service与WubeiTask当前源码一起隔离javac exit=0：`-encoding UTF-8 -proc:full -implicit:none -cp target/classes;<target/cp.txt> -sourcepath src/main/java -d <temp>`，产物`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g181-import-fix-0179f23395a148c4ab5bc62bc5a9b35b`。未运行测试/host实例化/游戏任务，未写target/classes、未部署重启；编译与源码依赖核对不冒充运行验收。下面保留事故定位记录。
+
+- **角色与证据：** 光牛的滑子° / 387545229。Client `logs/dhxy-console.log:5867`（18:46:13.467）及同次18:46:19再次失败：`runtime-pre-execute`，`UnsatisfiedDependencyException`，WubeiTask构造参数19缺`CloudFlightAdjustmentService`。Cloud当前实际日志在Client `logs/cloud-brain-console.log:8/40/72`，三次同因；不是旧Cloud仓logs下七月日志。
+- **根因（Codex本卡引入）：** 新增service有@Service、WubeiTask有构造器依赖，但Cloud host只扫描指定包，observation包不在内；漏将该类加入`CloudTurnRuntimeConfiguration.@Import`。运行class存在且18:44:12已更新，不是“用户没部署”，也不是绿链/饱和度判断失败。任务尚未构造、observerSeq=0，因此G179/G180业务路径本次未执行，不能据此判它们运行通过或失败。
+- **修复方向/责任：** Codex，在Cloud显式@Import清单登记真正的CloudFlightAdjustmentService；其依赖GameContext/CloudWholeTaskReadyEventState清单已有，无需扩大包扫描或手工new。预期写集仅CloudTurnRuntimeConfiguration.java。需编译并在授权范围验证真实host可构造WubeiTask；仅Java编译不能证明Spring装配通过。当前用户只问原因，未修改Java/启动环境/触发输入，等修复授权。错误账本E47重复登记。
+
+### 五倍首接：已实施，双仓隔离编译通过
+
+- **本轮交付：** 用户“最终无法确认飞行，就是继续寻路”。两仓生产接线已完成：按需共享帧事实→`CloudFlightAdjustmentService`→`FlightStateAdjustment`→既有串行输入；未确认只记录，调用方保留原绿链成功结果，不停止/重按/重启。两处绿链方法内共三处互斥/独立调用（普通寻路、非缓存续战、缓存续战），医宝宝与修装备导航零新增调用。正常Alt+C、天庭/修罗/鬼王业务不动。
+
+- **用户明确要求（本轮）：** 五倍任务绿链实际点击成功→延迟1000ms→确保FLYING；不是接任务后，也不由医宝宝/修装备导航触发。新增权威规则BR-WUBEI-010，原函数初筛/差分规则不变。
+- **调用核对：** Cloud `WubeiTask.clickTaskTrackerGreen`（普通、probe、普通重按及非缓存续战）和`clickCachedChainedTrackerGreen`（缓存续战）都有`executeInputTurn`成功分支；推送基线也以点击回执控制后续。前者当前`registerPathing`会排除原地连战，所以只接到`recordMovementIntent`会漏掉续战，不能误当完整覆盖。两个绿链入口以外不新建触发门。
+- **事实和时钟：** 新增两仓同字节`FlightSaturationReading`及`FLIGHT_SATURATION`，只传数值、阶段token和实际ROI/窗口矩形，不上传图片。Client共享帧新增独立epoch捕获起点，不改原monotonic采样节奏。每次按键ACK后等待1500ms再换阶段token；Client看到token后至少下一张物理新帧才发布，不能以旧图新上传冒充按后帧。Cloud用ACK到达时间作实际完成的保守上界；capture时间必须同源epoch且通过阶段/seq/revision/window/HWND/geometry检查，时钟偏差只允许未确认，不伪造成功。
+- **输入边界：** 策略由唯一Cloud发布方领取一次；真实Client队列仍负责exact绑定、stop/pause。新增仅本能力使用的`ALT_C_FLIGHT_ADJUSTMENT` wire-key映射到原Alt+C动作，并在实际worker处加本地combat围栏，普通Alt+C/Alt+8不改。初始等待和按后等待均不持有物理输入队列。所有退出finally撤销临时interest，停止信号仍原样传播。
+- **当前验证：** Client五个相关源码、Cloud五个相关源码连同各自最新源码依赖隔离javac通过（`-encoding UTF-8 -implicit:none -cp target/classes;<target/cp.txt> -sourcepath src/main/java -d <专属temp>`，各exit=0）。Client产物`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g181-wiring-client-bb0d75adb2604cc7873cd21b2c899423`；Cloud产物`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g181-wiring-cloud-8c872b3e03cb4646872fb81af266e0d2`。未写target/classes、未运行测试/回放、未独立review、未重启/输入；因此状态不是运行验收通过。部署需包含本轮两端产物，不能只重启旧运行类。
+
+### 首版纯函数历史交付（已由上面的五倍接线推进）
+
+- **状态：函数已实现 / 双仓隔离编译通过 / 未接入任务、未测试。** 责任Codex。用户确认0.20±0.03后明确要求建卡实施；来源BR-FLIGHT-001。先实现可复用边界，不重写原`FlyingSaturationLocalMechanics`、天庭循环或NPC面板探针。
+- **决策：** S<0.17可能飞行、S>0.23可能未飞行、[0.17,0.23]模糊。明确符合目标则免按键、仅标记初筛推断；否则首按Alt+C，执行回执后等动画并取同ROI新帧。下降确认飞行、上升确认落地；差分阈值独立，暂沿用天庭0.02。反向最多纠正一次；不明显只等新帧直到超时。无图、旧帧、无回执不能算成功或触发无限按键。
+- **边界：** 新增双仓`com.bot.dhxy.model.flight.FlightStateAdjustment`，纯决策、无自动输入，调用方使用既有共享帧与串行输入。唯一scope绑定窗口/HWND/run/attempt/ROI；实际输入领取去重、回执按序号校验，终态不复活。初筛不是确定检测；历史0.25左右仍可能飞行的差分推断已保留在G081，不能宣称新阈值已证明绝对正确。
+- **待接入清单：** ①Client `WindowObservationSampler.sampleGhostKingChangshouFlightAssist`（当前UNKNOWN保留pending、按后不确认）；②Cloud `TiantingTask`暗雷飞行段及`TiantingDarkThunderPlan.classifyFlightToggle`（已有差分确认，可后续共用策略但不改patrol决策）；③Cloud `NpcClickService.detectFlyingStateName`及direct-combat消费（Alt+U模板探针，与饱和度机制不同，不能机械替换）。其他任务不得全局搜索替换。
+- **验证门：** 按用户限制，只隔离编译；未创建/运行合同或回放，未重启/输入。五倍接线已完成，视觉回放、移动干扰及fresh尚未验证。验收规格见`docs/rule-traceability/G181-contract.md`，该文件不是通过的测试。
+- **本轮交付：** 双仓新增同源`FlightStateAdjustment.java`，包括初筛、同scope新帧消费、唯一按键领取、真实执行回执、差分确认、一次纠正和有界终态。`javac -encoding UTF-8 -proc:none -Xlint:all -Werror -d <独立temp目录> <源码>`两仓exit=0，无依赖既有target字节码。Client产物`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g181-client-4fcc02ba970d434aaaf1a0d4bc5f39ff`，Cloud产物`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g181-cloud-eaf6650d346d476587fce47f1c2a4f47`。未执行类或任何测试；文档门禁通过不等于行为验收。没有调用方迁移，因此重启也不会启用本函数。
+
+
+## G180 NPC成功记忆持续复用，连续失败三次才停用（2026-09-13）
+
+**状态：已实现 / 双端隔离编译通过 / 未测试、待评审及部署验收。** Owner：Codex。普通NPC共用历史成功点路径，不是只给五倍或某个站位特调。
+
+### 本轮实施交付（2026-09-13）
+
+- 用户追加“那你去做这个修改一下”后直接实施，未派子代理。生产写集仅三文件：Cloud `NpcClickMemoryStore`、`SmartClickRecognizer`；Client `NpcArrivalFrameFifoLocalExecutor`，其它既有dirty保持。
+- `CloudBrainServer.start`创建`DecisionEngine`时构造记忆服务；canonical加载/种子合并完成后只建立一次`startupMemories`。原按taskRunId复制和pollLast删除已移除；run退休只清其在途回执，持久化reload不清启动副本或连续失败计数，新学永久点不偷偷补进本次启动。
+- 每个FIFO独立Set只记本次试过的scene/point，LIFO下一候选不重复；不修改启动副本。每次下发新decisionId，回执按run/window/session/候选坐标关联，首次结算后移除回执防重计。真实失败递增，成功清零，第三次才删除那个临时点；其它点与永久库不动。延迟验证沿既有确认/反证入口在更换合成decisionId之前结算原候选，未决不计。
+- Client普通记忆回执改为返回后再继续poll，避免原common-pool异步回执在同窗口颠倒；其它策略仍用原异步上报。输入队列、点击/匹配/偏移不改；记忆验证`CAPTURE_FAILED`/null按SKIPPED继续原候选链，不计失败，实际输入失败/取消/安全拒绝原样保留为非计数结果。
+- 双端JDK21隔离javac exit0，输出仅系统Temp：Cloud `dhxy-g180-cloud-21ba461cb4124313acd62bf1618ab232`，Client `dhxy-g180-client-f1670305576e4f77bfc4dbabc689c5ca`。命令均为`javac -encoding UTF-8 --release 21 -cp "target/classes;<target/cp.txt>" -processorpath <lombok jar> -d <隔离目录> <本卡源码>`；Cloud两源码同编，Client执行器单编。首次Cloud发现旧单次识别入口少传Set，补齐后复编成功；最后Client加入截图失败不计数后再次编译成功。
+- 源码SHA256：记忆库`d712e7220b9410e3425dab66358c2f06be0483c2353f21d94c9a91a813174589`；识别器`d0f3245c9716db5aaa92b75cc6c92de5ec70837539ce1be28047afb704b7a8c9`；Client执行器`54d2b09ad7b325fcbcf5bb07304553645d6fda7153c0ba583fd67eddeea760be`。规则门和本卡diff whitespace通过；**未建/跑行为测试，未做独立review，不能写PASS或Done**。
+- 未写共享target/classes，未重启、未输入、未改canonical运行库；需最终评审和双端部署后才在运行中生效。下方验收清单仍为待验规格，不冒充已验证行为。
+
+### 用户定案（本轮明确业务变更授权）
+
+用户否定“取出即删除”和“每轮补一份”，明确：启动时建立临时记忆，成功点一直可用，没有轮数或使用次数上限；只有某个点连续失败三次才从这份临时记忆移除。助手复述成功即清零、永久记忆不受影响后，用户回复“可以，那就按照我说的这样子修改，你去建一张卡吧，有个记录这样子”。“一百轮”仅是讨论例子，禁止实现为上限。
+
+1. 启动时从永久成功记忆建立临时副本；它跨任务轮次、重新领任务和普通重试保留。不得按round/session重新建副本或自动补回停用点。实施前需绑定真实程序启动生命周期，不得又用候选读取时机替代启动边界。
+2. 读取/下发/点击均不删除临时记忆点；成功点可无限次复用。
+3. 连续失败按exact场景内每个点击点独立统计；成功一次清零该点连续失败计数。只有连续三次真实点击验证失败才从本次启动副本移除。
+4. 未找到候选、没有实际点击、输入被安全门拒绝、暂停/停止/取消、传输不确定不能冒充点击验证失败；重复回执不能重复计数。延迟验证未决不算成功或失败。
+5. 移除仅限临时副本，不删除/降权/重排永久成功点；失败不得写坏永久库。持久化失败后的reload、换轮、session清理等不能成为另一个删除或补回临时记忆的入口。下次启动重新读取永久记忆。
+6. 同次FIFO内记录“本次已尝试候选”只为推进下一候选，不等于修改长期临时副本；不得把非破坏性读取改成同session无限重复同一候选。既有候选优先级、输入串行化、匹配算法/坐标、点击后验证器不借本卡重写。白龙马单独配置的角落固定规则不是本卡普通历史点，不顺手改其业务。
+
+### 事故证据与旧规则关系
+
+- `logs/cloud-brain-console.log`：2026-09-13 17:47:25.093同run `remote-turn-f3a8c8ed-b419-4212-94d9-db9941056a1d:0:WUBEI`、宝象国降魔侍卫目标86,87、人物95,98，弹出331,491剩1；17:47:27.851弹出327,585剩0；17:47:29.755 verified=true，下一毫秒永久记忆记录stackSize=2。
+- `logs/local-stack-client.out.log`：17:47:27.850第一候选VERIFICATION_FAILED；17:47:29.754第二候选VERIFIED；17:53:46.825同场景MEMORY point=null / memory-miss。不是历史没记忆，也不是磁盘记忆丢失。
+- canonical `vision_memory.json`同场景仍有两点、successCount=128；最后成功17:47:29。原帧与metadata：`images/debug/npc-arrival-click/20260913_175437_586_hwnd-60B9A_降魔侍卫/`，上一轮聊天已展示原图。
+- 当前及最新推送基线`NpcClickMemoryStore.lookupNext`按taskRunId建副本、`pollLast()`删除候选；成功写回只更新永久库，不补临时列表。`docs/业务逻辑.md`“成功坐标永久栈与单次启动工作栈”第4/5条原本也写了弹栈：本卡是用户重新明确的替代规则，不把旧实现说成违反当时同版文档。正式实施前须同步权威业务MD、规则索引和G180追踪文件并通过规则门禁。
+
+### 实施范围与验收记录
+
+拟改Cloud `NpcClickMemoryStore`（非破坏性候选读取、启动副本、逐点连续失败）及`SmartClickRecognizer`实际候选循环；回执沿Client `NpcArrivalFrameFifoLocalExecutor.reportOutcomeAsync` → HTTP → `DecisionEngine.npcClickSmartOutcomeResponse` → 记忆结算。必须先核实每跳的session/window/run/decision/实际点击身份及重复、迟到、持久化重载边界，只在现有通道缺必要事实时最小补接，不能先计失败再验证身份。
+
+待核验：同点持续成功后下一次仍命中；失败两次后成功清零；第三次连续真实失败才停用；其它点不受影响；取消/未点击/重复回执不计数；停用不改永久库；同次启动不复活、下次启动恢复；单session有限推进且既有后备策略可达。当前未授权测试族，不建/跑测试；Java实施后须隔离编译，不写共享target/classes，不重启/输入。编译不等于行为验收，正式review和用户运行验收另记。
+
+**上轮仅建卡；本轮代码交付见顶部。** 不得把编译通过或卡片存在当作运行验收通过。
+
+## G179 五倍接入共用本地入战执行，收拢Cloud点击旁路（2026-09-10）
+
+- **09-13 17:43误恢复已实施，待评审/运行验收：** Client共用缺模板producer仅允许同腿有效采样达到2200ms的STABLE（显式ARRIVED/STOPPED_AWAY兼容；UNKNOWN不充当停步证据），不再用995ms稳定直接报失败。新增双端同字节TurnLocalEntryFailure携类别/停步起点，经ObservationKeyEvent→CloudXiuluoLocalClickState→Wubei两处消费→现有exact reset传回Client。Client在与快照更新同锁的撤权点核对当前停步和claim，失效ACK一项clear也不做；Wubei保留腿/本地执行、不清障不重按。坐标变化清旧claim，后续停步生成含新起点的eventId，不会永久封死同attempt。点击确认失败仍走原撤权恢复，exact no-match仍fatal，真实进战仍优先。
+- **同步等待旁路已堵：** 等待函数消费失败后抛异常时，普通round-recovery不许抢先无条件撤权；保留原phase交回同一结构化失败门。已授权范围是共用producer+五倍消费，未迁移修罗/鬼王等消费者策略，未改模板/ROI/实际点击次数/地图门。
+- **验证边界：** 双仓生产隔离javac exit0，五个协议文件SHA256逐个一致；编译输出仅Temp dhxy-g179-stop-client-deffcd24834a4836b43a6926b6173377 / dhxy-g179-stop-cloud-47adac29092246baa39f01af1817b101。未创建/运行测试，无截图回放、无游戏输入、未重启、未写target/classes、未提交Git。不能把编译称为行为通过；须双端一起部署重启，fresh核验995ms不报失败、恢复移动不清障重按、后续2200ms真正停步仍可恢复、点击耗尽不受影响。规则/调用链规格见G179追踪文件。本条实现记录更新下方历史“待批准”状态，不抹除历史证据。
+
+- **09-13停步缺模板误恢复方案已批准实施（BR-WUBEI-009）：** 共用producer按有效采样2200ms、失败携类型和同腿停步版本；五倍在既有精确撤权命令内校验仍成立，失效不清腿/兴趣、不清障重按、后续可重新上报。点击耗尽不取消；旧API兼容、双仓协议同字节。只隔离编译，未授权测试/重启。责任Codex，17:43现场及未修历史见下。
+
+- **09-13 17:43修法讨论（未实施/待批准）：** 本地snapshot已有locationChangedAtMs/updatedAtMs/intent.createdAtMs，可按G156同口径用采样时刻减max(本腿起点,最后变值)约束半路缺模板失败>=2200ms；不得用当前墙钟让过期帧自然成熟，不改900ms开始分析/真实模板命中/已到目标快速路径。另一缺口为CloudXiuluoLocalClickState只存failed布尔，丢失“未出现/点击耗尽”的原因及停稳代次，无法只撤销已恢复移动的条件性失败。建议保留结构化失败类别/同腿停稳版本；坐标变值作废该版本，清障前沿既有exact撤权链校验本地现态与版本，已撤回则不撤腿、不清障、不重按，并允许后来真实停住重新发布。普通三次点击耗尽不混入此条件性失败。先修共享producer语义而非五倍私加阈值；跨仓字段/消费兼容及实际输入前时序须在实施前列写集，未授权不改代码/测试/运行。
+
+- **2026-09-13 17:43运行P1（只读，待批准修复）：** hwnd-60B9A/round8，本腿b58fb6dc。Client日志3208：00.713坐标216,21稳定995ms进入STABLE；00.913本地模板未出现；01.108变值20,100撤回稳定。Cloud日志3125：00.928已按G156记录stationaryMs=995<2200、保持ACTIVE，但01.375收到另一条ENTER_BATTLE_CLICK_FAILED（template-never-appeared-after-pathing-terminal），seq57唤醒时镜像仍ACTIVE。01.379精确撤权清腿，02.305清障NO_DIALOG，03.037实际再次点击绿链410,468。根因：Client `tryClaimXiuluoMissingKandaAfterPathingTerminal`接受900ms档STABLE、不查2200ms半路停步条件；失败事件只带attempt/round，已恢复移动也未撤销该失败，Wubei据本地failed接清障重按。G156云端门确在运行，但管不住此独立本地失败出口。不是旧attempt串腿、不是180秒超时、不是三次实际点击耗尽。修复建议：共用缺模板失败生产端按已批准两档停步语义，并让恢复消费拒绝已撤回的停步结论；不得只删STABLE导致E73恢复链再次断供。责任Codex，Client共用producer/Cloud五倍consumer范围待批准，不改稳定任务参数。未修改生产/测试/重启/输入；本次依据日志和代码，无00.913精确原图路径，不能证明该刻实际画面或模板像素优劣。其余G168～178未覆盖场景不验收。
+
+- **面板三次失败即停已实施，隔离编译通过，未测试：** 本轮仅Cloud `WubeiTask`新增面板完整负判据计数/一次性失败标记，恢复门消费后第三次直接普通FAILED，位于原清障/800ms等待/回接路由之前；前两次不增加通用recoveryCount，成功及新轮清零。保留真实进战抢占与精确撤权保护，不改其他失败预算。scratch=`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g179-tracker-failure-7bb292d945014c0089ff9d9001e996c8`，javac exit0，diff whitespace通过。未测试/重启/输入，不写target/classes；Cloud重启后生效。待验收：连续负判据1/2重接、3终止无第四接；负负成功后战斗失败不背识别债务；新轮计数零。22:08:59以后退战缺失原因仍未解决，不能用本改动宣称全案修复。
+
+- **最新批准实施：面板连续识别失败第三次即停（BR-WUBEI-008）。** 用户选择第三次就停，不接受带旧失败次数到后面入战再停。独立计READ_TRACKER完整读取负判据，前两次原run回接且不增加通用恢复次数，第三次普通FAILED；成功/新轮清零。原exact进战优先/撤权和其他错误恢复上限不变。不改识别算法、不以TaskFatalException触发自动重启；退战漏报是未定位的另一问题。本轮责任Codex，隔离编译，未授权测试。
+
+- **22:12停止时间线补正：** 三次恢复不等于第三次失败当场停。`recoveryCount`进入失败门依次0/1/2，第三次仍放行，`recoverTo`加到3；直到下一次失败才被`>=3`挡住。22:06:39、22:06:58、22:07:23、22:08:28共四次接任务点击均留在程序round9（恢复保留round），22:08:31才读到三藏封魔，22:08:59进战；之后到22:12停止无新接任务点击、无round9 finished/round10 started、无generation9退战发布。不能把程序round直接当游戏任务次数，更不能据日志缺失否定用户看见游戏已退战。已证实的是第四次失败才停止，实际游戏轮数及退战漏报原因未确认。本次只读/文档，不修生产。
+
+- **22:12自动停止只读取证：** Client日志48838～48845确认22:12:06.419任务返回FAILED、exceptionType=null，控制器明确automatic hot-start blocked，随即关闭观察/turn；并非据stopRequested=true推断用户按停。Cloud日志15557/15691/15851：第9轮22:06:42、22:07:02、22:07:27三次tracker anchor not found耗掉恢复0/1/2；22:08:59.916本地确认generation9进战；22:12:06.164 WAIT_BATTLE_FINISH计时186142ms越180000，recoveryCount=3触上限返回普通FAILED，而非TaskFatalException，因此不进入已批准的致命自动恢复例外。Client与Cloud JVM仍在（PID16872/133008，20:56启动）。直接停止链已确定，为何战斗未获退战尚未核完，不冒称真实持续战斗或已修。仅日志/代码调查，无生产改动/测试/重启/输入；本片段不能验收地图门、显形镜、医治等其他开放卡。
+
+- **清障接线追问复核（只读）：** 用户要求与修罗一致，不接受另造清障流程。源码确认修罗`waitTrackerShortcutPathing`消费local failed后进入`retryTrackerShortcutGreenAfterCloudFallback`，调用共用`DialogService.clearBlockingDialogBeforeGreenRepress`；五倍`checkReadyPriorityBeforePhase`消费同类failed并精确撤权后调用同一个方法。因此清障没有删除，本轮删的是停步即抢清障的旁路。但两任务整个恢复状态机并非逐项相同：修罗还保留stopped-static no-action分支、保存绿链坐标重按与自己的重试上限，不得据“同一清障方法”宣称全流程已完全一致。本次仅核实解释，未追加生产改动/测试/重启。
+
+- **最新交付：用户“那就清掉”批准的地图开窗条件已删除，隔离编译通过，未测试/待运行验收。** 本轮只改Cloud `WubeiTask`：普通绿链既有准备完成后直接登记本地入战，不再读取/启动/开启目标地图门；显形镜用后、黄袍续战绿链后的边界保持。普通ARRIVED/STOPPED_AWAY只等本地实际点击/失败，保留同腿快照供本地缺模板裁决；不再用“本地尚未启动”授权清障。明确本地失败并精确撤权后才走既有通用清障重按。未引入修罗25秒延迟，不改模板/ROI/点击坐标/共享重试参数。
+- **旧地图来源及未修边界：** 上一轮平顶山留在Client `PlayerCharacter.currentMapName`；`WindowObservationSampler.updateValueSnapshot`复制到pathing snapshot再上报。Cloud新图识别万寿山，但`CloudObservationHttpHandler.withTranslatedState`优先fact.currentMapName，把旧平顶山盖回新结果。这是已推送代码中的全局复制优先级缺陷，不是模板缓存。本轮用户批准去掉五倍门、询问缓存来源，没有借此扩大修改共用地图策略；此缺陷仍待独立修复，去门不能冒称缓存已修。
+- **交付证据及验收门：** `WubeiTask`及当前依赖源码隔离`javac --release 21` exit0，scratch=`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g179-mapless-cloud-258a2820af614c80be85eb569477c949`；diff whitespace通过。未获测试授权，没有新建/运行自动测试或图片回放；未写target/classes、未重启/输入。运行待查：旧/空地图下也能注册本地；停步先本地识别、失败撤权再清障；普通/显形镜/续战不互抢。Cloud重启生效，责任Codex，旧“待批准/仅调查”均为历史。
+
+- **用户质疑后的来源补证（只读，未改生产）：** 修罗实际顺序已重读：XiuluoTaskV2.tryTrackerShortcutWithPanel:2564完成绿链输入→2583登记本地interest+schedule→WindowObservationSampler.sampleXiuluoLocalKanda:3150检查同run/腿权限、做本地匹配/新帧复核→3314直接进入本地输入队列→实际点击完成后才上报ENTER_BATTLE_CLICKED。不是Cloud拿匹配坐标再批一次点击。此前展示的20:32图仅证明错误Cloud清障旁路，不是本地入战匹配证据，已纠正说明。
+- **“旧地图”具体来源而非猜测：** Client WindowObservationSampler.updateValueSnapshot:2227-2237直接取`context.getGameState().getMe().getCurrentMapName()`写到snapshot；sampleCurrentPathingFact:3012原样上报。它是角色最后记录的地图字段，不是模板缓存，也不是本轮新增缓存。当前日志20:30:17.416上一轮帧识别平顶山，20:32:05.104本轮帧识别万寿山；06.410同一Cloud处理先以新值刷新万寿山，再经withTranslatedState旧fact字段优先的复制路径改回平顶山。五倍只有任务消费地图门后才登记本地执行，而修罗绿链后即登记；故先前“复用修罗”实际只完成后半执行器，开启时序和未开启清障分支仍未闭合。此轮不擅自删除已批准保留的五倍地图门，不恢复Cloud入战点击。
+
+- **20:32运行调查：P1重开，接力未闭合；只取证，待批准修复（2026-09-10）。** 本轮同一run `remote-turn-804472cc-7f91-4a3e-8c17-bc48fec2cb4e:0:WUBEI` round2，不是自动热重启；20:32:17.878用户暂停，STOPPED而非fatal。Cloud日志758/764-772：05.104已识别到达帧万寿山；06.410稳定事实位置刷新也为万寿山，但随后PATHING_COORDINATE_RESOLVED和任务镜像又成平顶山(101,83)。源码`CloudObservationHttpHandler.withTranslatedState:577`把fact.currentMapName旧值优先于resolvedMapName，新图名被覆盖；前面translate的优先级注释虽修了，后面的复制器没修，origin/dev同样存在。WubeiTask.consumeTaskOwnedPathingConsequences:785按镜像地图匹配目标万寿山，门始终未开；Client32873/32942/33000/33011明确gate opened=false，未找到本轮local-kanda或WUBEI_ENTER_BATTLE执行登记。
+- **用户看到的“点框→马上绿链”的实际链：** Cloud773进入ordinary terminal重按；782-788仅拿wubei.acceptTask/除魔卫国匹配战斗对话，score0.2635<0.85；798-800 fallback-last点击(1639,481)，Client32915/32917实际发CLICK_LEFT。现场洗字图显示上面是“消灭它”、下面是“离开”，此次落点属于下面选项。806及Client32928在09.131点击绿链(1471,335)。12.214镜像又是平顶山，14.288第二次fallback，14.696再次绿链。不是本地入战匹配后正常重试，更不是之前非法0L又触发热重启。
+- **本卡遗漏与修罗对照：** WubeiTask:2184把`localEnterBattleAttemptId==null`当作允许清障的localEntryReleased；未开启也为null，并非“本地已经完成识别且释放”。本卡从DialogService.taskBusinessGreenSpecs:459移除了五倍入战目录，却未封住这个未开窗分支，结果接任务模板miss后点击离开。修罗XiuluoTaskV2:2583在绿链腿登记后即调用registerXiuluoShortcutEnterBattleInterest:4822（带既有延迟），不依赖此五倍地图开窗链。不是缺少消灭它模板，也不能用新增云端入战点击补回双执行者。
+- **证据图片/缺口：** 已展示`images/temp/match-evidence/dialog-inmemory-match/20260910_203207_417_unknown_ABSENT_score-0.263.png`，该图为洗字匹配留证、红框是候选框；464的PRESENT文件同样是洗字图，低分不代表阈值命中。已成对展示当次使用的`images/template/dialog/wubei/wubei_accept_chumoweiguo.png`与已有正确业务模板`wubei_enter_battle_xiaomie.png`。对应未洗原图未找到（现场日志raw=cloud-memory），不得冒充已查原图或已实测本地命中。未拍新图、未跑回放。
+- **待批准修复/责任：** Codex负责CloudObservationHttpHandler地图复制器和WubeiTask入战开窗/清障授权；遵守BR-WUBEI-007保留目标地图条件，修正已读新图名被旧缓存盖回的问题；“未开启”不得当“已释放”，没有本地明确失败/撤权事实不能fallback关闭待入战对话。修罗/鬼王/抓鬼不改，不能只恢复Cloud入战模板形成双执行者。运行验收须看到万寿山新值进入镜像→本地观察开启→实际消灭它点击/确认重试，确认期间零Cloud离开/绿链插入。本轮仅文档改动，无生产/编译/测试/输入；核对本现场相关待验G171/G178/G179，未声称20:32验证了显形镜、黄袍、医治等其他卡。
+
+- **最新交付：致命失败自动恢复例外已实施，四个共用生产文件，双端隔离编译通过，未测试/未重启。** 用户批准“普通失败原任务恢复；致命失败清理后自动重启同任务、保留次数”。Cloud `CloudTurnTaskRuntime`将明确TaskFatalException（含子类）写入既有终态事件类型字段，并在队列failure policy之前break，不跳下个任务；普通结构化FAILED及各任务phase原样。Client `WindowTurnLoop`仅接受同startRequestId、queueIndex、完整taskRunId匹配的致命子任务事件，先于整体terminal回调保留；不从FAILED或reason字符串猜。`WindowTaskControlService`仅对此安排失败子任务后缀重启、保存同任务同总数进度，不加成功次数；既有逐窗退避跨致命重启保留，SUCCESS/UI冷启动清连击。清理未确认、角色没切回或窗口尺寸安全门未恢复时继续等/重试，不启动带病新运行。此前所有失败一律等UI的实现已被此例外修订，非致命终态仍不自动热启动。
+- **旧执行与UI边界：** `TurnModeGuard`新增expectedLoop安全重载，迟到回调不能移除新loop；旧Cloud终态/turn退出确认后，另等旧观察、transport、maintenance真正退出，不能把原3秒join超时日志当作已退出。确认后才由prepareRemoteFreshStart撤销旧token/排队输入、清任务状态及现实缓存，再PAUSE_RESUME种入数值进度。已入队原子输入仍遵守原输入队列的不可拆分规则。终态投影捕获exact handle、与UI取消共用生命周期锁，回调异步执行，避免turn线程等该锁而UI持锁join turn的死锁；实际启动前再次验epoch。SUCCESS续跑、UI真正启动和既有业务点击流程不改，模板/ROI/协议DTO未改。
+- **隔离编译证据与未验收边界：** Client三个修改类输出`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g179-fatal-client-final-6850cd595e734116b2499d151996e969`；Cloud Runtime输出`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g179-fatal-cloud-fb3c86b743104364ac5edc791774f68d`。命令均javac --release21 / UTF-8 / target/classes只读classpath + target/cp.txt + Lombok processorpath / -d scratch，exit0；四文件diff whitespace通过。未创建/运行测试、未输入/重启，不能声明实机通过。后续运行取证：致命子任务没有TASK_STARTED(next)，同任务重启initialCompletedRuns保留；旧观察退出前零新start；用户暂停停止后无迟到恢复；普通phase恢复无新run。责任Codex，待用户运行验收。
+
+- **最新用户边界调整（2026-09-10，已确认方向、尚未实施）：** 用户明确接受上述致命终止场景自动重启任务，不希望自动停住等待UI；因此此前“所有FAILED/SKIPPED终态一律只等UI”的实现不再完整符合最新意图。普通游戏失败仍应优先留在原run恢复/重新接取，不据此恢复对一切FAILED/SKIPPED的粗粒度重启。拟议致命恢复须先确认旧执行者和在途输入已安全撤销，再重启同一任务、保留已完成次数与剩余任务量，不记成功、不跳到下个任务；不能仅凭异常名推定可安全重启。最后这些为待核实现有链路的安全要求，尚未宣称实现。当前仅记录用户新边界，未改生产、未测试/编译/重启/游戏输入。
+
+- **用户追问：致命终止有哪些、是否实际触发（2026-09-10，只读核实）。** `TaskFatalException`的约定是正常恢复耗尽才终止，不应把普通游戏识别miss当致命。当前代码实际分类包括：Wubei/Xiuluo精确清理未确认或身份不一致；Xiuluo连续失败达到10次；`LeaderTeamReturnCoordinator`归队门等待180秒未能确认；`DialogService`窗口身份/输入步骤ACK/返回协议不一致、模板加载抛异常；`LeftTopStatusSwitchService`部分transport UNKNOWN或未确认STOPPED。它们是程序的终止判定，不等于游戏现实不可恢复，也不是所有超时/匹配失败都会fatal。本轮原始日志已确认Client `logs/dhxy-console.log:31871,32018`在16:56:06.634与16:56:26.487两次WUBEI终态FAILED，原因均为`Wubei local entry exact revocation identity mismatch: round-recovery`，Cloud对应357/540行；这是前述参数非法导致未注册却撤权的后果。历史G114卡另记01:50:50.911修罗旧attempt reset no-match终止；此例引用历史卡而非本轮重新读取历史原日志。其他类别本轮没有实际触发证据，不宣称从未发生。另澄清本轮修复拦的是共用层全部FAILED/SKIPPED终态自动重启，不仅仅异常名为fatal的终态；原run内非终态恢复不改。没有新增生产改动、测试、编译或重启，运行验收仍未完成。
+
+- **最新交付：两项返修已实施 / 双端隔离编译通过 / 未测试未重启（此前待批准为历史）。** 用户最终明确“不是五倍，是所有任务”“不是Alt+Q，是整条热启动线”。Client共用`WindowTaskControlService.projectRemoteTerminal`对所有FAILED/SKIPPED在exact handle/lifecycle门后停止并显示原因，不再排自动重启；`recoverRemoteTerminal`入口只放SUCCESS，延迟失败回调在任何清缓存/启动前被拒绝。任务内部原run既有有界恢复/重新接任务保持，已经终态不能伪造旧phase续跑，必须等UI。正常SUCCESS配置次数续跑、正常队列衔接以及UI首次/暂停后启动保留；不是五倍特判，也没有改Alt+Q/G133共用刷新函数。旧失败重启次数账删除，用户既有1～3秒错峰dirty保留。
+- **五倍注册修复：** `probeStartAtMs`从非法0L改null。`TurnGameClient.invoke`仅在actionBuilder构造/协议校验阶段把IllegalArgumentException标为`TurnActionValidationException`，范围严格位于`commandPort.execute`之前；Wubei只对该明确未提交类型清本地attempt并fatal报原始错误，不再撤权不存在的执行者。执行/传输/结果解析异常不进入此catch，响应不确定仍保留身份；精确撤权no-match仍fatal，不放宽协议、不改模板/ROI/4秒/3次参数。
+- **返修验证范围：** Client最终隔离输出`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g179-client-final-410837670ff24ccca3e4fc0daaa99748`；Cloud输出`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g179-cloud-repair-4c503eec8e2642a3b473aecef4a8b643`。均`javac --release 21 -encoding UTF-8 -cp target/classes;<target/cp.txt> -processorpath <lombok> -d <scratch>` exit0。Cloud编本轮3个文件+G178既有ReadyEventState源码以对齐签名，后者未改。未覆盖target/classes、未创建/执行任何测试、未输入/重启；不能宣称运行已验收。双方需重启加载代码。生产写集4文件（含新异常类），其余本卡此前7文件不再改。
+
+- **用户最新定案（启动来源）：** 只有UI首次启动或UI暂停后再启动可进入本次Alt+Q启动重同步环节；内部恢复/自动重启不能因新建run而进入。已写入`BR-START-001`并同步G133。不能用`PAUSE_RESUME`枚举或run首次代替UI来源，现有两者会被内部恢复复用。此为规则确认，本轮未动生产/测试；不得把用户定案扩大为“禁用所有自动恢复”。原参数P1仍待修，来源授权是另一个需落实的边界。
+
+- **追加外层根因（用户追问“没有启动，为何走启动分支”）：** Client `WindowTaskControlService.projectRemoteTerminal:1038`对`FAILED || SKIPPED`进入自动恢复，并未按此次`TaskFatalException`/协议错误区分是否可重试；生命周期、尺寸、角色等门通过后便调`recoverRemoteTerminal`。`:1300-1312`对FAILED清现实缓存，再直接`startOneRemote(..., TaskStartupMode.PAUSE_RESUME, ...)`，实际创建新Cloud run，不是留在原相位重试，也不表示用户点过暂停/启动。Cloud `StartupQuestPanelResyncGate.markAttempted`按window/taskRunId判断首次，新run自然再次刷新Alt+Q。origin/dev已存在这条通用自动重启及PAUSE_RESUME复用，本卡非法参数触发了它；不能把整体复启描述为正常NPC匹配重试。确定性参数/身份错误不应靠重复启动期待自愈，拟议额外修复边界为终态可恢复性分类（不可恢复停止并报错），不全局删除既有崩溃恢复/启动刷新；这是通用行为变更，用户本轮只讨论，未实施。原卡生产参数回归与外层错误分类必须分开说明。
+
+- **最新：P1运行失败 / 已定位 / 待用户批准返修（16:56暂停前）。** 本次仅调查、更新治理记录；未修改生产、编译、测试、重启或输入。下方“待运行验收”为历史，不能继续据隔离编译声明接力链已通。修复责任人为Codex，预计生产修复点Cloud `WubeiTask.registerWubeiDialogInterest`及其注册失败身份记账边界。
+- **确定性根因（本卡引入）：** `WubeiTask:3001-3003`将`probeStartAtMs=0L`传入`updateDialogInterestWithSchedule`，而`TurnProtocolValidator:888`只允许null或正数；Cloud构造命令时已抛IllegalArgumentException，请求未发往Client。本次不是本地模板miss，入战执行兴趣没有成功安装，也不存在可用于判断模板优劣的此次入战分数。函数却已设置`localEnterBattleAttemptId`，恢复去撤销从未安装的attempt，得到精确身份不匹配并fatal。保留no-match严格语义，不得降级WARN掩盖未撤销的真实执行权。
+- **现场链：** Client工作树`logs/cloud-brain-console.log:321-344`在16:56:06.275报`probeStartAtMs must be positive when present`；Client `logs/dhxy-console.log:31871/31873`在06.634/06.637记录fatal及自动重启。新run于14.566执行`quest:ensurePanelAltQ`，16.577执行`quest:refreshCurrentTabClose`，17.567确认open→current tab→close；这是既有G133启动任务面板刷新，不是入战fallback。Cloud 20.279再次点击绿链，`dialogBefore=OPTION`，21.025仍`dialogAfter=OPTION`；26.227同一非法参数再报错，26.487/26.488再次fatal/重启，31.836用户暂停。因此用户看到的是报错重启循环，不是同一入战执行的有限重试。
+- **现存图已核：** `images/temp/match-evidence/coordinate-global-vision/20260910_165615_966_hwnd-161A00FA_PRESENT_score-1.000.png`为Alt+Q任务面板打开；同目录`20260910_165617_567_hwnd-161A00FA_ABSENT_score-na.png`为任务面板关闭后，魁星归位/离开NPC对话仍在。文件名分数属于任务面板锚点，不是五倍入战匹配；这些是已有取证图，无新捕获/回放。raw capture池16:54:50旧帧不冒充16:56匹配现场。
+- **待批准修复及验证门：** 无探测延时使用协议合法的null；注册前参数校验失败必须与“已提交但响应不确定”区分，前者不能遗留伪执行身份，后者仍须保留身份供精确撤权。不得通过删除Alt+Q、放宽协议校验或吞no-match来修症状。授权后验证合法payload实际抵达Client、注册前失败不触发不存在attempt的撤权、响应不确定仍可撤权、首次未入战由本地重试而不是任务重启；用户尚未批准本次返修/测试，不运行这些验证。
+- **相关开放卡核对：** G168接任务后无出村预点击已见；G169/G133新run启动刷新确实执行，不是此次参数错误来源。G171本地重试接续被G179注册错误挡住，仍不关闭；G178两次绿链分别属于不同run/intent，不是旧腿terminal复用。本片段无G170真实入战、G174/175用镜、G176偶遇战恢复、G177医治的验收证据；G172/173名字识别不是此异常栈入口，不据本次图推断它们通过或失败。
+
+- **状态：已实施 / 隔离编译通过 / 未测试 / 待运行验收。** 用户原话“可以，那就按照你说的吧……修罗、鬼王、抓鬼这些都比较稳定，现在就是五倍的问题”。只接入五倍，不迁移其他任务云端备用路径；负责Codex，双仓范围见G179追踪。BR-WUBEI-007替代G171旧执行归属；模板/ROI/阈值、怪物分类、战后规则不变，入战等待改由实际本地点击事实接续。
+- **具体落点：** Client `DialogService`将既有五倍洗字三模板匹配适配到共用local-kanda；`WindowObservationSampler`开启WUBEI分支，停止上传五倍入战prepared候选，复用4秒/最多3次实际点击机制；不受修罗旧开关关闭影响。`WindowRuntimeContext`仅对WUBEI补未完成输入的精确撤权保护（同锁、全身份比对），保留其他任务原判据。Cloud `Observer`停止五倍prepared消费/备用模板准备与对应截图需求，转发`LOCAL_ENTER_BATTLE_CLICKED/FAILED`；`WubeiTask`消费同代实际执行事实、保留真实战斗优先、同代撤权后才允许清障/回接；`DialogService`清障默认对五倍让权、目录去掉入战项，直接绿模板入口也拒绝五倍入战点击。
+- **收口边界：** 普通怪用当前路径attempt；显形镜及黄袍续战用新attempt。重复登记不得刷新重试预算；登记RPC不确定仍保留身份供恢复撤权。普通/探测超时、兴趣切换、候选fallback、相位失败均先撤权；no-match仍fatal，不当成功。黄袍的两种绿链入口都移到点击完成后才开本地执行；未找到模板的黄袍续战保留原600ms/phase-loop上界，探测保留300秒/候选6秒；特殊任务耗尽走既有轮次恢复，不误注册普通寻路。共享4秒确认和最多3次点击常数未改。
+- **验证边界：** 仅两端相关生产类隔离`javac --release 21`通过；Cloud连同已有G178的ReadyEventState源码一起隔离编译，避免运行target/classes旧签名造成误判。未新增/运行行为测试，规则登记门不算合同绿；普通/显形镜/黄袍、多窗队列延迟/暂停/换代尚待授权验证。未写运行target/classes、未重启、未发送游戏输入。G171历史P1由G179实现接续，但fresh未通过，不关闭验收。
+- **最终编译证据：** Client输出 `C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g179-client-final-b7721a23dafa441bb0652e319ff506cb`，Cloud输出 `C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g179-cloud-final-9ff0bea1cfef4847ad9ad0d75115faa9`，均exit0。命令为`javac --release 21 -encoding UTF-8 -cp target/classes;<target/cp.txt> -processorpath <lombok> -d <上述scratch> <本卡源码>`；Cloud额外包含G178既有ReadyEventState源码，仅类型检查。相关文件`git diff --check`通过；trace状态保留既有schema的`APPROVED_IMPLEMENTATION`，实施未测试另列字段，不伪标`REVIEW_PASSED`。看板已生成385行。
+- **实现边界：** 五倍复用现有本地看打执行和身份/4秒/3次重试机制，只新增五倍匹配适配；Cloud登记同代执行、消费已执行/失败事实，保留真实战斗优先；清障在本地所有权释放前不操作对话，释放后排除入战点击并继续原维护/fallback。三类五倍入战窗口都需接通，不能只修普通怪。
+- **验收门（尚未执行）：** 单次点击未入战的新帧补点、3次耗尽恢复、无模板停稳清障、快速进脱战、换run/round/attempt与暂停停止旧回包隔离；普通/显形镜/黄袍续战均有实际producer/consumer；稳定任务不改参数和入口。未授权测试族，禁止把规则登记/编译当合同绿；只隔离编译与代码审阅，不重启/游戏输入。
+
+## G178 五倍第二段被第一段停步事件提前放行，两个用镜点判废后重接（2026-09-10）
+
+- **实施交付：Cloud两文件已改，隔离编译通过，未测试/待运行验收。** `WubeiTask`保存实际生成的`currentTrackerPathingIntentId`；等待仅tracker的RESOLVE_AFTER_PATHING选择精确intent重载，维护/回接仍旧语义。普通/显形镜镜像门都比对该ID，显形镜缺本腿快照先等待、不落到用镜；FIFO直接拿新ID，不再从旧镜像回读。运行入口/退出、轮次clear、失败恢复清ID，每次重按重建UUID。`CloudWholeTaskReadyEventState.awaitNewer`增加可选pathing ID参数，旧签名传null完全不滤；锁外和锁内重查都在“选最新事件”前过滤旧terminal，保留其他战斗/prepared/超时唤醒，不用推进总游标吞其他类型消息。
+- **验证边界：** `javac --release 21 -encoding UTF-8 -cp target/classes;<target/cp.txt> -processorpath <lombok> -d <scratch> WubeiTask.java CloudWholeTaskReadyEventState.java` exit0；scratch=`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g178-cloud-f3e34a9cc8704df3a9d2448224117cb1`。本卡diff whitespace通过；规则门通过。用户未授权本卡自动测试族，没有创建/运行测试；`G178-contract.md`仅待授权规格，不能报合同通过。未改Client、未写运行target/classes、未重启/输入；Cloud重启后才生效，P1运行验收尚未关闭。
+
+- **最新：用户批准实施，只修本腿身份。** 规则`BR-WUBEI-006`，Cloud任务保存新ID，通用等待增加可选本腿过滤（旧调用不变），快照消费与FIFO登记同用新ID；不动游戏点击规则、地图/hint门、模板、计时及NoTarget策略。未授权该修复测试族，仅隔离编译；不重启、不操作游戏。下方“待批准”均为历史。
+
+- **用户再次纠正现场观察：** 只看到第一点用镜，点第二链后仍在移动便判失败，未到第二点、未见第二次实际用镜。回答必须分开“客户端动作调用记录”和“游戏实际使用事实”，禁止用14:06/14:08的`used=true`反驳用户。已核`useProbeItemWithRuntimeRecord`只认local-service EXECUTED+used，底层BagService只做右击/等待并返回true，没有游戏效果验证；所以不能断言第二次使用已被游戏接受。确定性根因仍为新段消费旧段停步及旧镜像，提前进入结果判定。14:31新run日志已有更新但未找到该时间段同类失败，不混到14:08证据链。未改生产。
+
+- **状态：P1已取证 / 只读调查 / 待用户批准修复。** 用户问本次为何重接并指出仍在移动；不授权生产改动，未派修复、测试或操作游戏。最新日志止于14:10:46停止；定位14:06:29.841与14:08:44.004两次`probe exhausted without target-ready story`，并非预算超时或医宝宝失败。14:09重启一轮到第二点时是用户stop，不冒充第三次同病完成。
+- **确定性P1：旧腿terminal和旧镜像都被第二腿接受。** Client日志2760/2763：14:08:34.498清第一腿55ff0e80，34.501注册第二腿4202051a；Cloud日志2950：33.753已发布source=first-probe的PATHING_TERMINAL seq54。2967/2968：34.507新腿等待afterSeq53立即拿旧seq54，只等5ms；2969：34.520以第一点火云戈壁149,63旧STOPPED_AWAY镜像进入第二次用镜。2976：38.040第二腿明确ACTIVE；3052：47.518准备回接时仍ACTIVE。14:06:21同样8ms吃旧first-probe seq48，并以旧149,63执行second-probe。
+- **代码根因：** Cloud `WubeiTask.registerTrackerPathingIntent:3573`给Client新UUID但未保留供任务校验；`isCurrentTrackerPathingSnapshot:4095`只验类型与`wubei:tracker-green-click:`前缀，不核本腿intent，first/second都能过。`resolveProbeAfterPathing:2979`由旧镜像放行；等待类型/sequence不是本腿身份。相对origin/dev该前缀门原样存在，不能归罪G177医治ROI。附带FIFO demand在34.502也拿旧55ff0e80（2958），同属新腿后同步读旧镜像。
+- **第二张提示及用镜证据边界：** Client2797-2807：34.810开包，36.545显形镜模板1.000；36.546 `action=USE click=(1569,602)`，36.666光标实际一致，37.268关包，38.033动作返回true。代码`BagService.executeSafeAction`的USE走右击，但true只证明输入序列完成，不能证明游戏已接受/正确点位，不是回城道具。40.215采集的seq45被41.050消费，白字两个模板分数0.229/0.367，返回`probeNoTarget`；42.937清理前raw故事为“十三年前，八月十五，宝象国三公主…”。镜像ACTIVE证明第二段尚在走；缺乏逐帧游戏内部因果，不能绝对断言这个叙事一定由该右击而不是途中其他触发生成。确定的是系统把它当作第二点用镜结果裁决并判废。
+- **图片：** Client `images/temp/match-evidence/bag-item-current-page/20260910_140836_545_unknown_PRESENT_score-1.000.png`（包裹匹配现场）、`images/template/bag/wubei_probe_item.png`（模板）；`images/evidence/dialog/20260910/story-click/20260910_140842_937_5_raw.png`（清理前原图，比识别晚1.5s，不冒充匹配原帧）、`images/temp/match-evidence/white-story-template/20260910_140841_301_unknown_ABSENT_score-0.229.png`（识别洗图）。first-probe原图`20260910_140832_488_4_raw.png`为另一段叙事。没有拿未授权回放代替现存图。
+- **修复方向/验收门（未实施）：** 依据`业务逻辑.md`白龙马§7-19等第二条绿链本腿停步后再用镜，不增地图/hint前检，不改NoTarget规则。任务保存本次实际注册intent，等待与镜像两层必须精确同腿，缺/旧镜像继续等；新腿FIFO预注册同样不得读旧血统。验收须覆盖先到旧terminal→注册新腿→旧镜像迟刷新，断言新腿ACTIVE期间零用镜，真实同腿terminal才允许；暂停/重启/重复来源也围栏。用户未授权该测试族，未运行。
+- **相关开放卡本片段核对：** G168无出村预点击日志；G169热启动有title接管，不是盲接；G170/171/176此片段没有战斗续接证据不关卡；G172/173/174未走到白龙马点击，不能验收；G175 seq45请求/结果/消费在同一interest已通，但不证明所有邮箱运行门通过；G177无医治链实跑证据。本次坏的是寻路代次，不据其他卡待验收状态派生未经授权修复。
+
+## G177 五倍医宝宝：完整对话已认出，固定小框裁掉选项后反复取消（2026-09-10 13:04）
+
+- **最终实施：只调整共用医治框，待重启生效。** 用户追加明确“不用再开，按之前那张图，只调整框大小”，停止要求第二次实拍及扩展合同。Cloud `DialogService` 医治上沿373→360，repair上沿解耦仍373；Client `OpenCvLocalMaintenanceBroadcastHandler` 同步118×53，repair仅在截图内原118×40子区域匹配，并补回13px中心偏移。原模板、0.85、输入、调用顺序及业务流程不变。两端隔离javac通过，未写运行target/classes、未重启/输入；两个尚未运行的新增合同草稿已删除，不计验证结果。
+- **实际验证范围：** 13:48:03.182 用户重新打开的沙拉买提无损原图 `images/test-cases/maintenance/g177/20260910_wubei_lossless.png`，原模板旧框0.146162，新框0.997632≥0.85，中心(319,376)。`G177DoctorFrameCompare --verify` 生成同目录 `_roi_review.png`（橙旧框/青新框/绿模板/红回放中心，非真实输入）。超级巫医沿用13:31原JPEG里的模板位置(266,385)，16px高，原区域完整保留；没有第二张无损正例，不能宣称两种布局阈值合同全绿或fresh输入验收通过。13:45无对话图单独命名 `20260910_wubei_no_dialog_lossless.png`，不作正例。用户要求小改后未继续新增/运行整套合同。下方待批准/调查等均为历史。
+
+- **最新裁决：用户批准本卡共同医治框方案，要求测试确认再改。** 见 `BR-MAINTENANCE-001`；仅医疗范围上扩、两端覆盖、修装备旧范围保留。授权两布局无损回放和相关边界测试；不授权自动操作菜单、重启、部署。先验证再落生产；下文“未批准”均保留为历史。
+
+- **共同覆盖框建议，待用户确认坐标（用户问如何调整大小）：** 原窗口相对(260,373)-(378,413)，118x40；建议仅上沿提到360，变(260,360)-(378,413)，118x53。两张现拍的医治模板最强位置为y368与385，模板16高，提议框对上方五倍留8px余量、保留下方超级巫医与原底边。360是本轮建议的余量选择，不是用户已拍板或生产实测通过值。保持原模板/0.85/原子点击/维护触发与失败策略。核查发现Cloud医宝宝与repair常量共用，Client OpenCvLocalMaintenanceBroadcastHandler也将heal/repair共享118x40；实施时必须明确保护repair原匹配范围，不能只改Cloud或静默扩大修装备判据。本轮只提方案、未改生产，既有JPEG不能完成生产无损匹配验收。
+
+- **最新现场结论（09-10 13:34第二张，取代下方缺原图的调查限制）：同窗口、同版本、同截图入口中，差异来自游戏对话内容排版，不是五倍专属医宝宝截框。** 用户手动打开第二张宝象国(96,128)沙拉买提；hwnd仍161A00FA、原点1212,126、1036x783、Revision2051530。文件`images/test-cases/maintenance/g177/20260910_133404_wubei-doctor_original.jpg`及metadata；与13:31超级巫医图对照，两框位置/外形相同，超级巫医白字说明2行+绿色选项6行，沙拉买提白字说明1行+绿色选项7行，多“全队恢复召唤兽忠诚”。因此虽然“全部医治和修复”文案相同，沙拉买提首选项上移一行。用户亦直接确认第二张多一项。此前历史洗图只显示绿字，无法证明整段对话一致；9月2日修罗历史样本是七项，不能冒充本次六项菜单。此次同条件原图证明实际排版可变；与历史9px不混称，本次两图首选项差17px。
+- **用户授权的两图匹配已执行，结果不充当生产阈值验收：** `scripts/G177DoctorFrameCompare.java`只读JPEG，用Cloud现有ImageFinder和原106x16模板，固定(260,373,118,40)与完整dialog区域各一次。超级巫医fixed/full均0.486787、五倍fixed0.109151/full0.493261，都未达到0.85；这是工具JPEG样本，不能宣称共享模板现网损坏或扩大ROI已验证通过。最强位置超级巫医(266,385)、五倍(266,368)，与肉眼完整原图相差一行一致；固定上沿373排除五倍模板顶部。临时javac隔离输出，运行时target/classes只读，未修改业务代码、未发送输入。后续生产匹配验收仍须同现场无损生产原帧，不能把JPEG猜分当合同。当前可以明确解释上游排版差异，但修复尚未授权/实施。
+
+- **用户授权现场对照，第一张已保存（09-10 13:31:40）：** 用户明确当前手动打开的是修罗/鬼王医宝宝NPC，允许只读截图，下一次再手动打开五倍并通知。computer-use技能`@oai/sky`精确选择hwnd-161A00FA，未激活/点击/按键；截图显示洛阳城(328,104)、超级巫医完整白字说明+六个绿选项+边框。窗口原点(1212,126)、1036x783、游戏Revision2051530，文件`images/test-cases/maintenance/g177/20260910_133140_super-doctor_original.jpg`及同名前缀metadata.json。这是工具直接返回的原始JPEG字节（未洗/裁/标/重编码），并非生产采集PNG或严格像素分数样本。第二张待用户通知，不提前推断五倍框体原因；不操作NPC或更改代码。
+
+- **最新调查门：切字失败机理已证实，但9px上移的上游原因尚未查清；缺同期原始框体证据，禁止以“原因已定位”宣布全链结案。** 用户要求继续追源头，本轮只读核查三任务调用、两端原点、裁剪、洗色和WGC代码。三任务最终均走`TaskMaintenanceService.handleMaintenanceBroadcast → DialogService.handleMaintenanceBroadcastOptionFastPath → tryClickMaintenanceBroadcastOption`，无taskCode专属ROI分支；Client getScaledRect与Cloud windowRelativeRect均直接加原点，无缩放；洗图逐(x,y)写同位置，只有颜色过滤，无重排。WGC不改字坐标；7月11日CR266旧报告在WGC引入前已有相同五倍切字症状，足以否定“该类故障必由9月WGC引入”，但不能据此证明本次捕获后端绝无影响。
+- **原始证据缺失已定位到保留策略：** `WindowCaptureEvidenceStore`每窗PER_WINDOW_MIN_INTERVAL_MS=300000、每burst最多2图、保留今日+2天。9月10日该窗口整窗确有13:02:15.778与13:07:16.104，13:04无整窗；9月2日captures目录已不在。定向查匹配证据、NPC到达帧、窗口temp、同期日志/case：arrival-21是13:04:46点医生前的任务Story，不是医生菜单；鬼王tem_dialog_cut是09:41修装备，也不能冒充医宝宝。现存洗图只保留绿色/高亮选项，白色说明及框体丢失。G151旧报告有一个窗口WGC/DC零偏移证据，不足以外推本次两张跨日期帧。下一步需要用户允许只读截图，并提供/手动打开同一运行版本的沙拉买提与超级巫医菜单；只保存完整原帧、当前窗口几何/后端，不执行自动点击/治疗或改代码。取得后才能区分框体高度/说明排版与捕获原点问题。
+
+- **像素位置与截框精确对账（只读现存PNG，不执行识别回放）：** 用System.Drawing.GetPixel读取上述两张529x208洗图第一字“全”的白像素（x17..28，避开绿色标记）。修罗首行y66..79，五倍首行y57..70，相差9px；Client大图固定偏移y312，维护固定上沿y373，对应大图内y61。故修罗文字在裁框内，五倍首字y57..60的4行白像素落在裁框上方。五倍Client FIFO日志坐标(552,341)→(1764,467)给出原点(1212,126)；Cloud实际小框(1472,499)减固定偏移(260,373)也为(1212,126)，该时点两端原点一致。`CoordinateHelper.getScaledRect`、Cloud `windowRelativeRect`都是原点直接加未缩放偏移；尚无证据表明五倍专属分支多加偏移。**结论仅到当前传给匹配器的文字位置导致切字；跨日期画面上移9px的上游成因（框体/捕获后端等）未证明，不能升级为游戏菜单不同。** 没有生成或修改图片，原模板/阈值/生产全未改。
+
+- **补充对照与纠正（用户要求找两张对话图）：** 已找到修罗2026-09-02 23:09:00.304 `hwnd-117915DC`现场洗图`images/temp/match-evidence/dialog-npc-expected-template/20260902_230900_304_hwnd-117915DC_PRESENT_score-1.000.png`。与五倍09-10 13:04:48.400同为529x208识别图，七项文字、顺序一致，五倍该图整组文字更靠上；不能再推断“NPC不同所以菜单内容不同”。归档`logs/archive/cloud-brain-console.20260904-215152.log:13134-13149`证实超级巫医NPC verified后，23:09:00.429原维护小框(331,401)-(449,441)匹配0.997926，23:09:03.053 BROADCAST_HANDLED。鬼王09-02 03:11:29.412洗图`20260902_031129_412_hwnd-3B04DE_PRESENT_score-1.000.png`、raw小框`images/temp/match-evidence/dialog-inmemory-match/20260902_031129_568_unknown_PRESENT_score-1.000.png`也保留；其日志`cloud-brain-console.20260902-222836.log:32464/32482`score1.0、广播成功。这取代下方“没有其他任务成功实例”的先前检索限制。现有图能证明裁剪后文字相对位置有差异及小框在五倍切字，但完整原始框体/各时点截图坐标链未齐，**游戏对话框移动 vs 截图坐标偏移的上游原因未定，不可据洗图直接定案**。
+- **补充历史业务约束：** 读到本文件CR266“用户定稿：医宝宝只保留维护ROI单一匹配（2026-07-11）”，明确禁止五倍重复expectedDialogTemplate验证、当时不批准改维护ROI。当前五倍仍携带expected模板与该定稿存在冲突；不能仅凭本次问原因擅改ROI或删除通用验证。后续方案须连同该历史约束交用户裁定。本轮无生产修改、无新截图/图像重放。
+
+- **状态：原因已定位 / 只调查 / 待用户批准修复。** 用户问原因和修罗鬼王区别，不授权改代码、测试或输入。本轮只读Cloud/Client、更新治理文档。生产待修点在共享`DialogService.tryClickMaintenanceBroadcastOption`，并非五倍独有医宝宝识别器；不得宣称运行已修。
+- **证据链：** `logs/local-stack-client.out.log:5339`13:04:46.789实际点击沙拉买提，`:5344/5347`48.400对话验证VERIFIED、模板1.000；`:5348`48.465维护截帧118x40、region=(1472,499,118,40)，`:5350`第二次repair扫描与第一张sha256相同。`logs/cloud-brain-console.log:8791`48.481落盘ABSENT score0.146，`:8792`48.528两项BUSINESS_OPTION_NOT_FOUND；`:8871`55.851五次耗尽；`:8885/8886`57.636最后绿项点击(1625,604)，57.935 FALLBACK_CLICKED。不是NPC未打开，也不是游戏自行关闭；五倍失败收尾明确取消。
+- **重复范围：** 13:00:22.651、13:03:02.387、13:04:55.851均五次失败后清对话；13:05:00.086`consecutiveFailures=3 limit=3`。本轮运行日志无修罗/鬼王成功实例，其他任务成功来自用户观察，代码对照不得冒充实测。
+- **根因与覆盖：** Cloud `DialogService:777/813`只搜固定窗口相对(260,373)-(378,413)，不是当前dialog整框；维护模板`maintenance_heal_all_repair_raw.png`阈值0.85。实际118x40证据图的第一行上部已被裁，前置Client大区域洗图完整保留“全部医治和修复”，其`heal_pet_option.png`命中1.000。前置只验证，不提交医宝宝点击；后置另截小框重新匹配，故前一步成功不能保证后一步能点。五倍/修罗/鬼王最终都用`TaskMaintenanceService.handleMaintenanceBroadcast`，修罗/鬼王使用`HealPetMaintenanceNpcProfile`超级巫医，五倍手配宝象国沙拉买提。不同对话布局暴露共享固定行假设；不应通过换NPC或降低阈值掩盖。
+- **图证据（均为现存现场取证文件，带生产标记，非新回放）：** 大区域洗图`D:\mavenProject\DHXY-cr271\images\temp\match-evidence\dialog-npc-expected-template\20260910_130448_400_hwnd-161A00FA_PRESENT_score-1.000.png`；固定raw条带`D:\mavenProject\DHXY-cr271\images\temp\match-evidence\dialog-inmemory-match\20260910_130448_481_unknown_ABSENT_score-0.146.png`。对应Client模板`images/template/dialog/maintenance/heal_pet_option.png`与`maintenance_heal_all_repair_raw.png`；后者Client/Cloud资源哈希一致。没有找到这一时刻完整未处理整窗图，前置留存的是洗图、后置是带匹配框raw条带，不能声称持有原始整窗或精确测得裁掉像素数。
+- **所核基线/待批准方向：** `docs/业务逻辑.md`五倍接任务后维护到期导航NPC再走Tracker的规则（G168）不变；Cloud origin/dev与当前共享固定ROI相同，非G176退战修复引入。建议在共享维护链内改用已有完整对话区域/正确选项区域匹配原模板，保留0.85、输入原子性、成功才广播与更新时间、失败重试/取消上限，不做五倍私有坐标补丁。该区域变化须用户批准后建立业务追踪门，当前未实施。后续授权验证须覆盖五倍本帧与修罗鬼王成功对话，真实点中医宝宝且成员收到广播；未授权创建或运行测试。
+- **关联卡审计范围：** CR266维护失败后的对话清理在本片段确实执行，不能将清理当首因；G176意外战恢复未部署，不作为本次原因；G170/G171/G173仅限这段维护链，无足够对应验收证据，不据此关卡。没有实施派工，遵守用户本轮只问原因的边界。
+
+## G176 五倍意外战斗后误回城，回城未验证后等待不存在的新退战（2026-09-10 12:23）
+
+- **实施交付（最新）：已实现 / 隔离编译通过 / 未测试、待审核与运行验收。** 本轮生产仅改Cloud `WubeiTask.java`，未改客户端/共享服务/修罗/鬼王。①同一次entry保存Runner分类及中断上下文，清理重试不覆盖；unexpected exit先转偶遇恢复，不预挂expected延迟恢复。②复用现有位置同步保留死亡仲裁，非死亡清轻UI并以现有多标题Tracker读取重试取得新任务框；任务仍在现查香，走共享归队门后回同轮Tracker，任务消失才挂延迟维护并回程。重接导航与原归队来源不被旧title改道，归队中又遇怪刷新续接证据；已有归队面板不交泛化清理关闭。③只更新屏幕坐标缓存，保留黄袍已打次数/显形镜已用点；重返probe沿用READ_TRACKER的标题起表语义和原时限（G170在进战时已结束旧预算），不增加时长常数；新旧probe段数不一致走现有失败恢复，不猜点位映射。④非死亡USED_START_MAP_UNVERIFIED返回FAILED，删除四个STILL_IN_COMBAT分支、该枚举项和唯一误arm方法；原正常/黄袍回程失败统一进入既有恢复导航。共享合法回放消费端保留，不改协议。生命周期状态在新轮/run和失败恢复清空，等待继续保留同轮来源。
+- **验证实据与边界：** 业务规则门G176通过；`javac --release 21 -encoding UTF-8 -cp target/classes;<target/cp.txt> -processorpath <lombok> -d <scratch> WubeiTask.java`隔离类型检查通过，scratch=`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g176-cloud-4b5b4a2d181c4503947ece1f9a42ee42`；Cloud diff whitespace检查通过。没有编写/运行单测、源码合同、回放或真机测试；`G176-contract.md`明确只是待授权规格，不能据此宣布P1运行关闭。未写运行中target/classes，未部署、重启或输入；须后续部署重启Cloud才能生效。验收看同run/round的unexpected entry→exit→title仲裁→归队→Tracker且不增次数，以及回城unverified→FAILED→ROUTE_TO_MAIN_TASK而非arm等待。
+- **最新状态：用户批准 / Codex实施中 / 未测试。** 用户原话：“修罗鬼王，他们都会看任务还是否存在……五倍……复刻他们的逻辑”。批准替换本卡两条错误分流，不做跨任务重构；下方“待批准/只调查”均为历史。实施仅Cloud `WubeiTask`：保留exact entry分类和中断上下文，清理确认后的exit先交偶遇恢复；复用五倍现有Tracker读取、香与归队服务，保留死亡、已进入重接导航、黄袍连战及显形镜进度；非死亡回城未验证走FAILED及既有有界回接任务恢复，不武装未来退战回放。依据BR-WUBEI-002/003既有进战清理与点击约束，本卡新增BR-WUBEI-004明确修订战后策略。无新检测器/协议/ROI/阈值/预算改动。合同仅登记待授权规格，不能算测试通过；编译必须隔离，运行验收待部署。
+- **其他任务同场景横查（本轮只读源码，未实跑）：** 修罗`:4131/4155`用后未到起点→排除死亡→FAILED，`:3535/3947`清理并允许一次phase重试，仍失败→NAVIGATE_BACK_TO_START（灵兽村）；鬼王`:3149/3178/3087`同样排除死亡后FAILED、一次phase重试后导航阎王书房；新手炼历`:3237/3245/3104`明确禁止把地图验证失败解释成战斗中，FAILED后一次phase重试再导航起点。各内层找道具循环上限2与外层phase重试1是两层，不可笼统声称所有失败只点击两次。天庭`:6089`最多两次道具尝试，每次验地图并保留死亡分流；非死亡仍失败则`:6159`导航李靖，不等待退战。此代码导航结果只日志记录后finished，故这里只证明“不走退战等待”，不背书导航失败后的完成判据。抓鬼`:2820`任务title消失走普通导航钟馗，无该任务回程道具链；五环V3无相应战后回程道具调用，寻路中战斗退战后`:2228`回SYNC_TASK_PANEL重读任务面板。以上六文件当前相对Git无dirty，五倍是本次横查中保留STILL_IN_COMBAT误分类及arm等待的任务。
+- **比较边界：** “意外退战后查当前任务并续接”与“已经选择回程后道具失败如何恢复”是两层。修罗/鬼王前者查title，后者主要重试/导航，并非每次道具失败都再查title。不能把所有任务现有实现描述为完整统一；死亡、任务消失、黄袍连战等分流须保留。本轮不改任何任务实现、未编译/测试/重启/输入。
+- **用户追问后的精确分支核查：** `WubeiTask.useReturnItemAndVerifyStartMap:4468`虽有两次尝试循环，但`USED_START_MAP_UNVERIFIED`在排除死亡后直接于`:4489`返回`STILL_IN_COMBAT`，没有问Runner、没有检查任务title，也不会继续第二次尝试。`:4609`据此进入回放等待。真正的普通失败出口确实存在：`:4618`返回failed，`:808`的`recoverRoundAfterFailure`清理后回`ROUTE_TO_MAIN_TASK`，再导航到接任务NPC；这次被错误枚举分流截走，不是没有失败恢复。`BagService.executeSafeAction:1387`的true只证明提交右击并完成等待，不证明游戏已接受道具效果。当前普通五倍链没有“回城失败再查任务”的通用仲裁，只有黄袍分支有其专属战后Tracker检查，不可冒充已覆盖普通怪。
+- **修罗已有同病修复，且在最新推送基线：** `XiuluoTaskV2.useReturnItemAndVerifyStartMap:4142-4155`明确注释Runner已权威退战，回城未验证是道具失败，不允许解释成仍在战斗或等未来退战；排除死亡后返回`FAILED`。同文件无本地diff，origin/dev同文；git blame确认这条注释和FAILED返回来自8月7日修改（8月26日仅插入死亡仲裁）。调用方`:3535`进入`recoverReturnHomeFailure:3947`，既有有限重试后走`NAVIGATE_BACK_TO_START`。这证明用户“应已有逻辑”的记忆有据，也证明不能说所有任务都已统一。用户本轮否定回城失败推断在战斗的规则；仍是讨论/核查，未收到实施指令，未改生产。
+- **状态：调查完成 / P1两项 / 待用户批准修复。负责人：Codex（调查及后续审核，尚未派实施者）。** 用户要求查日志并比较其他任务，未授权改业务或测试；本轮不改生产/编译/重启/输入。Cloud dev最新推送与本地diff已核对，详见ACTIVE_WORK；G170/G171及所有其他dirty保留，不撤回别人代码。
+- **原始链：** Client `logs/cloud-brain-console.log:3134/3136`，12:22:10.659/.697，第6轮三藏封魔/魔尊、非黄袍；`:3149`10.817点白骨山绿链。`:3231`12:22:46.736 `runner combat entry handoff phase=RESOLVE_AFTER_PATHING next=WAIT_BATTLE_FINISH readySeq=49`。`:3323`12:23:27.682原文`source=client-combat-edge:unexpected:COMBAT_EXITED:combat-exit:unexpected:6 sequence=50`，说明意外分类已到Cloud，不是Runner未上报。`:3331/3333/3336`27.686选择CLIENT_RUNNER_EXIT、挂延迟恢复、进POST_BATTLE_RECOVER；`:3342/3343`28.499/.501进RETURN_HOME并`source=normal-combat`。Client `logs/local-stack-client.out.log:2784`30.491实际`execute item click: action=USE raw=(1330,689) click=(1324,696)`。Cloud`:3354/3356`32.669仍白骨山239,23，随后arm回放；`:3743`12:26:52.997仍`waiting for local true-exit return replay terminal`。期间不是180秒寻路预算超时，也没有看到第6轮完成。
+- **P1-1：分类抵达但业务未消费。** `WubeiTask.runRoundPhases:573`新进战统一`next(WAIT_BATTLE_FINISH,"runner-combat-entry")`；`consumePendingCombatEntryCleanup:671`只存seq/见战布尔，不保留expected/incidental/被中断阶段；`WubeiRoundContext`亦无该字段。`tickWaitBattleFinish:4233`只要求见战、清理确认及后续exact exit，不读取unexpected标签，就调用普通CLIENT_RUNNER_EXIT；`runPostBattleRecoverPhase:2086`除黄袍以外直接RETURN_HOME。G170补齐进战handoff后接上了旧的无分类战后链，不能以“未改expected标志”声称业务等价。最新推送中普通回城及误用回放逻辑已存在，handoff为当前在途改动；不归因于禁紫名的G173（其不写战斗路径）。
+- **P1-2：回城失败不等于尚在战斗，等待条件缺生产者。** `WubeiTask.resumeWaitBattleAfterTrustedReturnCorrection:4777`遇道具used但起点未验证就`armReturnHomeReplay`。Client `WindowRuntimeContext.armRetainedReturnHomeReplay:312`只校验身份并改ARMED，没有发生纠错进战的证明。`WindowObservationSampler.finishLocalCombat:1713`/`publishCombatEdge:1784`在未来退战边沿才提交回放；本次27.682退战已发生，32.672才arm，持续FREE不会再调用finish。Cloud `returnHomeAfterCombatOrContinueSpecialTarget:4560`经共享`decideReplayReturnAction`无terminal持续WAIT。日志“run trusted combat probe”是遗留文字，不能把它当本次已执行纠错探针的证据。没有新退战时该等待无法自行推进，不能靠反复唤醒修复。
+- **横向比较（源码，不伪称本轮实跑）：** 修罗`XiuluoTaskV2:3192/3290`INCIDENTAL先清轻UI、判当前title，任务仍在则查香后续原tracker/objective；title消失才选回程。鬼王`GhostKingTask:2824`意外退战先查香，再按title/被中断阶段续绿链或续重新接任务导航；抓鬼`:2947`查title、香和统一归队门后续绿链。天庭`:5785/5939`共享恢复后按战后物理位置、归队与新Tracker回RUN_SUBTASKS。共同的`AutoCombatService.recoverAfterClientCombatExit:716`只执行传入恢复策略，不负责判定任务战已完成；目前“维护动作共用”不等于“意外战斗恢复状态机共用”。
+- **规则/拟议方向（未实施）：** 已对齐业务MD修罗快捷路线第9～12条、普通怪第24～25条和BR-WUBEI-003/G170边界。普通目标战完成回城不能套在途中意外战；建议共用exact战斗分类/中断续接及一次性维护流程，任务只声明title、正常目标战完成出口和特殊连战/死亡出口；五倍意外退战应按当前任务事实查香/归队后继续原绿链，而非无条件normal-combat回城。回放仅在真实纠错/仍在战斗证据支持时等待未来退战；已FREE且回城未验证须走明确回城失败仲裁，不直接再点或无限等待。该业务分流须用户批准后补规则追踪并实施，不能擅改各任务常数/黄袍连战/死亡规则。
+- **验收与缺口：** 用户未授权新测试，无测试通过结论。后续须覆盖寻路中意外进退战仍续原任务、不增完成数、摄妖香恰好一次、归队未完不放行；目标战正常回程及黄袍续打不退化；已退战后arm不得永久等不存在的边沿。未定位到这次点击时完整截图/游戏拒绝文案，不判断回城道具被拒绝的具体机制；已查看的包裹miss证据仅90x70局部，不冒充整窗事故图。G170进战交接/计时清理此轮有正证据，但本P1使战后续接不能验收；G171此场没有目标入战点击可验证。其他在途卡在此单次意外战场景无适用证据，不宣称全板通过。
+
+## G175 白龙马用镜后出现提示已命中，交付延迟导致迟点 tooltip
+
+- **后续全站迁移位置已盘点（2026-09-10，本轮仅文档，未扩大实施）：** 按用户要求已把位置与接线写入[《G175公共帧交付迁移清单》](rule-traceability/G175-migration-inventory.md)，它是本卡组成部分，不是聊天建议。清单覆盖Client生产者→Cloud识图入口→结果/回执→清理条件，含原函数/文件、边界和后续顺序。**Cloud识图是候选条件，不等于必须再加队列；纯本地匹配排除。** 白龙马验证稳定后按清单逐项接，不用重新全树找入口；实施前仍须复核期间diff，不能跳过业务基线和授权。
+
+| 清单分组 | 已定位场景 | 后续处理 |
+|---|---|---|
+| A：优先候选 | 通用对话（修罗/江湖历练/抓鬼/鬼王、五倍Cloud分支及路线）、Tracker、新手Dialog/Tracker、大理寺题目/答案提示 | 按operation/任务交互接入，一在途+最新待处理；不能把只读consume结束照搬为点击成功。 |
+| B：已有机制 | 白龙马首适配；五环demand+保留结果；NPC智能点击session/候选FIFO/续帧 | 白龙马先验收；五环/NPC评估共同状态，不能叠第二队列或用最新图替换候选FIFO。 |
+| C：同步/特殊Cloud图像链 | Dialog模板/OCR/fallback/医宝宝、点击前验证、详情/提示、导航地图、召唤兽技能、香/人物状态、团归/角色、通用盒子、战斗面板Cloud补充、天庭校准与封妖符文字 | 已登记方法和供图通道；本来单请求同步的先保留，不强加等待。天庭first/fresh双帧不能压成一张。4个只有声明的NPC历史接口明确剔除在线候选。 |
+| 排除 | 五倍本地入战prepare、天庭本地选项、鬼王取消等local operation、本地框/坐标/战斗/归队事实、纯本地UI/背包/给物匹配、可靠事件 | 计算在本地的保持原位；同Service中请求Cloud识图的下游另列，不按类名一刀切。 |
+
+- **公共机制能力边界已注明：** 当前`DialogFrameMailbox`虽然不含任务名，但载荷仍绑定Dialog样本/兴趣；Tracker/NPC不是改一个开关即可通用。迁移应在帧交付/业务确认边界适配，不在每个模板或OCR函数内排队。实际框/同帧窗口几何、精确回执、停止/换链、双帧关联都是后续门；这一轮没有生产修改、编译、测试、截图、输入或部署。
+
+- **实施中用户补充：公共机制，白龙马只是首个接入方。** 公共`DialogFrameMailbox`负责同帧快照、单在途/最新待处理、完成/失败/取消生命周期，不含任务名、模板或点击判断；Observer首个适配只接WUBEI_PROBE_STORY。将来点击类必须由其真实verifier回报完成，不能把prepared slot被消费当成物理成功。既有通讯与可靠事件不重写，本次不自动切换其它任务。
+
+- **最新：公共机制已实现 / 隔离编译通过 / 未测试 / 待审核和部署后验收。** 用户明确“只改代码并隔离编译，暂不测试”，未创建/运行测试。批准的“一张在途＋一张最新待处理、无图片去重”已接入WUBEI_PROBE_STORY；其他任务、2秒配置与NPC实际点击/verifier不动。动态实际框裁剪仍是独立待办，不能声称本卡所有视觉问题已修。下方讨论及待批准字样均为历史。
+- **生产写集与接线：** Cloud新增`observation/DialogFrameMailbox.java`，公共类不含白龙马名称/模板/超时业务；同窗同run邮箱由`CloudWindowObservationInbox`持有，兴趣+ROI同请求配对。`CloudWholeTaskObserver.probeQueuedDialogAttention`为首适配：同业务兴趣的心跳不作废已领取帧，识别结果遇忙槽保留、不重算；CAS发布使用实际返回actionId，精确消费回执结束只读交互并清待处理帧；槽仍在且无回执继续等，明确被清/替换才释放只读尝试。撤防/换链仅撤自己的action，停止或run淘汰永久关闭邮箱。无结果时允许下一新序号重试同内容，不加去重。原路线OPTION分支保持原顺序/旧采样门，绝不把它的consume当点击成功。采样订阅因占槽暂停不等于业务兴趣取消，故不得因此丢在途结果。
+- **验证与运行门：** 三处源码JDK21 javac隔离编译exit=0，输出`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g175-compile-c222bd1b390c4a4fa6f0b4f91e23350e`。没有写`target/classes`，没有测试/部署/重启/截图/输入。未来授权后按`docs/rule-traceability/G175-contract.md`验证；运行观察`G175 dialog frame claimed/resolved/published/acknowledged/retired`的seq/interest/actionId：心跳推进不能使已算结果重跑，busy槽释放应交付原结果，消费后同链新图不重开。目前只有编译与静态审阅，不是并发合同或现场通过证据。
+
+- **用户纠正queue位置（2026-09-10，覆盖上一轮本地queue/Cloud demand建议，仍为方案讨论）：** 用户明确本地主动限频上传，queue位于Cloud，Cloud串行取帧识别并向本地回传动作，等待验证结果；成功清同交互队列，失败/等待超时后希望继续下一张，避免两边卡死。按此理解，不再将本轮方案表述为本地帧槽或Cloud逐张发取图请求。建议Cloud每window/run/interest保留一份不可覆盖的在途帧/结果+至多一份未处理最新帧，新上传只替换未处理帧，不建无限历史FIFO；容量与上传周期仍待最终确认。
+- **超时边界必须显式保留：** 本地明确失败且旧动作结束后，可用满足动作后时序的新帧继续；仅超时无回报不能当作失败或未执行，可能是动作已成功但ACK迟到。超时先沿已有动作身份核对状态/回执，已成功结束同链，已失败/确认取消并终结后恢复，未知则只限制该交互并走有界恢复/告警，不能直接下发第二次点击。可讨论预计算新帧，但不得把预计算结果当作第二条执行许可。队列清理、迟到回报拒绝仅限同交互，不能影响新run/其他窗。只读WUBEI_PROBE_STORY本身无物理点击，以任务消费确认结束，不新添本地同句截图验证；后续实际NPC点击才等本地verifier。仅追加文档，未实施/测试/输入。
+
+- **本地queue/Cloud pull方案讨论（2026-09-10，未实施）：** 用户倾向本地放图、Cloud按需取，并限制上传频率。建议将queue明确为每window/run/interest容量1的“未领取最新帧槽”，新采样仅替换未领取旧图；已领取/在途帧保持不可变，Cloud同交互最多一个在途识别或待执行结果，不积压历史图。Cloud通过现有observation回包下发一次性demand，本地沿现有HTTPS回传，无须开放本地端口或新增反向连接。现存Inbox.requestPreparedFrame、acceptedPreparedFrame与Runner deliveredPreparedFrameIdentity可作复用基础，但当前preparedFrameCapture.capture(demand)仍为capture路径，接入Runner同cycle有效图/实际框需单独改适配，不能声称现有API直接满足零重复截图。必须核对单prepared-demand槽与既有用途是否冲突，不擅自新增共享队列。
+- **限频与范围：** 首次需求立即供图，后续需新图时受最小上传间隔约束，处理/执行未完成不额外请求；本地沿既有观察节奏只保留最新可用帧，未被领取不反复做PNG编码，缺符合请求时序/身份的帧则等后续cycle而不取陈旧图。网络收图ACK与业务完成回执分开，故障/取消沿既有生命周期恢复。本次讨论仅五倍出现STORY交互，复用协议可缩小改动但仍含Client供图/Cloud请求消费/有效性门三处接线，不能承诺只改常量或十几行即完成；先完成方案再按批准实施，未改生产或运行测试。
+
+- **历史追溯与方案暂缓（2026-09-10）：** 用户要求实施前查为何采用周期上传，并比较慢发与按需。此次不实施。git blame/log -S确认Cloud `xiuluo-dialog=2000ms`、`exactDialogObservationSample`及`sameCurrentDialogSample`从7月28日“修罗五环云端V1版本”提交即存在；相关两文件当前与9月8日origin/dev无diff。不能归因于本次新改动，也未找到2秒优于3/5秒的量化选型依据。
+- **原设计意图有明确记录：** `docs/superpowers/plans/reports/2026-07-21-turn-card-TURN-40G.md` §§3.1/4.3要求动态小ROI、节流、单analysis在途、普通快照latest-wins不无限排队、关键边沿ACK前保留；Stage4身份合同防旧候选覆盖新槽。7月23日DIALOG-DEMAND修订已取消全程静态订阅，改为本地kanda优先/显式dialog需要或停稳兜底才开启ROI，结束撤订阅。其“按需”是订阅级，不等于每张图片按处理回执领取；白龙马当前沿用激活期间周期补图。记录足以解释独立观察、防旧图/串代和负载控制目的，但不能推断当时作者明确评估过本次STORY只读结果被无图心跳废弃的竞态。
+- **必须保留的历史教训：** G099（8月17日慢input/HTTPS阻塞本地观察）与G103（8月25日回包绕cadence触发约5.7次/秒截图）要求本地观察、输入和transport解耦，限制图片上传不得停止战斗/停止/关键边沿。G094（8月16日五环同一1,071,228字节图重复663次）已实现prepared-frame按demand/generation只交付一次、Cloud缓存等槽，将收图ACK与业务发布/消费分开；Client WindowObservationRunner:541–547现存该接线，8月17日提交进入Git。此次按需方案优先核对复用该闭环的适用性，不新造一套队列/握手，不把业务未完成当作同图需要重发。
+- **保守策略比较（替代此前直接定3秒的倾向）：** 只把2秒拉长可降带宽/编码开销，改动小但加长首次miss后的发现时间；最新interest由无图心跳推进，故慢发不能修sameCurrentDialogSample拒收，甚至可能减少同批配对机会。建议分步且范围仅WUBEI_PROBE_STORY：先补发布拒绝诊断、明确同帧/同交互与“永远最新”的差别，修确认交付门；再决定复用一次性demand逐张补图，或短期保留低频周期补图作降负载措施。动态实际框接线独立核验，不改成熟检测器。3秒仍只是前轮提议，非用户已批准参数。按需若实施，收图ACK负责停止重传，处理/执行回执负责结束或允许下一张，超时/断线/换代仍按既有安全恢复；不能等一个可能丢失的回执永远停住。历史核查已完成，无生产代码/编译/测试/截图/输入。
+
+- **上传频率与背压追问（2026-09-10，方案待批准）：** CloudWholeTaskObserver:132/4633下发`xiuluo-dialog`的`samplePeriodMs=2000`，Client WindowObservationSampler:1309/1375/4077按interest独立isDue/markSampled执行，并非每个本地观察心跳都上传图片。现场Client日志1275–1282为12:13:41.414、46.472、47.261、49.340、51.591、53.842、55.884、58.160，共8张约2.10MB；多数间隔2.0–2.3秒，也有0.789秒例外，本轮未定位例外原因，不把配置值说成所有实际发送的硬下限。WindowObservationRunner:940的transportCycleRunning限制单窗一个HTTP上传在途，但HTTP完成不是业务识别/执行完成；Inbox:235按ROI key只保留latestRois，不是保存所有历史图的无限FIFO，不能无证声称现场已堆积大量帧。
+- **收敛建议，替代上文泛称“后续帧有界排队”：** 同window/run/interest只允许一份在途识别/待执行结果，业务回执前本地暂停该interest图片上传，Cloud不排历史帧；Runner本地继续战斗/停止/状态观察，只复用其最新可用帧，不停全局心跳。首次需要图立即发；明确未匹配/需要新图后才再发，可建议失败轮最小上传间隔3秒（这是待用户确认的新参数，当前仍2秒），云端耗时长时按回执等待，不每3秒追加图片。成功/取消精确结束该交互；超时走请求ID状态核对/有界恢复，不能把超时认作成功或并发复制请求。点击后验证的新帧属于同动作验证步骤，不受识别忙门永久阻断。
+- **采样记录比较的具体边界：** 保留创建请求时bounds/pixels来自同帧的检查、请求与响应ID对应、window/run/interest/attempt/round及撤防/换链有效性；取消结果交付时“旧完整采样record必须等于最新record”的要求，普通新seq/时间戳不废弃正在处理的正确结果。不是删除所有关联/时效安全门。当前仅源码与既有日志核查、追加本卡/ACTIVE记录，无生产修改、测试、重启或输入。
+
+- **新版代码核查与推荐设计（用户要求讨论如何修，尚未实施）：** 本地DialogFramePresenceMechanics.analyze已返回ROI相对实际四边；UnknownPhasePresenceLocalMechanics用Runner共享cycle frame产presence/bounds/同帧PNG，WindowObservationSampler 1540+同批发布；CloudWindowObservationInbox.latestUnknownPhaseDialogSnapshot在单窗锁内装配，同帧像素/框已由DalisiQuizTask消费（666行使用frameBounds）。但这些数据仍带固定最大ROI像素，并非天然已裁成tight dialog；白龙马probeAttention仍走xiuluo-dialog固定ROI和云端classify，不能只改一个常量或把大理寺读取函数接上就声称闭环完成。真实框识别算法无需重写，修的是同帧边界接线/裁图和交付所有权。
+- **建议交互：** 同run/window/interest/attempt内最多一个正在处理/待回执的结果，后续帧有界排队，不能替换在途证据；读图时固定同帧bounds+pixels，云端识别后发布并等待消费/执行回执。只读STORY“白龙马已出现”交当前任务消费确认后撤销该interest并清其排队帧，无须再给本地截图确认同一句话；真实点击动作走既有本地input+verifier，成功ACK后终止同session生产、清队列并拒绝迟到结果，失败后只处理动作后仍有效的新画面。禁止清整个窗口其他兴趣/新任务的数据，停止/撤防/换代仍保留身份门，不恢复无界逐帧积压。
+- **图片比较裁定建议：** 不再由Cloud拿连续两张大ROI作“内容必须没变”的放行条件，更不要求结果对应采样号仍为最新。需要保留的仅是点击前一次目标局部有效性校验，建议Client在既有串行输入段用Runner最新可用同窗帧的实际框/目标局部做机械核验，再原子点击；缺有效帧就不执行而请求后续采样，不拿旧帧硬点。此校验防错点，点击后的verifier证明效果，二者目的不同，不与STORY识别重复；不要再额外叠加Cloud全框前后比。当前DialogService.validatePreparedDialogActionForConsume对clickRequired=false已直接跳过fingerprint，对可点击action才抓validation局部，迁移该校验前必须保留原阈值/洗图/业务语义并获得最终方案授权。
+- **动态框与坐标：** 检测时最大ROI可仅作为找框搜索范围，业务识别/比对只使用检测出的实际框内容；从Runner已有cycle frame裁，不再独立截屏，不让Cloud重复判断框在不在。图像与边界/窗口位置/兴趣身份同一个不可变请求携带，云端返回点以明确crop-relative坐标表达，Client加框在窗口的偏移及当前绑定窗口原点后走原输入队列，防漏加/重复加偏移。无有效bounds不能冒充固定640x300实际框。注意NPC头上“任务”tooltip在dialog框外，它仍走原NPC识别区域，不能被这次动态dialog裁剪排除。
+- **验证范围说明：** 用户“可以做一个验证”伴随的是设计核查问题，本轮已完成生产者/传输/消费者源码核验，未把它扩大为启动游戏、截图或新增测试授权。后续最小验证建议覆盖相同框内容的新seq不废弃在途结果、成功ACK清同链且不串窗、旧interest回执无效、实际框裁图后点击偏移正确、tooltip在框外不丢失；若实施前需要回放，应明确范围，不能用纯状态机断言代替图片/接线证据。
+- **用户追问“究竟比较哪张图”后的核实：** 不能把sameCurrentDialogSample称为两图像素验证。该方法实际Objects.equals(expected, exactDialogObservationSample(...))，比较DialogObservationSample内interest/roi整条record，含observerSeq/capturedAtMs/interestRevision及关联身份，未调用图像相似度或fingerprint比较。即使两张图逐像素相同，新采样号/时间仍使record不相等。Prepared里虽保存局部fingerprint，但不是该发布门的比较输入，二者不能混说。
+- **图像实际范围：** Client local-stack-client.out.log:1276 12:13:46.472 seq84发送窗口相对(200,250)、640x300 ROI；Cloud console:1499 46.888分类rect=[1412,376,2052,676]，实际框在ROI内(51,95)-(585,240)，所以来源是固定对话区域（含周边），不是紧裁实际框。46.980证据图是该区域洗白后的匹配输入，不是后来重新截图拿来做一致性比对的第二张图。未找到此刻未洗原图或逐次拒绝门快照，维持因果证据边界；本轮只读源码与原日志、更新文档，无生产修改/测试/输入。
+- **后续交互方案讨论（尚非实施授权）：** 用户提出同次交互后续帧排队，云端先处理首帧，有结果交本地执行/验证，成功ACK后清掉后续队列。方向认可：正在处理的证据不能被普通新采样覆盖作废；发出动作后不再并行下发同链第二动作，验证成功结束精确session/interest并清剩余，取消生产者、拒绝迟到回报。只清当前run/window/交互，不清其他窗口或新链；队列有界，输入改变画面后不能继续执行点击前的旧图动作。这里的出现STORY是只读事实，Cloud匹配成功应交任务推进，不应为“再确认”额外抓图；后续真实NPC点击继续本地verifier闭环。
+- **现有机制核对：** NpcClickSmartQueueStore.Session.push→awaitContinuationOrTermination已在可点击候选后暂停生产；complete按session/window/run绑定调用terminate，后者terminated=true、queue.clear、notifyAll，成功后不会继续候选。它排的是候选，不是出现STORY原帧；不要宣称已有帧FIFO完整接通。缺口在前面的CloudWholeTaskObserver.probeAttention/同样本发布门，后续修复应复用闭环边界，不新建整个NPC点击系统。本轮仅更新方案文档，未改代码。
+- **状态：已定位主要等待段 / 同帧序号门为高可信原因 / 待批准修复。** 仅排查，无生产变更。角色光牛的滑子°（387545229），run remote-turn-5ca050bd-84f0-4fe7-b697-0f2e258ce613，平顶山目标(230,149)；与G174火云洞(5,0)特例不同。
+- **时间证据：** Client logs/local-stack-client.out.log:1263 12:13:39.114开始使用显形镜，:1268 40.616完成；:1275 41.414发送dialog ROI seq78，后续seq84/86/92/99/106/112/119仍持续发送。Cloud logs/cloud-brain-console.log:1502 46.988、:1516 54.166均STORY MATCHED（对应score1.000），但任务:1507/:1519仍consume absent；:1528/:1531到58.356才发布且同毫秒消费。用镜完成至许可NPC点击17.740秒，不是5秒sleep固定位满才消费。
+- **tooltip本身：** Client :1292 12:14:00.933 session打开；:1293 00.974 MEMORY miss；:1295 01.108 TOOLTIP point(520,241) score0.9995395541191101；:1301 01.455真实左键absolute(1732,365)，原执行抖动relative(520,239)。从session到tooltip结果175ms，拿到点到点击347ms；:1307 03.201 verified；Cloud :1556 04.931点进战选项完成。用镜完成到tooltip真实点击20.839秒，主要不耗在图像匹配/输入排队。
+- **源码因果与证据边界：** WindowObservationSampler.sampleCurrentDialogInterestFact每批返回interest（3085+），ROI独立节流；CloudWindowObservationInbox ingest约189行用新observerSeq替换latestDialogInterestFact，即使本批无ROI；CloudWholeTaskObserver.exactDialogObservationSample要求interest/ROI seq与capturedAt完全一致（5171+），probeAttention匹配后sameCurrentDialogSample再次比较最新整样本（2547、5231+）。普通心跳更新可使图文仍有效的只读“已出现”结论失去发布资格，产生机会性放行。与origin/dev对比该结构已存在，不是本轮角落点改动引入。现场没有sample拒绝详情日志；不能断言46/54秒两次必然都因同一分支返回false，Prepared构造/槽门也缺逐次结果日志。已确定的是MATCHED早于任务获得事实，最需要补的诊断是发布前各门的具体结果。
+- **证据图：** Client images/temp/match-evidence/white-story-template/20260910_121346_980_unknown_PRESENT_score-1.000.png（当次洗白匹配图，已展示）与images/template/dialog/wubei/wubei_probe_story_koukou.png（模板，生产0.85）；images/temp/npc-arrival-frames/arrival-08-hwnd-161A00FA-frame1307602559317800-gen1307602559317800.png（12:14会话实际原帧）中任务tooltip清楚。46秒那次未定位未洗整窗，只能提供洗白图，不伪称后帧就是首次命中原帧。未新增截图或回放。
+- **修复建议与负责人：** Codex；预计CloudWindowObservationInbox/CloudWholeTaskObserver，按最终接缝尽量缩为一处。保留输入图与当次interest绑定，后续心跳推进不等同业务兴趣失效；只针对WUBEI_PROBE_STORY的已匹配只读结论按同run/window/interest/attempt/round判合法交付，真实撤防/换链仍拒收。不得全局删除新鲜度门或更改其它任务点击许可，不增加截图/重复匹配。先补发布拒绝原因以确认具体门；用户批准后才实施，未派代码修复worker。
+- **相关在途卡核查：** G168本次接任务后13.895直接绿链，无出村pre-pass；G169本段非归队续接，不能验收；G170 14:04.935已切WAIT_BATTLE_FINISH、09.328记录combat entry handoff；G171本段进战选项后未再发绿链；G172/G173本次tooltip成功即结束，没有进入黄字/紫名，不能据此验收其分支；G174地图/坐标不适用，不能拿本次证明优先点生效。其它看板未结历史卡在此单角色单次白龙马时间窗无可适用证据，不宣称全板通过。
+
+## G174 白龙马角落场景：程序是否拿到目标坐标（2026-09-10 11:13）
+
+- **实时截图与后续办法讨论（用户授权截图，未授权输入/实现）：** 经Windows computer-use返回窗口绑定到光牛的滑子°（387545229），已将当前1036×783外窗截图直接展示到聊天。此次可见黄色“白龙马”与紫色人物名在画面上部中央重叠，模型也拥挤；单帧不能保证某个身体像素属于目标或鼠标命中目标，不报“必中的点”，不拿人工读图冒充生产OCR通过。工具外窗原点(1353,47)含标题/标签栏，不能把此截图相对点直接写入1024×768游戏客户区记忆。现seed只登记火云洞目标(5,0)→客户区相对(102,722)，未确认本场景地图/目标坐标，不能盲套旧点。**建议待用户批准后先让人物朝下方空地小步让开、等待停稳并重新观察，再沿原黄字/目标验证链尝试；只有现场验证出的同场景固定点才另存记忆。** 这不是已验证避障方案，可能受碰撞/相机变化影响；未执行移步/点击/屏蔽名字，也未改生产或记忆。本次只截实时图，没有运行算法回放或测试；图证在本轮聊天的`screenshot-0`，未另落盘为仓内测试语料。
+- **最新优先级裁定：** 用户指出必须直接先尝试指定点、在普通历史记忆和洗黄字之前。原“普通历史记忆耗尽后才用角落点”不符合要求，本轮纠正：同一MEMORY入口先lookupCorner、命中即交本地左键并等原verifier，失败后才lookupNext及tooltip/黄字；成功依原producer barrier结束后续计算。其它条件、单run一次、点(102,722)、白龙马硬限制保持。无新增测试授权，不以源码次序替代运行证据。
+- **本轮交付证据：** SmartClickRecognizer 已调换查询顺序，NpcClickMemoryStore 同步说明，两文件隔离 JDK21 javac exit=0，输出 `%TEMP%/dhxy-g174-priority-0a3365ef9ca04336b740cce90bb7196b`。无测试、未覆盖target/classes、未部署/重启/输入；当前运行实例未加载本轮优先级修改。
+- **最新首点交付（覆盖下方停用草稿状态）：** 用户明确“全屏的！我让你换算点击的相对坐标”。依当次窗口原点(1212,126)，桌面(1314,848)减得相对(102,722)，已填写原 seed 并开启 enabled/calibrationConfirmed；只作用于火云洞目标(5,0)白龙马，人物距离<=30。来源含桌面原值、所用窗口原点和11:13:31.613日志行875，不伪称独立实点验证。Cloud canonical当前未检出该ID，未写运行库；下次正常部署加载补入，当前运行进程并未热生效。本轮无Java变化、无测试/重启/输入。配置和文档已复核；不宣称运行验收通过。
+- **实施中追加裁定：** 用户明确“就是需要写死是白龙马！”。本次生产入口硬限制白龙马，多个点只按不同地图/目标坐标区分；其他 NPC 即使出现在配置中也不得执行，未来扩展需单独批准。
+- **实现交付：** Cloud `NpcClickMemoryStore.lookupCorner` 与 `SmartClickRecognizer` 两层限定白龙马，复用已有 MEMORY 类型/原子左键/verifier；普通记忆先行，角落 exact 优先，歧义不选。每 run/窗/规则一次，未验证也不会复用；不将角落点放入 Ctrl 候选，强验证仅记角落 verification、不污染普通成功栈。既有 `retireWorkingMemory` 回收尝试。原 seeds JSON 增加 `huoyundong-bailongma-5-0` 停用草稿，canonical 初始化仅补缺失 ID，已有记录不覆盖。
+- **接线与限制：** `buildPreparedRecognitionContext` 生产 map/target/playerMapName/targetEvidence/尺寸，arrival queue 生产本次 session/run；真实上传帧尺寸参与匹配；`HttpsTurnClient.reportNpcArrivalFrameOutcome` 原样传 taskRunId/session/decision/候选点，`enrichArrivalOutcome` 沿原规则补强度。仍保留客户端小幅抖动，回报点是发出的候选而非测得抖动点，验证记录明确标 `issuedCandidate`。本轮不改任务/客户端/抖动/超时，也不提供 Alt+A/defer 链的角落新路径。
+- **验证与待办：** 两处 Java 隔离 javac exit=0，输出 `%TEMP%/dhxy-g174-cloud-2e426506b7e84989ba7bd6d14842b236`；业务规则元数据门通过。无测试授权，未创建/运行任何测试，未做点击正确性或运行验收，不称 REVIEW_PASSED。源代码与草稿已保存，但未写运行中 target/classes/数据库、未重启/输入，当前进程不生效。启用白龙马首点前仍须确认测点窗口基点或提供明确窗口相对点；不得将条件换算(102,722)当已校准值。后续点在 Cloud 停止时新增/修改 canonical 对应规则，不能通过修改已存在 ID 的 seed 覆盖运行数据。
+- **最新：用户批准多点记忆，实施中。** 覆盖下方历史“仅讨论/未授权”状态。按 BR-NPC-002 扩展既有 Cloud 记忆库，不另建 DB、不修改普通 exact 栈；地图/NPC/目标坐标独立记录，角落内部 exact 优先、重叠歧义不点击；人物同地图距离<=30，不要求精确站位。首条桌面坐标只存停用草稿，窗口基点尚未确认。实现 owner Codex，文件 NpcClickMemoryStore/SmartClickRecognizer/原 seeds JSON；G172/G173 dirty 保留。无测试授权，只隔离编译，不写运行库、target/classes、不重启/输入。连通性规格与trace见 docs/rule-traceability/G174*，未运行不能标记评审通过。
+
+- **用户最新裁定（覆盖下方固定人物站位建议）：** 用户先说明“不需要知道人物站位”，随后明确允许人物距离目标地图坐标30以内，并在澄清“是30以内而非以外”后答“对”。因此该角落特例的站位门为人物到目标 `(5,0)` 的地图距离 `<=30`，不再要求人物精确站在 `(5,0)` 或 `(8,2)`；不得把它解释成目标坐标±30或屏幕像素距离30。目标范围±2未因此获得验证或扩展。普通NPC记忆规则不随之改变。本条为方案裁定记录，未写正式记忆或生产；测点时窗口基点仍待确认，历史相对点 `(102,722)` 继续是条件式换算。
+- **用户提供点击点（待绑定场景，不写正式记忆）：** 用户给出白龙马左键点 `(1314,848)`，询问如何保存。此前11:13:31日志中的1024×768窗口基点为桌面 `(1212,126)`，若测点时窗口未移动，则换算为窗口相对 `(102,722)`；不能在未确认测点时窗口位置的情况下直接采信该换算。该次人物曾从 `(5,0)` 移至 `(8,2)`，两者对应不同现有记忆键，测点时人物位置也需确认。当前仅保存用户给定原始值和条件式换算供讨论，未写 `data/vision_memory.json`、未伪造 VERIFIED/成功次数、未点击。取得测点时准确场景后，方可确定正式相对点和键。
+- **后续方案讨论（未授权实施）：** 用户提出火云洞、白龙马目标 `(5,0)` 附近 ±2 匹配固定窗口相对点击点。核对 Cloud `NpcClickMemoryStore` 已持久化到 `data/vision_memory.json`，现有 key 含地图/NPC/目标坐标/人物坐标，`SmartClickRecognizer.clickNextLearnedMemory` 已消费；无需先引入第二数据库。建议以既有记忆扩展“经验证角落样本”：记录目标范围、人物站位条件、客户区尺寸及窗口相对点、适用输入模式与成功验证证据；不保存桌面绝对点。首样本先限定 `(5,0)` 与验证过的站位，±2 只是候选推广范围，须证实该范围内目标屏幕位置仍落在可点区域再启用。仅在本轮已确认白龙马出现且场景条件吻合时尝试；一次点击后等既有入战选项/Runner战斗事实，未验证不能记成功或连续盲点。当前缺少“经验证成功的相对点击点”，不可从失败帧猜一个写入正式记忆。此次只讨论，不创建数据库/修改生产/触发输入。
+- **状态：坐标链已核实 / 仅调查，未实施记忆方案。** 负责人 Codex。角色光牛的滑子°/387545229，run `remote-turn-1cd47871-631d-48a1-9ee0-37d3b1a049a6`。用户要求先确认坐标，不授权改识别或建立新 map。
+- **数据来源与消费：** Client 工作树 `logs/cloud-brain-console.log:528`，11:12:38.574 `destination hint parsed`，原 OCR 文本 `正在自动寻路前往火云同（5，0）`，地图规范化为火云洞，coord=(5,0)；`:529` 11:12:38.576 `destination hint stored async`。`:587` 11:13:01.080 `try smart combat target click ... target=白龙马 ... requestMap=火云洞(5,0)`；`:875` 11:13:31.613 请求 `target=(5,0) player=(8,2)`，证明目标与人物位置分离。
+- **源码与边界：** Cloud `WubeiTask.parseTrackerDestinationHint` 从提示提取地图与数字；`trackerCombatTargetClickRequest` 把 hint 的地图/x/y填入请求，缺失才用空地图/-1。因此本次 `(5,0)` 是真实解析并消费的寻路目标，不是缺省值，也不是从 NPC 名字像素算出的世界坐标。这能作为该探测点的记忆索引依据，但不等于已独立验证白龙马精确出生位置。
+- **原帧证据：** `images/debug/npc-arrival-click/20260910_111314_522_hwnd-161A00FA_白龙马/frame.png` 已人工查看；同目录 metadata 明确 `npc=白龙马 mapName=火云洞 target=5,0 playerMap=5,0`。该帧显示人物站位与白龙马出现的 STORY，不是11:12:36的提示 OCR 输入，不拿它伪称坐标 OCR 回放通过。提示捕获源码使用内存图，本轮未定位同次提示原图。
+- **讨论结论：** 若后续用户批准建记忆，可用地图+目标名+寻路目标坐标索引角落场景；若保存屏幕点击点，还须限定人物站位/窗口几何，不能仅凭地图坐标跨视角裸复用。本轮没有确认全部失败根因、没有重跑匹配或引入新动作；未创建/运行测试，未重启或输入。
+
+## G173 全任务禁用通过紫色玩家名产生点击
+
+- **状态：实现完成 / 隔离编译通过 / 待双端部署及运行验收。** 09-10原话：“所有的通过紫色名字的点击的方法，现在全都不用了，全都禁了……所有的任务”。这明确替代BR-NPC-001旧紫名步骤，无须再询问保留还是禁用。范围含普通FIFO、单次识别、旧直接战斗及退出Alt+A紫名定位，不只五倍。
+- **基线/隔离：** 目标Client DHXY-cr271和Cloud dhxy-cloud-brain，两个dev最新推送已ls-remote核对（同G172基线）；保留所有G172黄字/ROI及其他任务dirty。生产预计SmartClickRecognizer、NpcClickService、双仓NpcClickSmartQueueMessage、Client NpcArrivalFrameFifoLocalExecutor。隔离javac，不写target/classes，不重启、不输入。
+- **实现边界：** 云端不产紫名候选、不向Ctrl注入紫名点；Client按消息类型及已知策略别名跳过迟到紫名点；预备plan消费同样拒绝。直接战斗退出用已存在的中心右击路径。保留兼容枚举/历史参考与永久成功记忆，不清用户数据；只作联合ROI证据而不生成点击的紫名检查不属于禁用点击。
+- **源码/编译证据：** 五处生产文件均已隔离javac通过（Cloud三处、Client两处）；双仓消息DTO SHA256=`CC466E063272A5305F6A635A0566B3FE9FFE7A3F89A46F6C11A3CCC958996D56`。紫名生成方法已无生产调用，保留的私有旧入口仅返回no-action/null/false，不能计算或执行点击；准备方案与客户端消息消费另有执行前拒绝门。G172黄字/联合ROI与其他在途改动保留。
+- **验证门：** 无本轮测试授权，不新增/运行测试；记录待授权连通性规格于docs/rule-traceability/G173-contract.md，不把该规格当可执行合同。运行验收须看到记忆miss/黄名续帧不再先等待PURPLE_FORMULA，旧紫名方案零输入且其他策略可继续。未写target/classes、未重启/输入；当前运行实例不自动生效，须双端部署重启。不能把编译通过当作实跑通过。
+
+## G172 五倍 01:04 黄名被固定区域洗掉，记忆耗尽后退化为偏位 Ctrl 探测
+
+- **11:09启动延迟复核（用户问原因；仅调查，不含实施授权）：** 实际物理点击是11:09:01.315，不是11:09:20；Client `logs/local-stack-client.out.log:357`实际CLICK_LEFT absolute1777,286；`:351`黄名方案565,161，`:352`jitter565,160，`:362`03.614 VERIFIED。Cloud启动11:07:27.678，至点击93.637s，其中启动/归队/检查回城道具至08:10.840约43s，NPC FIFO本身至点击50.475s（到验证52.774s）。地图内导航只有332ms，输入提交到点击约427ms，不是寻路/鼠标排队一分钟。
+- **记忆不是消失：** 首查Client`:320`11:08:10.919 `MEMORY ... cloud-brain-npc-memory-miss`，Cloud`:...`10.883刚建立新run工作副本，未见此前pop。metadata确认map宝象国、NPC降魔侍卫、目标86,87、人物83,75；昨夜成功点属于人物80,75，两者按已批准exact场景合同不可混用。Cloud11:09:03.619已经写入`npc-click|宝象国|降魔侍卫|86,87|player:83,75`点565,161、`appended=true stackSize=1`。不要把`learnedCandidates=0`的ROI日志当作点击点查询证据；此结论有独立MEMORY miss消息。
+- **P2续帧被昂贵紫名分支拖延：** Client`:324`11:08:11.048已收到YELLOW_TARGET_RAW/REQUEST_NEW_SCREENSHOT；`:330`11:08:53.962才收到PURPLE_FORMULA无玩家锚，`:335`53.969 END后才cleanup/Alt+4并取replacement，`:346`56.431第二会话，`:351`09:00.886已算出黄字点。42.914s明确处于紫名分支窗口，不是黄字识别耗时。`SmartClickRecognizer.produceQueueMessages`在CONTINUATION后仍调用`clickPlayerAnchorFormula`；后者整窗紫字OCR失败再逐候选黑白crop/raw crop，`NpcArrivalFrameFifoLocalExecutor.consumeOne`继续等END而非立即换帧。现有origin/dev也有此顺序，上一轮黄字/ROI修复未动这段。OCR子请求未逐条记耗时，不能细分42.9s中推理与全局OCR锁等待比例或杜撰确切调用次数。
+- **真实图片：** 首帧`images/temp/npc-arrival-frames/arrival-00-hwnd-161A00FA-frame1303653837941900-gen1303653837941900.png`，11:08:10，NPC黄名清楚、本人脚下名字密集重叠；replacement `arrival-01-hwnd-161A00FA-frame1303700275998900-gen1303700275998900-replacement.png`，11:08:56，位置83,75未变。已目视并在聊天展示。不宣称仅凭重叠图能证明每条OCR失败具体文字。首帧完整六消息存`images/debug/npc-arrival-click/20260910_110853_963_hwnd-161A00FA_降魔侍卫/metadata.txt`。
+- **待批准建议与负责人：** Codex建议只针对首帧黄名明确请求名字层续帧的case，优先执行既有一次Alt+4/replacement并先完成黄名，再决定是否需要紫名/CTRL；记忆exact键、强名字门、点击公式保持。该方案会调整BR-NPC-001既有FIFO顺序/续帧边界，必须取得用户针对本建议的批准后再更新规则与trace并实施。预期写集Cloud SmartClickRecognizer、Client NpcArrivalFrameFifoLocalExecutor（按最终设计再缩）；验证同类首帧记忆miss、黄名需续帧时不先耗43s紫名，成功候选停止后续策略，失败仍保留批准的fallback。当前不新增测试、不编译、不派修复worker。
+- **本轮相关在途卡检查范围：** G168接任务无pre-pass有09:06.521日志支持；G169启动归队回HOT_START_DETECT、到NPC后才ACCEPT_TASK均已见。G170/G171本段未进战，不能验收战斗修复。G172黄字实际点击验证通过、ROI无本人锚本轮未学习不算失败；新增延迟尚未修复。其余历史卡不在本段窗口可验场景，不以此报告整个看板通过。
+
+- **最终实施/回放结果（以此覆盖下方历史阻断记录）：** 2026-09-10 本轮已修复，隔离生产编译通过，真实RapidOCR回放5/5，复跑5/5，无跳过。尚未部署或运行验收，不自行标记终审通过。正式FIFO在01:03:51原帧输出`matchedText=降魔侍卫; candidateBox=596,194,66,22; click=629,155`；两个不同站位95,83与78,82分别输出名字框(296,354,66,22)/(636,334,66,22)、点击(329,315)/(669,295)。这些框和点由生产算法产生，测试中预期范围只作断言、不传入识别器。
+- **学习连通性：** 真构造DecisionEngine及其FIFO/store，识别→同候选回执→canonical写入→下一次实际使用窄ROI→重载恢复全部通过。单独采用同窗本人紫名可见的`joint-87-88.png`（一品侍卫；现有3字识别规则读到“品侍卫”），学得xywh(232,115,768,523)，前后落点同为(732,305)。此测试NPC地图坐标87,88只是明确标注的逻辑测试键，不作为历史一品侍卫世界坐标结论；验证成功回执是测试模拟，不冒充游戏实点。事故原帧本人名字被Story遮住，黄名仍通过、但不学习联合ROI。
+- **安全/负例覆盖：** 原帧抹去完整名字和仅保留“侍卫”的受控负例均无黄字点击；识别未验证、失败、defer未确认不学习；defer最终确认才写；旧run/错窗口/错decision/错点击/伪造客户端ROI均不能提供学习证据；换人物坐标/NPC/目标坐标不复用旧框。误读为必须全名的一品测试已更正为既有“品侍卫”实测值，不改其生产门；无断言的探索代码从合同移除。
+- **复现与证据：** Cloud根`./scripts/g172-replay.ps1`，最新scratch=`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g172-a9e4f4d173ec49669baa97f246789e7f`；报告`reports/TEST-junit-jupiter.xml`；输出`D:\mavenProject\dhxy-cloud-brain\images\test-cases\g172\run-20260910-031322\`，包含`incident-marked.png`、两站位marked图、`cold-marked.png`/`learned-marked.png`与每次真实OCR请求图/JSON返回。上一次031134输出已逐图目视核对，事故及学习图已发聊天。五张原始fixture、合同与诊断脚本可入Git。没有写运行中target/classes、没有改真实记忆、没有重启或游戏输入；测试OCR及其子进程均清理。
+- **后续运行验收点：** 部署新Cloud编译产物后，五倍降魔侍卫在不同人物站位走黄字正确落点；正式验证通过才学习；本人名不可见不伪造小ROI；现有通用mask、强名字门、点击公式及其他NPC识别策略保留。旧运行进程未获得本轮代码。
+
+- **本轮继续授权与实测选型：** 用户在获知李靖新链/降魔旧链与筛选冲突后明确“我不知道怎么，反正要把它识别出来”，要求Agent承担识别方案并继续修复、给实际图证。按此继续本NPC识别专项，不让用户选择技术阈值。离线对照结果：直接换李靖颜色仍rank15且shadow使字形粘连；单做重叠分块仍未命中，两者均不投产。复用李靖颜色范围且本NPC不做shadow扩展后，整张masked图真实RapidOCR输出唯一降魔侍卫score0.99498/box(595,193,68,24)，同mask局部4倍复核score0.98896；证据目录`../dhxy-cloud-brain/images/test-cases/g172/run-20260910-025502/`。
+- **选定实施边界：** 只对降魔侍卫采用上述无固定框的细笔画mask；用完整masked二值图的OCR文本框生成候选，再按李靖既有4倍打包方式精读，最终仍走本NPC旧强名字校验/点击中心上移50px公式。取消该NPC对脏背景形状score/top12的依赖，不扩大其它NPC候选门；精读至多12个文本框，命中立即停。通用UI mask、其它NPC颜色/识别、FIFO、真实点击验证保持。原“颜色完全不变”在本NPC此识别专项内被本轮继续授权替代。生产实施后必须正式FIFO真实OCR、无目标负例和ROI连通性回放，不以当前诊断打印算通过。
+
+- **用户追问“为什么李靖可以”后的只读对照：** 找到2026-08-08 G046（黄字NPC逐候选黑白OCR修复）明确的范围排除：李靖/超级巫医等改为从洗净mask逐候选紧凑放大OCR，但五倍降魔侍卫当时留待专项，显式保留原彩色composite、强语义门和score排序。当前及origin/dev的`SmartClickRecognizer.collectLegacyYellowCandidates`仍如此：`strictYellowTargetMinCommon`仅降魔侍卫返回3，走`yellowCandidateOcrImage`整窗白底贴彩色候选；李靖走`writePackedLineMask`逐候选4倍黑白图。不得再把两者描述为同一套识别已统一。
+- **洗图层也不同，不只OCR门更严格：** `ImageAlgorithms.npcYellowTargetProfile`给李靖分配`BAILONGMA`（H48..66、abs(r-g)<=20、r/g>b+55）；降魔侍卫为`JIANGMO_GUARD`（H35..80、abs(r-g)<=45、r/g>b+20），后者允许更多近黄背景；旧固定二框曾把这些背景一并挡住。去二框后的事故回放`yellow-mask.png`可见大量地面/树木残留，目标候选因合并及排名被淘汰。不能声称top12本身只针对五倍——该上限两者共用；也不能把本次候选前漏失归因于后面的3字语义门。
+- **结论与边界：** 李靖曾有同类“候选在、正式OCR漏掉”的问题，G046原卡记录当时单候选李靖score0.98524、逐候选修复后成功；这些是历史记录，不是本轮重跑。原fixture`src/test/resources/testcases/g046/lijing-20260808-211347.png`仍在，原标记输出已不在所记路径，不伪称看过。当前能确定为何路径不同、此次降魔侍卫在哪层失败，但不能据此保证换成李靖profile立即成功。后续建议先按李靖现有链作降魔侍卫离线对照、保留降魔侍卫名字验证与点击公式，再用结果决定去噪/候选修法，不放宽top12或名字门来掩盖脏mask。本轮未改生产、未新跑测试/输入，原阻断状态不变。
+
+- **真实回放未通过 / 扩大候选筛选改动前等待用户决定（本轮最新）：** 两处原批准修改已写入工作树，但仅完成隔离类型检查，禁止当作可发布修复。用01:03:51原始replacement帧、正式FIFO及真实RapidOCR HTTP服务回放，两个测试均在黄名候选缺失处失败（0/2）；ROI持久化/再消费断言尚未到达，不能声称链路验证通过。没有修改运行中target/classes、真实记忆库，没有重启或游戏输入；测试OCR及其两个子进程已关闭。
+- **新增可执行证据：** 去掉固定二框后，颜色/连通域候选仍混入地面背景。包含目视名字中心的实际算法候选有两条：xywh(486,175,200,34)，score=118、排序22；xywh(551,197,112,33)，score=-24、排序53。正式规则只取score>=5的前12条，故两框均没有进入黄字OCR。真OCR入图`../dhxy-cloud-brain/images/test-cases/g172/output/01-npc-yellow-target-candidates_____-input.png`确实不含该目标；返回的文字是心领神/殿前献艺中/只暗雷怪/聊天内容，没有降魔侍卫。不得把“去除固定框”宣称为事故已修复。诊断标图`failed-candidate-marked.png`展示算法计算出的两框，不是最终识别框或点击坐标。
+- **规则冲突与选择：** 现卡冻结颜色、语义、候选顺序及点击公式；要让上述候选可靠进入识别还需处理候选提取/背景粘连与截断规则。保留原筛选则此次冷启动仍失败；继续修改动态候选提取/去噪（建议方向，不直接把score门降低或取消top12）属于新增业务行为，需要用户确认后再实施和真实回放。追踪状态`BLOCKED_USER_DECISION`。原ROI测试还误要求Story遮住紫名的事故帧必须产出联合证据，后续须拆为“事故黄名识别”和“本人紫名可见原帧的联合学习”，不能伪造紫名或学习ACK当作游戏验证。
+- **复现：** Cloud根执行`./scripts/g172-replay.ps1`；隔离scratch=`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g172-fdfe0d8bb5d9443a9b04e3cb16aed3f8`，生产javac通过、JUnit0/2。`G172MaskProbe`（只读原图、输出算法候选图的诊断程序）隔离编译后调用`...G172MaskProbe src/test/resources/images/test-cases/g172/incident.png images/test-cases/g172/output/yellow-mask.png`；候选详情保存在`all-scored-candidates.txt`及`rejected-name-candidate.txt`。图已目视核对。fixture SHA256=`C3C5B7CD6576753ABD13D9546850135B7004DB2F5162617D080615C6961E63A5`。
+
+- **本轮状态：用户已批准修复及识别/ROI读写测试，实施中。** 取消固定样本二框但保留通用UI mask/颜色/语义/点击公式；学习ROI由Cloud当前canonical内存直接读取与同一writer持久化，按地图/NPC/目标坐标/人物坐标/尺寸隔离，不另起本地库或点击前RTT。用同一张原帧的黄字+玩家紫名联合证据学习，客户端真实验证后才持久化；候选未验证/取消不得写入。测试从正式FIFO读取、候选回执、写库到下一次识别与换站位miss，输出实际框图，绝不拿手画框冒充OCR结果。历史调查记录中的“未获授权”现已被本授权取代；其它业务不变。
+
+- **mask仍在、数据缺口的精确范围（用户追问）：** `SmartClickRecognizer.DEFAULT_OCR_MASKS`与旧`OcrWindowScanService.DEFAULT_MASKS`相同：xywh(0,0,258,200)/(0,0,1024,54)/(768,58,252,102)/(4,735,702,33)/(710,700,314,68)。1024x768全窗ROI先经copyWithDefaultMasks，再进黄字profile，故“全窗截图”不等于无遮罩全图OCR；上轮只画绿色边界说明不完整，已补`images/debug/g172-roi-explanation/existing-ui-mask.png`（只画现有遮罩几何，不运行识别/不伪称历史洗图）。五倍固定两框是此后额外限制，别与通用mask混为一谈。
+- **数据读取结果及学习链断档：** 当前canonical文件物理最后写入09-10 01:03:21；`roiPolicies`全库1条（妖王幻影），降魔侍卫0条，而其clickPolicies有66条。根updatedAt仍为旧日期，不能用它断言整个文件已过时。保护基线旧库同站位两条旧ROI仍在，但没有认可的v2。新普通NPC `clickNpcSmart→runSingleFrameNpcClickPlan`不经过旧pipeline的`recordNpcTargetOcrObservation`，canonical NpcClickMemoryStore也未生成联合ROI，仅保持已有ROI容器并学习clickPolicies。因此只接读取不会自动续上ROI学习；上一轮“成功后再学习”应理解为需恢复的旧合同而非当前现成能力。需补齐producer/写入+读取/传递+下游mask三环，但未获实施授权。旧ROI何时未迁入此canonical文件尚无完整历史，不声称数据已全删。
+
+- **用户要求“接回来会是什么ROI，框出来”的数据核算与交付：** 当前Cloud canonical roiPolicies仅有一条无关妖王幻影策略，没有宝象国/降魔侍卫/86,87/player:80,75的yellow-player-anchor-v2；只读保护基线config/vision_memory.json可见同站位旧yellow-name框(355,0)-(902,407)、旧yellow-player-anchor框(355,0)-(900,408)，按6月17日v2规则均不消费。故按现有数据直接接回旧推荐方法，返回全窗fallback(0,0)-(1024,768)，不是一个可恢复的有效窄框。用户授权仅此图示，`scripts/g172-roi-explanation.cjs`读取01:03:51原帧，将确定坐标写入SVG再渲染，输出`images/debug/g172-roi-explanation/restored-roi.png`和同名SVG；原图不修改。命令：bundled node执行该脚本并传bundled sharp路径。已查看输出，绿色框为整个1024x768，标题明示无有效学习ROI及反事实回接结果；不冒充事故中已执行的推荐，不把旧弃用框伪称有效。没有调用匹配/OCR、游戏输入或测试。
+
+- **学习ROI能力的去向（用户追问后独立核查）：** 该能力确实存在过，6月17日ACTIVE_WORK“NPC OCR ROI必须同时包含黄字目标和紫色玩家名”记录明确：按yellow-player-anchor-v2键查联合ROI，无命中全窗masked scan；只有同区黄字目标与当前玩家紫名共同命中才写ROI。固定NPC键含地图/NPC/目标坐标/人物坐标/1024x768。该记录恰有player:80,75、成功点约628,155以及黄名框595,198→659,217，不能再将今日站位称为完全未知的新样本。
+- **迁移决议与现存调用链缺口：** 历史CR185于7月5日明确停用本地OcrRoiMemoryService作为普通NPC生产真源，后续方案是启动后异步从云端canonical store拉只读ROI snapshot，命中map/npc/target/player/windowSize使用，miss全窗，不在点击前新增一次网络RTT。当前普通clickNpcSmart→runSingleFrameNpcClickPlan→buildPreparedRecognitionContext直接写scanRegions=(0,0,1024,768)，没有recommendNpcClickRegions调用；双仓源码未找到cloud_roi_snapshot/cloud_roi_cache/RoiSnapshot实现。Cloud OcrRoiMemoryService推荐/学习方法仍存在，旧runNpcClickPipeline及直接战斗入口仍引用，不可把存在类/注入字段误当普通NPC链已连通。NpcClickService/OcrRoiMemoryService相对origin/dev无差异，本轮未改生产。
+- **后续范围约束：** 动态ROI推荐链未接与降魔侍卫固定白名单是两个问题。即便补上正确学习ROI，下游保留固定mask仍可能删真名，不能只修一层；反之去掉固定mask能解除当前确定性删字，却不等于学习ROI已恢复。需按旧用户云端真源/启动快照/no-extra-RTT合同核对后再提具体方案，不擅自恢复本地独立学习库。当前尚无实施授权，不跑测试或输入。
+
+- **原样本站位核查（用户追问）：** 7月4日记录与CR180未列hwnd-D7D0DEA对应人物地图坐标，只有样本路径/窗口ID和屏幕框、点击点；双仓及保护基线的已知原图路径现均缺失，初始Cloud Git树未找到该原样本，故只能报告“现存已查证据未找到”，不声称历史绝无记录。不能把NPC目标(86,87)或今日人物(80,75)填作旧站位。6月17日同族记录已出现降魔侍卫中心(328,664)、(255,205)、(257,372)，证明旧验收本就有多个屏幕位置。生产`npcYellowTargetMask(raw,targetName,allowProfileRegionMasks)`按名字触发，两框没有人物地图坐标条件，也不随人物坐标平移；`NpcClickService`虽在recognition中携带playerMapX/Y，但仅传递字段不代表此mask消费它们。后续修法不得把“记录NPC固定地图坐标”当成“识别区域已绑定玩家站位”。当前仍未改代码。
+
+- **为什么当初锁这两个区域（历史追溯定案）：** `docs/ACTIVE_WORK.md` 2026-07-04“CloudBrain 降魔侍卫黄字 two-name clean wash”及本文件历史CR180（NPC黄字profile记录）原文：用户要求对当张实验图把UI/地面/人物等噪声洗干净，只留降魔侍卫和宝象国一品侍卫名字。broad颜色方案虽然OCR命中但totalPixels=10270、targetPixels=542，去噪不合格。实现采用thin颜色阈值，并直接将该样本两个名字位置写成allowed regions、清空其它区域，测试以outsidePixels<=30验收。两框不是运行时定位或游戏保证，也不能把用户对实验输出的确认解释成批准任意站位都只识别这两处。历史记录已经明确两框是“本张replay的验收边界”，新站位必须新增样本并扩展或动态选择；该局部边界却一直在通用生产profile启用。Cloud git blame追到7月10日初始提交，之后未修改两框；更早动机由7月4日工作原文提供。旧样本输入/输出在双仓所记精确路径均未找到，历史数值仅引用原记录，不声称本轮复验；未改生产、未跑测试。
+
+- **最终黄字根因补齐（2026-09-10，本轮仍只调查）：P1 固定允许区域删除真实NPC名字。** 已找到真正第二帧 `images/temp/npc-arrival-frames/arrival-07-hwnd-161A00FA-frame1267395517571600-gen1267395517571600-replacement.png`（01:03:51，identity与01:03:52.350日志一致）。其中降魔侍卫黄名目视约x600～660、y200。`NpcClickService.buildPreparedRecognitionContext`传入全窗scan；`SmartClickRecognizer.scanYellowRegion -> scanLegacyYellowTarget -> collectLegacyYellowCandidates -> buildLegacyYellowTargetMask`采用默认allowProfileRegionMasks=true；`ImageAlgorithms.npcYellowTargetMask`对降魔侍卫profile只保留两个写死矩形：`(220,355,85,33)`、`(360,218,162,30)`。颜色筛选后以及阴影扩展后都调用clearOutsideNpcYellowTargetAllowedRegions，真名处于两框之外，必在候选生成/OCR前被删掉。不是原图没有名字，也不只是OCR严格门拒绝正确文字。代码相对origin/dev干净；运行class时间00:57:30，本轮未编译改写。
+- **为什么随后鼠标偏移：** 黄名无语义证明返回noAction但仍带原始形状候选；`ctrlProbeEvidence`对没有click的结果取candidateBox中心，降级给Ctrl菜单探测。本次01:04:18.487返回(506,225)，位于第二个允许框内，远离真名；精确残留像素/原始OCR文本没有落盘，不能指认具体误读了哪个字。Client在该点及±18偏移位置holdCtrl+move+scan，只有菜单模板命中才clickLeft；本次均未命中，用户看到的是探测光标来回移动。串行18/26秒间隙细分耗时仍未知，不冒充已解决。
+- **更正前轮推断与方案优先级：** 第二帧原图已经找回（此前“尚未恢复原图”已过时）；精确洗图/OCR结果仍缺失。任务说明框处理和5秒冷却虽与修罗不同，但真NPC未被说明框遮挡，本案首先是专属固定区域删字，不能用关Story替代修区域。记忆耗尽只是暴露fallback，不优先改共享记忆。待用户批准后应去除/重新界定不适用于动态站位的降魔侍卫固定白名单，保留黄字颜色、语义验证、窗口绑定与Ctrl验证；不得以放宽OCR文字门掩盖候选根本没进来。预计写集Cloud ImageAlgorithms及相关区域调用边界；未获批准前不动生产，不运行任何测试/回放。
+
+- **2026-09-10 用户要求查历史后的证据补充：** 近期天庭确有“成功记忆再次不可用”的事故，不是用户记错任务。`logs/archive/cloud-brain-console.20260902-003138.log:2604`，9月1日19:34:27.430 李靖 exact人物(155,108)取记忆(308,274)，`remaining=0`；2613 verified=true、2620接任务executed=true、2626成功坐标stackSize=1、2629 learnStatus=promoted。`logs/archive/cloud-brain-console.20260906-203838.log:11/49`，9月6日16:48同键明确被G161距离>6加载过滤丢弃，9月7日复核记在G161/G155；这一案不是只凭pop推断失效。
+- **近期另一修复G166（NPC读写记忆键统一）：** Cloud `NpcClickMemoryStore` policyKey/key注释记录9月7日用户“只要地图/NPC/坐标，dialog这段去掉”；9月8日已推送提交确实删除verificationMode键段，兼容历史5/6段解析。8月30日→9月8日该文件git diff主要是键规整，未改lookupNext、pollLast或当前run成功回填。git log -S pollLast/workingMemories显示机制在8月26日提交已存在，未查到近几天“成功弹出机制已修复”的提交。因此目前可确认用户想起的同类症状，但不能声称同一弹栈修复发生回归；本次五倍已有第一次MEMORY命中、第二次同run耗尽，与加载误删/键不一致需分开判定。没有生产修改、编译、测试、重启或游戏输入。
+
+- **状态：已定位黄字固定区域根因 / P1 / 待批准修复。** 负责人 Codex。玩家光牛的滑子°/387545229，窗口 `hwnd-161A00FA`，run `remote-turn-637b925e-6d02-455d-becf-1fb9a4c86128:0:WUBEI`。不是异地图接任务，也不是战后卡死：01:03:10.580 generation=3 脱战，01:03:15.608 已验证回到宝象国 `(80,75)`，01:03:18.666 第3轮完成。
+- **已确认的记忆耗尽事实（撤回单独定为P1根因）：** Cloud 日志 01:03:19.884 `Popped NPC click working-memory candidate ... player:80,75 click=(628,155) remaining=0`；Client 01:03:20.227 实际点击屏幕 `(1707,337)`（基点执行时有抖动）；01:03:21.902 验证成功 `appended=false stackSize=1`。第4轮接到殿前献艺暗雷，01:03:26.553 按既有规则重接，导航仍确认同地图近点；01:03:31.701 新 NPC intent 的 MEMORY miss。
+- **源码与上一轮结论更正：** `NpcClickMemoryStore.lookupNext` 在验证之前 `pollLast()`；成功回写不补当前 `workingMemories`。但修罗同样走这一共享机制，不能用它独自解释任务差异。权威 `业务逻辑.md` 的“成功坐标永久栈与单次启动工作栈”第4/5条本就规定逐个弹出、成功结束当前 session，没有规定成功回填；上一轮把 E62 的“失败只影响副本”扩大为“只准失败时弹出”不严谨，撤回直接修共享记忆的优先处方。Cloud origin/dev `c10078142bdc769717cf8980ffcf56e2e45da8aa`，相关共享类无本地差异，永久坐标没有删除。
+- **停顿和鼠标实际行为：** 第一轮 FIFO 在 01:03:31.865 请求名字层续帧，01:03:49.584 才 END；Alt+4 后第二帧 01:03:52.350 黄名 `raw-yellow-semantic-proof-missing`，01:04:18.487 才到 Ctrl 候选 `(506,225)`。执行器围绕该窗内点做 Ctrl 悬停：屏幕 `(1585,408)`、`(1585,390)`、`(1603,408)`、`(1585,426)`、`(1567,408)`。源码只在菜单模板命中后 clickLeft；这五次探测未命中，不能把光标移动说成五次鼠标点击。01:04:21.560 用户暂停终止，未自发超时退出。
+- **候选来源与证据边界：** `SmartClickRecognizer.ctrlProbeEvidence` 会将前面识别未成立但留下的 candidateBox 中心交给 Ctrl 探测；此次候选并非已识别成功的降魔侍卫。精确第二轮黄名 OCR 文本/候选框关联原图尚未恢复，故不认定模板损坏或具体哪个字误识别，也不直接删除 Ctrl fallback。两个约18秒/26秒的串行识别间隙已证实，但未证实其细分耗时属于 OCR 服务、模板算法或排队。
+- **实拍：** `images/debug/npc-arrival-click/20260910_010349_578_hwnd-161A00FA_降魔侍卫/frame.png` 与 `metadata.txt` 是首帧会话取证（01:03:49 是归档时间，不是拍摄时间），画面显示宝象国 `(80,75)`、降魔侍卫及上一任务 STORY；不是第二帧 OCR 现场。Ctrl 现场裁图 `images/temp/match-evidence/npc-ctrl-verify/20260910_010419_478_unknown_ABSENT_score-na.png`，模板 `images/calibrate/npc_menu_clean_sample.png`，门槛0.80；落盘未记录实际数值分数（na），不虚构分数。01:03:34 observer 在 STORY 上准备了 remembered accept，但未被任务消费，本轮不能把它说成已误点选项。
+- **修罗对照（用户追问后的只读核查）：** `XiuluoTaskV2.continueAfterAcceptOptionClicked` 的 Boss 分支先 `clickDetectedStory`，关闭失败走恢复；成功后明确等5000ms，再直接进入 `ACCEPT_TASK_CLICK_NPC`，由 `clickTaskNpc -> clickNpcSmart` 重接。无专属保留点 replay。五倍 `runReadTrackerPhase` 暗雷分支不关 STORY、不设同样冷却，先 current-map reroute，再 `ROUTE_TO_MAIN_TASK -> WAIT_TEAM_RETURN -> ACCEPT_TASK -> clickNpcSmart`；本次首帧确认 STORY 仍开。当前接任务到第二次 smart 已过约8秒，不能说事故仅因没等5秒，亦不能证明 STORY 遮住 NPC（画面中 NPC 可见）。此外共享 `SmartClickRecognizer` 对降魔侍卫有专属严格黄名匹配门，灵兽村使者走普通短名规则；因此共用函数不等于识别条件相同。本轮近几份日志未定位修罗成功跳Boss原始片段，不伪称已证明稳定案例具体命中 MEMORY/TOOLTIP/黄名哪一路。
+- **修法边界：** 先按以上真实差异讨论五倍重接时序，再补精确黄名候选与延迟证据。不擅自改共用记忆、不放宽降魔侍卫防误点门；五倍采用修罗“确认关闭说明框、冷却、同点重接”的流程是候选方案，须用户明确批准且保留地图检查/归队规则。当前未授权实施。
+- **关联卡审计：** G168 本轮无接任务后出村预点击；G169 本次在宝象国近点进入 NPC 阶段，未复现异地图直点；G170 generation=3 已交接 WAIT_BATTLE_FINISH 并消费脱战、回城，但不据此关闭全部边界验收；G171 01:02:45.307 入战点击后 01:02:46.142 又点绿链，仍失败、待批准修复。其他任务卡不在本次单窗五倍时间段可验范围，未宣称全板通过。
+- **验收规格（未执行、待方案确认）：** 正常暗雷重接不进入长时间偏位探测；与修罗比较说明框处理、冷却与实际命中策略，验证关闭失败不继续。共享记忆是否需要改变未获批准，不能把成功回填写成既定验收门。本轮没有修改生产、编译、测试、重启或输入。
+
+## G171 五倍清障已点击入战选项，调用方仍重按绿链（2026-09-10 01:01）
+
+- **继续横查：不能声称其他任务全部本地入战。** 修罗主路径是本地直接匹配/点击/确认重试，但Cloud `consumePreparedXiuluoEnterBattle`仍有validated prepared点击；`retryTrackerShortcutGreenAfterCloudFallback`会调用通用清障，Cloud `taskBusinessGreenSpecs("xiuluo_v2")`及raw目录均收修罗入战模板。鬼王、抓鬼、新手历练同样在绿链恢复调用Cloud通用清障，其入战raw模板也在目录中；天庭raw业务目录亦存在。因此正常本地主路径有probeOnly/claim等协调，不代表所有清障旁路都被同一执行者约束。当前仅源码发现这些入口，未声称本次15:56修罗/鬼王也发生双点或已复现并发冲突。
+- **统一方向讨论（未授权实施全任务迁移）：** 可以提炼共用“入战执行确认重试”并让五倍接入，任务只保留各自匹配策略（raw/洗字、模板、ROI、offset）及业务阶段；同一窗口/run/入战代次只允许一个实际点击owner。Cloud仍负责路线和耗尽后的业务恢复，通用清障遇入战对话应交给同一执行入口，不能再独立点击；不能简单删目录后让仍可见的战斗对话掉进“离开”fallback。其他非入战维护/接任务不应随本讨论全部本地化。涉及改变BR-WUBEI-003及跨任务归属，实施前需具体范围批准，当前仅只读代码盘点及建议。
+
+- **方案讨论/尚未批准（本地模板盘点）：** Client `WubeiDialogCatalog.enterBattleSpecs`已有消灭它、证明实力、奎星归位三模板，与Cloud入战目录的路径、顺序、offset(-6,18,4)一致；三PNG均`git ls-files`可见且可读取。Client `prepareWubeiEnterBattleFromFrame`已在本地洗字并逐项匹配，故不是缺图/缺匹配能力；仅奎星当前事故有本地score1.000实跑证据，未声明其余两图新回放通过。修罗现行matcher用raw图，五倍模板是洗字图，不能把三图直接塞入修罗raw匹配器。建议在获批后只统一“入战点击→4秒真实战斗确认→最多合计3次新帧匹配点击→耗尽交Cloud恢复”的执行段，保留五倍当前匹配预处理/ROI/模板及任务流程；同时处理Cloud通用清障的入战点击归属，确保同一代只有一个执行者，不能仅加入本地白名单后双方抢点。小修Cloud重试仍可选但会保留双机制。用户正在比较方案，本轮无实施、无测试。
+
+- **15:56后续澄清（匹配归属与重试）：** 本次实际(1654,431)来自Cloud `DialogService.handleGreenTemplateOption`：截图取回Cloud→Cloud洗字→Cloud模板匹配→下发点击，不是Client本地看打自动点击。此前聊天展示的44.449/score1.000图却来自Client `DialogService.prepareWubeiEnterBattleFromFrame`（同样本地洗字匹配），只发布prepared候选，不自动点击；它不是此次Cloud点击的命中图，更不是最后关闭选项fallback图。两条链并行，必须分开说明；黑白洗字不能判断本地/云端。Cloud当次命中位于通用清障的任务业务优先分支，命中即return，未进入fallbackLastOption。
+- **本地重试精确横向证据：** Client `WindowObservationSampler.sampleXiuluoLocalKanda`只接XIULUO_V2 / XINSHOU_TRAINING / CATCH_GHOST / GHOST_KING + XIULUO_ENTER_BATTLE，明确不接WUBEI。它调用`WindowRuntimeContext.evaluateXiuluoLocalKandaRetry`：真实点击后4秒未入战可重新匹配并最多补点2次（合计3次），耗尽发布ENTER_BATTLE_CLICK_FAILED，Cloud消费LOCAL_ENTER_BATTLE_FAILED再决定绿链恢复。五倍本地只有prepare候选，不拥有这套点击确认重试；本次又由Cloud清障抢先点击并关interest，故不会自动进入修罗本地重试。用户疑问正确：本地匹配共性不等于执行和重试也共用。这里只读核查与文档澄清，未改生产/运行测试。
+
+- **09-10 15:56复核：P1重开，未入战后的重试接续缺口，待用户批准；下方“已实施”为上一版历史。** 本轮只调查，不改生产、不派修复、不测试/重启/输入。负责人Codex，预期修复点Cloud `WubeiTask.checkReadyPriorityBeforePhase / consumeGreenStopDialogResult / tickWaitBattleFinish`；必要时复用现有共享入战确认，不改模板/ROI/点击坐标。
+- **确定性日志链：** Client `logs/local-stack-client.out.log:19799..19806` 15:55:44.058收到 `CLICK_LEFT@1654,431`，44.224驱动actual同点，44.392输入COMPLETED。Cloud `logs/cloud-brain-console.log:23498..23540` 42.692 STOPPED_AWAY→42.695 `green-stop-inspect-1`→43.590 `green-stop-task-business-1`→44.058命中`wubei.enterBattle.kuixing`→44.393 GREEN_TEMPLATE_CLICKED→44.400 source=`green-stop-enter-battle-clicked`、WAIT_BATTLE_FINISH。44.631新prepared已发布（采样44.449、absolute1666,432），随后15:55:54/15:56:04/14/24/34每10秒醒来只返回`waiting for exact client combat edge`；41.820用户停止，约57秒未再点击。运行remote-turn-21779afb-53bd-45d3-a842-ed32321edce7、hwnd-161A00FA、round3。
+- **P1机理：** 通用清障有执行，命中业务后不走fallback是正确的。缺口在调用方点击后的失败恢复：本卡新加source guard整段跳过prepared优先消费，并关闭interest；`tickWaitBattleFinish`未进战时只等战斗事件；现存6秒重试属于`tickEnterBattle`，跳到WAIT后不可达。`waitBattleNextTrackerRetryAt`虽赋值却没有到期判定。不能把输入ACK当游戏已接受入战，也不能把“禁止当拍重复点击”扩大为“本次确认失败后永不恢复”。180000ms等待上限仍在（并有原未入战预算），用户停止前没有触发，故不得称无限死锁。
+- **横向复核：** 修罗`waitTrackerShortcutPathing`消费本地看打FAILED，转`retryTrackerShortcutGreenAfterCloudFallback`；`waitForCombatStateWake`包含LOCAL_ENTER_BATTLE_FAILED，prepared点击后仍留原等待状态。天庭`TiantingTask`有25000ms入战确认，期限内不重按，到期只解除确认门、不伪造战斗，后续恢复重新可达。不能宣称所有任务已共用同一完整状态机。
+- **图证/首次失败边界：** 点击后Client洗字匹配图 `images/temp/match-evidence/dialog-wubei-enter-battle/20260910_155544_449_hwnd-161A00FA_PRESENT_score-1.000.png`仍有奎星归位选项，客户端score1.000、阈值0.85；模板 `images/template/dialog/wubei/wubei_enter_battle_kuixing.png`。Cloud同步取图洗字证据为`images/temp/match-evidence/dialog-inmemory-match/20260910_155543_754_unknown_ABSENT_score-0.273.png`，该0.273属于接任务模板miss，红框不是入战点击框。没有找到同次未洗原图（该窗raw池最近15:53:03），无法据此判定首击为何未被游戏接受；已明确向用户说明取证缺口。
+- **待用户裁定的修复方向/验收门：** 保留点击后短暂确认与真实Runner战斗优先；确认未入战后解除仅本次点击的防重复门，恢复本窗口新鲜业务对话处理，无业务才走既有清障fallback；不能立即重按绿链、不能直接点击44.449的陈旧候选。BR-WUBEI-003当前明确等待期间不重复消费且不新增时长，本次若引入短确认/重试须用户明确批准并先同步规则。待验：首击未入战且选项仍在能重新处理；实际已入战零多余点击；不复用旧prepared；普通清障fallback保持不变。本轮未实现/未运行此验收。
+
+- **状态：已实施 / 隔离编译通过 / 未测试 / 待运行验收；负责人 Codex。** 用户“赶紧修改”批准本卡前述最小方案；生产写集仅 Cloud `WubeiTask.java`，登记 `BR-WUBEI-003`。不修改原清障函数、修罗/天庭、点击算法或 expected/unexpected 分类；无测试授权，仅隔离编译和源码检查。
+- **实施收口：** 两处清障调用均把返回值交给同一 `consumeGreenStopDialogResult`，入战点击成功即 return 战斗等待；未完成、失败、空结果或矛盾结果走 FAILED，中断走 STOPPED，无对话或普通清障完成才允许原绿字续接。入战成功时关闭旧 interest、按 exact 业务身份清 prepared、清旧寻路并关闭维护窗口；等待 source 阻止清障之后晚到的 prepared 再消费。没有设置 `waitBattleSawCombat=true`、没有伪造 expected 进战，保留未进战预算至实际 Runner 交接。新 helper 是两处共用的结果裁定边界，不改清障函数名字或新增转发包装链。
+- **编译与检查：** Cloud 单文件 javac 21 + Lombok 隔离编译 exit 0，输出 `C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g171-compile-c699243d846c4d21a1b78a0a585019e9`。源码检查两处均在后续点击之前处理并返回；规则登记门通过，未运行测试，未写运行中 `target/classes`、未重启、未触发输入。需部署新编译产物并重启 Cloud 后才能运行验收；下方待批准方向为调查时记录，现以本实施收口为准。
+- **角色与运行：** 光牛的滑子°/387545229；`remote-turn-637b925e-6d02-455d-becf-1fb9a4c86128`，五倍 round=2 火云洞。
+- **实际动作时间线：** Cloud `logs/cloud-brain-console.log:792` 01:01:26.596 发布停步 STOPPED_AWAY；`:814` 01:01:27.477 清障链调用任务业务模板；`:818` 01:01:27.729 命中 `wubei.enterBattle`，点击绝对点 `(1369,573)`。Client `logs/dhxy-console.log:1600` 01:01:27.814 物理 CLICK_LEFT；Cloud `:820` 01:01:28.097 返回 `GREEN_TEMPLATE_CLICKED / actionKey=wubei.enterBattle / clicked=true`。Cloud `:830` 01:01:28.231 发起 `combat-terminal-repath` 绿字点击 `(1189,444)`；Client `:1611` 01:01:28.518 实际 CLICK_LEFT；Cloud `:853` 01:01:29.226 才收到 IN_COMBAT seq=16，`:860` 01:01:29.243 成功 handoff 到 WAIT_BATTLE_FINISH。
+- **P1 根因和文件：** Cloud `WubeiTask.runResolveAfterPathingPhase` 调 `DialogService.clearBlockingDialogBeforeGreenRepress` 后仅打印 status，无条件调用 `triggerCombatTrackerPathing`。清障服务本来就可能命中任务业务目录并执行入战，它正确返回 `GREEN_TEMPLATE_CLICKED / wubei.enterBattle`，任务没有消费该语义。`tickEnterBattle` 的 `enter-battle-retry` 也有同类返回值丢弃。`git show origin/dev:...WubeiTask.java` 同样存在该缺陷；不是本轮输入队列或坐标算法造成。
+- **与 G170（战斗阶段交接）的关系：** 本轮 G170 的实际 handoff 已运行，但它等真实 Runner 进战事实；这里需要在入战点击已执行、真实进战尚未上报的间隙立即停止重按。只靠下一轮进战清理不能追回已发出的鼠标点击。G170 的整体运行验收仍未完成。
+- **横向源码对照：** 修罗 `consumePreparedXiuluoEnterBattle` 点完返回 `waitForRunnerCombatEntry`；天庭本地 dialog answered 消费按 actionKey 设置 `enterBattleConfirmationStartedAtMs`，先等真实进战。另一方面，修罗 `retryTrackerShortcutGreenAfterCloudFallback`、天庭 G017 retained-tracker 清障重按也存在不按清障业务结果停止复按的源码隐患，不能当成已正确的参考实现，也不能在没有日志证据时断言它们本轮复现。
+- **待批准最小修复方向：** 保留原清障函数及业务目录，五倍两个消费点按 status + actionKey 处理“入战选项已执行”，转既有入战确认/战斗等待并立即 return，禁止继续点绿字或重新登记寻路。不把点击已执行伪造成 Runner 已进战；失败/中断不得当成清障成功。同步审查本次消费的 prepared/interest/expected-entry 生命周期，避免旧槽留下造成第二次入战点击。修罗/天庭隐患单独说明范围后处理，不趁本卡改写它们的业务。
+- **业务依据：** `docs/业务逻辑.md` 普通怪结果处理第22条明确“入战点击后 WAIT_BATTLE_FINISH，不再重按绿字”；共用合同明确真实进战仍由 Runner 确认。本卡不得恢复已被共用章否定的“任何停步都立即重新点绿字”规则。
+- **取证边界：** 已定位同次洗字 ROI `images/temp/match-evidence/dialog-inmemory-match/20260910_010127_647_unknown_ABSENT_score-0.263.png`，内含“消灭它/离开”，与入战模板 `images/template/dialog/wubei/wubei_enter_battle_xiaomie.png` 一起查看。该文件是接任务模板 miss 的落盘，0.2635 是接任务模板分数，不是入战分数；入战命中日志未输出数值分数。未在同日日志指向的标准 dialog 证据目录定位到同次未洗原始整帧，不虚构原图或入战分数。此次因果结论依据两份物理输入日志、业务返回值和源码接线，不重跑匹配。
+- **验收规格（未执行）：** 两个清障消费点命中入战时，本轮绿字输入次数为0，进入入战确认等待；只关闭普通障碍时才保留原绿字续接；FAILED/INTERRUPTED 不继续点击；快速入/脱战仍可被消费。修罗/天庭只做源码排查，不等于运行验收。当前 no-test override 仍适用。
+
+## G170 五倍进战清理后仍等待寻路，脱战事件无法唤醒（2026-09-10）
+
+- **09-10 12:23运行反例（G176）：** handoff与退战唤醒确实生效，但任意进战统一进入旧战后回城链，未保存unexpected来源与中断阶段；r6意外战误用normal-combat回城。整体运行验收不通过，续接分类P1登记G176，待用户批准修复；禁止仅凭handoff日志关闭本卡。
+
+- **状态：已实施 / 隔离编译通过 / 未运行测试 / 待运行验收。** 2026-09-10 用户“修改”，批准上轮所述进战阶段交接、战斗唤醒和入战计时收尾；登记 `BR-WUBEI-002`。合同目前仅为本卡运行验收规格；当前 no-test override 禁止新增/运行可执行合同，不能把规则登记门当成行为验收。
+- **角色与运行：** 光牛的滑子°/387545229，`remote-turn-df7f4f81-4b76-40f8-8c2f-5e6e863741e0`。
+- **证据：** Client `logs/dhxy-console.log` 00:35:04.710 `Local combat exit confirmed`；Cloud 同秒 `.712` `COMBAT_STATE_CHANGED sequence=7`。Cloud 00:34:26.797 `combat-entry cleanup confirmed` 后，`.806` 仍为 `RESOLVE_AFTER_PATHING`、`waiting tracker runner pathing snapshot`。00:38:57.535 `ready.await` 返回 PRE_BATTLE_TIMEOUT，`elapsedMs=270723`；`.552` 转 ROUTE_TO_MAIN_TASK。00:39:03 用户快捷键暂停结束本轮。
+- **P1 根因：** Cloud `WubeiTask.runRoundPhases` 忽略 `consumePendingCombatEntryCleanup` 返回值；清掉 pathing 后没有战斗阶段转换。`waitForPathingWake` 只订阅 PATHING_TERMINAL/PREPARED_ACTION_READY/PRE_BATTLE_TIMEOUT，且无限等待；真实进脱战事件不能推进任务。本轮成功上报 292 次、transport failures=0，不能归因于此前显形镜时间戳拒收。
+- **批准修复方向：** 对照修罗实际链路，当前 run 的进战事实须同时推进战斗阶段并停止旧入战计时；寻路等待接入战斗唤醒，醒后消费已到达边沿。保留 expected/unexpected 与五倍连战业务分类；不能只加唤醒后继续等空 pathing。负责人 Codex；生产写集仅 Cloud `WubeiTask.java`，不修改 Client 判战及共享传输，不修改此前对话清障后的点击顺序。
+- **运行验收门：** 复现普通怪对话清障点击入战；pathing 清理后进入战斗阶段，进/脱战先于 park 也可消费；脱战后正常续接，不能五分钟后误判未入战而重接。修罗的 `consumePendingCombatEntryCleanup -> effectiveContext.WAIT_COMBAT` 及 `waitForTrackerShortcutWake` 已核对。
+- **实施结果：** `runRoundPhases` 消费新的 exact 进战即使用 `WAIT_BATTLE_FINISH` 有效阶段，不再执行旧 pathing consequences。进战接收序号与清理确认序号分开，同一事件清理重试不重复阶段交接；清理及旧入战计时均确认后才确认水位。寻路、接任务导航、prepared-dialog 三类等待加入 `COMBAT_STATE_CHANGED`；park 使用 phase 消费之前的事件水位。首次进战结束 probe 预算；等待初始化保留已见进战标志；恢复要求清理确认、当前进战序号之后的 exact 脱战事实和既有恢复入口。未改 expected/unexpected 判定、黄袍怪分类、点击算法或战后策略。
+- **失败与早到事件的源码检查（不是测试）：** 清理未执行时仍切战斗阶段，水位不确认、下次重试，期间不吃旧超时；入口事件重复不重置战斗计时；进战与脱战都在 phase 前到达时保留进战 latch 并用 exact exit；事件在 phase 与 park 之间到达时序号仍新于 wait 水位。清理未确认前不进入战后恢复，避免旧清理追到下一条业务链。
+- **交付证据：** Cloud 单文件 `javac --release 21` + Lombok 隔离编译 exit 0，输出 `C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g170-compile-227e0136f057418daaf11d9becabc48e`；规则登记门与 diff 空白检查通过。未新增/运行测试，未覆盖 `target/classes`、未重启、未触发输入。须部署新编译产物并重启 Cloud 后再做运行验收；当前运行进程未生效。
+
+## G169 五倍启动归队等待完成后绕过接任务导航（2026-09-10 00:08 事故）
+
+- **状态：`已实施 / 隔离编译通过 / 未运行测试 / 待运行验收`。**
+- **用户裁定：** 2026-09-10“可以，按其他的统一”，批准前述三种归队续接和缓存位置门。
+- **现场事实：** `00:07:30.412` 启动位置同步明确得到 `火云戈壁 (34,110)`，不是地图识别错误；
+  `00:07:46.910` 五倍从 `HOT_START_DETECT` 因归队门首样本未到进入
+  `WAIT_TEAM_RETURN(source=team-return-wait:before-accept)`；`00:07:49.924` 归队门确认无需等待后，
+  状态却直接变为 `ACCEPT_TASK`。因此 `ROUTE_TO_MAIN_TASK` 从未执行。
+- **错误动作：** `00:07:51.136` 在火云戈壁直接启动 `降魔侍卫` SmartClick；FIFO 把当地 NPC
+  `(373,270)` 当候选并于 `00:07:51.643` 点击绝对坐标 `(1452,453)`，随后打开完全无关的 OPTION
+  对话框。原图：`images/evidence/dialog/20260910/cloud-observer_wubei-accept/20260910_000755_915_1_raw.png`。
+- **根因：** `TEAM_RETURN_BEFORE_ACCEPT_SOURCE` 被复用于两个不同位置语义：①启动阶段尚未判断
+  tracker/回城/导航；②`runRouteToNPC` 已确认到达接任务 NPC。`runWaitTeamReturnPhase` 看到该 source
+  一律跳 `ACCEPT_TASK`，把①误当②。`runAcceptTaskPhase` 又没有起始地图 fail-closed 门，故继续扫错图。
+- **同类任务横向对照（2026-09-10）：** 修罗、鬼王、抓鬼、新手历练均把“接任务导航”和“点击 NPC”
+  拆成独立 phase；它们的 `TEAM_RETURN_BEFORE_ACCEPT_SOURCE` 在归队完成后恢复到
+  `ACCEPT_TASK_NAVIGATE_TO_NPC`，不会直接进入点击。修罗、抓鬼、新手历练的点击入口还会用当前缓存
+  位置执行 `isNearCoordinate(...)`，地图未知或不在 NPC 附近就 fail-closed 回导航。天庭虽在归队后回
+  `ACCEPT_TASK`，但它的 `ACCEPT_TASK` 自身拥有导航和到达证明，不能拿来证明五倍当前直跳是安全的。
+  五倍是当前对照组里唯一一个“导航与点击已拆开，却在启动归队后直达点击、且点击入口无位置门”的实现。
+- **与 G168 关系：** 无关。事故发生在接任务前，尚未进入 G168 修改的
+  `afterAcceptTaskSucceeded(...)`。
+- **建议修复门（按同类任务收敛）：** 不用一个 source 表达三个续接点。启动最前端等待完成后回
+  `HOT_START_DETECT`，继续执行尚未做过的 tracker 热启动判定；回城后、尚未走到 NPC 的等待完成后回
+  `ROUTE_TO_MAIN_TASK`；只有 `runRouteToNPC` 已证明到达后才允许归队完成进入 `ACCEPT_TASK`。
+  `ACCEPT_TASK` 再照修罗/抓鬼/新手历练补第二道缓存位置门：没有 exact 五倍到达凭证，且当前角色
+  地图未知或不在宝象国降魔侍卫附近时，禁止 SmartClick 并退回 `ROUTE_TO_MAIN_TASK`。不新增现场 OCR。
+  合同复现火云戈壁首样本等待→完成，必须先恢复热启动判定/导航且零 NPC 点击；另钉住真正到达后的
+  归队完成仍可进入接任务，避免修成导航循环。
+- **实施结果：** `before-accept` 与修罗等任务统一为归队后先导航；新增 `hot-start` 来源，完成后回
+  `HOT_START_DETECT`，以及只由导航 ARRIVED 产生的 `accept-npc-arrived` 来源，完成后进 `ACCEPT_TASK`。
+  `keepTeamReturnWaitSource` 保留两种新增来源，重复等待不丢续接点。热启动完成续接带专用 ready source，
+  该次不再次调用已完成的归队门：协调器 COMPLETE 会关闭 HUD epoch，立即重开会形成首帧等待循环。
+  点击入口无到达凭证时复用 `gameContext.getMe()` + `isNearCoordinate` + 五倍既有容差 12；不在 NPC
+  附近则在首个 SmartClick 前返回导航。到达 FIFO、已点击后的对话等待和已验证接任务 dialog 消费保持原规则。
+- **验证与边界：** 修改类 `javac --release 21` + Lombok 隔离编译 exit 0，输出为
+  `C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g169-compile-608b02f3b1794501be46f114008ec881`；
+  `git diff --check` 与 G169 业务规则登记门通过。按当前 no-test override 未创建/运行测试，上述合同场景
+  保留为未执行验收要求，不宣称合同通过。未写活动 `target/classes`，未重启、未发送游戏输入。
+  需后续正常构建并重启云端后才能生效；fresh 重点为异图启动零误点、已有 tracker 正常接管、回城后先导航、
+  到达后正常接取。客户端无需生产改动。权威规则为 `BR-WUBEI-001`，在途 G168/显形镜超时修改均保留。
+
+## G168 五倍接任务后取消旧式出村预点击（2026-09-09 用户裁定）
+
+- **状态：`IMPLEMENTED / Cloud 编译 0 + G168 合同 3/3 / 待重启验收`。**
+- **用户裁定：** 五倍参考修罗当前做法；接任务成功后不再先 `Alt+C`，也不再预点击宝象国出口
+  或把预走目标替换为补宠 NPC，而是直接读取任务栏、执行真正到期的补宠/修装备维护，再点击绿链。
+- **基线核查：** Cloud `dev@c100781 == origin/dev`，`WubeiTask.afterAcceptTaskSucceeded(...)`
+  当前仍无条件调用 `startPostAcceptPrepath(...)`；修罗虽保留旧实现，但
+  `START_EXIT_PREPATH_ENABLED=false`，运行时已经旁路。Client/治理仓
+  `dev@22363574 == origin/dev`，保留本卡外 G149 两个 dirty 文件，不得触碰。
+- **实施边界：** 仅移除五倍 post-accept 预走调用及其专属常量、目标选择、startup flying 消费、
+  pathing 清理和私有 record；保留后台 tracker 读取、实际补宠/修装备、暗雷识别后回接任务 NPC、
+  正式绿链点击及全部坐标/模板/阈值。
+- **验收门：** 合同必须证明接任务成功到 `READ_TRACKER` 之间不再发 `Alt+C` 或
+  `wubei:post-accept-prepath:*` 导航，同时维护阶段和暗雷 reroll/绿链入口仍在；fresh 日志中接任务后
+  应直接出现 tracker 读取/维护/绿链，不再出现 `post-accept prepath`。
+- **实施结果：** `afterAcceptTaskSucceeded(...)` 现在只武装后台 tracker future 并进入
+  `READ_TRACKER`；旧调用、`Alt+C` turn、宝象国出口坐标/目标选择、startup-flying 特例、旧 pathing
+  source 清理和私有 record 已删除。实际补宠/修装备、暗雷回接任务 NPC、绿链点击均保留。
+- **验证：** `mvn -q -DskipTests compile` PASS；G168 合同隔离编译并经 surefire 单独运行 **3/3**。
+  标准 `mvn -Dtest=... test` 被本卡外既有测试源码/API 漂移阻断（全仓 testCompile 先失败），已如实保留。
+  本卡删除动作而非改变图像匹配/点击坐标，无视觉 testcase 变更。同期另一任务修改五倍显形镜故事等待
+  超时，位于不同方法，G168 未覆盖或回退该并行改动。
+
 ## G164 暗雷停稳死锁（2026-09-07 用户报"1:25暗雷还是不动"，G163 后另一条独立死锁）
 
 - **状态：`IMPLEMENTED / 云端隔离编译 0 + 合同 5/5（含事故 facts 纯函数回放）+ 变异红 / 待重启验收`。**
@@ -169,6 +822,8 @@
   仅剩两条"记录在案无对策"的已知风险行（Raw Input 设备归因、WDA_EXCLUDEFROMCAPTURE）。
 
 ## G156 半路停下恢复两档判定（2026-09-05 用户裁定，06:21 移动中重按绿链事故）
+
+- **09-13 17:43边界缺口（关联G179，待批准）：** Cloud正确拒绝995ms半路停步，但共用Client missing-kanda出口仍把900ms STABLE当终态并发失败，五倍恢复绕过Cloud停步门。01.108坐标变值先于01.375消费失败，03.037仍重按。此前“云端一处即收口”覆盖不全；详见G179现场，不宣称本卡恢复链已全面通过。
 
 - **状态：`IMPLEMENTED / 云端隔离编译 0 + 合同 4/4 + 变异红 + 真实数据行为回放 / 待重启验收`。**
 - **用户裁定原话：** "和飞行没有关系，我们以前不是有可能停下了的状态么。现在的问题是判停不对。"
@@ -991,6 +1646,10 @@ SetForegroundWindow 会从主人手里抢焦点，须与 [[window-switch-away-ow
 
 ## G133 热启动绿链防过期门通用化：Alt+Q 重同步接入全部七任务（2026-08-31）
 
+- **09-10最终范围纠正：不改本门代码、不新增Alt+Q权限字段。** 用户明确前一条“只拦Alt+Q”的解释错误，禁止的是所有任务内部失败重新进入整条热启动。实际返修在G179的Client共用终态入口：FAILED/SKIPPED不再重启，延迟回调不放行；原run恢复仍由任务持有。G133的原刷新动作保留，不以本卡旧合同证明G179通过。下方“来源字段贯通到共用门”方案已撤回；以BR-START-001最终用户定案为准。
+
+- **2026-09-10入口规则重开 / 用户已定案 / 待实施：** Alt+Q启动重同步仅允许UI明确首次启动和UI暂停后再次启动；内部报错恢复、自动重启、同轮重试及自动续跑不得凭新run执行。原“每run一次”仅是次数限制，不是触发授权；`PAUSE_RESUME`亦被自动恢复复用，不能充当UI凭据。必须从真实UI启动来源贯通到共用门，内部再启动不得复用授权；七任务均遵守，既有刷新动作本身不改。依据`BR-START-001`新定案及G179 16:56运行链，只记录规则，未实施/测试；下方旧合同通过不能覆盖新来源门。
+
 - **状态：`SOURCE FIXED+返修 / 合同 7/7 / 变异 6/6 全杀 / 回归全绿 / FRESH REQUIRED`（2026-08-31 实施+同日返修）。**
 - **返修（16:01 fresh 用户抓获）：**首版把天庭的门接在同步备用分流，而热启动走的是 **G017 异步主分支**
   （`startup terminal consumed phase=RUN_SUBTASKS`）——title 在场就直接消费了观察者 7.2 秒前备好的
@@ -1043,7 +1702,7 @@ SetForegroundWindow 会从主人手里抢焦点，须与 [[window-switch-away-ow
 
 ## G132 接任务入口守卫：归队门超时停任务后，下一轮不得绕过成员归队（2026-08-31）
 
-- **状态：`SOURCE FIXED / 合同 4/4 / 变异 3/3 全杀 / 六任务+归队家族回归全绿 / FRESH REQUIRED`（2026-08-31 实施）。**
+- **状态：`REOPENED BY G169 / 五倍启动归队门通过后绕过导航 / 待修复`（2026-09-10 fresh）。**
 - **用户拍板（判据冻结）：队长归队门超时停任务后，恢复/下一轮自启时不能绕过成员归队。**
 - **事故（14:20:11，G130/G131 同场的第三块）：** 门等满 180s 按设计 fail-stop（"STOP the task instead of
   accepting alone"），但新一轮任务自动启动后直接进接任务——"宁可停任务也不丢下队员"的保护被自动重启
@@ -1070,6 +1729,10 @@ SetForegroundWindow 会从主人手里抢焦点，须与 [[window-switch-away-ow
 - **终态 SHA：** 协调器 `e14d53cd905ad076`/346L、天庭 `ec656e1ccb46ef75`/6154L、修罗 `37120d612d22c955`/5777L、
   鬼王 `74aa932120f0ef96`/4119L、五倍 `542a97d16d9d35ce`/4881L、抓鬼 `1922d21212c26409`/3689L、
   江湖历练 `fdc7cb42f74aefca`/4071L、合同 `c9d2f5aa88b52c45`/96L（白名单 check-ignore=1）。
+- **2026-09-10 五倍 fresh 失败（G169 接管）：** 守卫本身正确等到 HUD fresh ABSENT，但五倍用同一个
+  `team-return-wait:before-accept` source 同时表达“尚未导航”和“已到 NPC”；等待完成出口一律跳
+  `ACCEPT_TASK`，在已知 `火云戈壁 (34,110)` 上直接扫描并误点当地 NPC。G132 的“通过后正常接任务”
+  合同缺少地图/阶段连续性。修复、责任文件和验收门详见 G169。
 
 ## G131 归队接入绿链停下恢复链：清障→重按,停在半路不再永久安静（2026-08-31）
 
@@ -4174,6 +4837,14 @@ Cloud `DalisiQuizTask.java`。状态：`ROOT CAUSE CONFIRMED / FIX PENDING`。
 
 ## G081 天庭暗雷按需饱和度飞行判定（2026-08-14）
 
+- **2026-09-13 0.25反例证据澄清／撤回未经校准的0.32推荐：** 用户要求约0.25仍飞行的状态反例，而非数值跨度。找到9月9日10:33:34.306的0.252047→0.670507、17:35:13.850的0.250728→0.734286，Cloud均记LANDED；按差分方向可推断此前在飞，但未找回对应原图/人工真值，不能称独立视觉确认。0.08～0.32由跨度构造，不是分类校准，本轮撤回作为待实施推荐，仅保留历史草案。确切来源行号补入本卡链接的历史阈值核查报告。未改生产、测试或输入。
+- **2026-09-13 模糊带历史日志统计（只读、提案未实施）：** 现存归档解析713条天庭采样，关联80次Cloud首按发起得到67组发起前连续采样；P95组内跨度0.0447，最大0.1149（9月1日20:42:04.633～06.382，0.0776→0.1925，首个PRESS_ALT_C到06.662才执行）。13/67组跨度>0.02，不能再用旧三帧0.008936代表全部浮动。供用户选择的保守工程候选：以0.2为中心±0.12，即[0.08,0.32]模糊，两端仅初筛；不是校准通过/置信区间，不把组内跨度当分类误差。缺失逐帧真值，79条Cloud差分outcome不作独立标签；buffer与按后delta阈值分开，不擅改原0.02。方法、67组明细、来源行号及证据缺口见[历史阈值核查](rule-traceability/G081-flight-threshold-log-review-20260913.md)。未改生产/运行测试/截图/输入。
+- **2026-09-13 统一函数初始条件讨论／待用户选择：** 用户要求先明确统一函数总体逻辑与前置“可能飞行/可能未飞行”条件。现有单帧<=0.10、>=0.20只能作为原适用场景的初筛，不能未经验证升级为全地图快速成功门；按键前后±0.02也只沿用天庭既有试定值，不声称已覆盖移动背景噪声。提议统一目标为确保飞行/落地，复用共享帧、exact-window串行按键与按后新帧；差分未决只补读、有限退出，不连续盲切。未决业务选择：保留单帧“可能飞行”即不按键（保留误判漏切风险），还是首版无可靠先验一律UNKNOWN、通过一次切换差分确认并在方向相反时受控纠正。后者与BR-GHOSTKING-003的UNKNOWN不输入及同intent只按一次不同，未经明确选择不得替换鬼王等既有调用。当前未写统一函数、未修改生产或运行测试/输入。
+- **2026-09-13 历史失败追溯（只读历史，无新测试）：** 用户询问曾修改飞行阈值为何失败。核对本卡、旧 ACTIVE_WORK、Client 8月14日提交中的分类器及8月26日该文件diff：0.10/0.20未在这两次提交间调整，后者仅加地图标签匹配取证。找到的明确失败是8月14日23:26天庭长寿村外：仍在绿色莲台上的现场帧被报为UNKNOWN/0.1997、NOT_FLYING/0.2006、NOT_FLYING/0.2086，Cloud据此不发落地Alt+C。现存232631-marked.png已重新查看并展示，红框是背景采样区。8月15日裁决改天庭为按键前后差分，8月17日Cloud提交的TiantingDarkThunderPlan diff确认新增±0.02方向判定；不是全局调高/降低0.20，鬼王未改。本轮仅将历史结论补卡，未改生产、未重算图、未截屏/输入/重启。
+- **2026-09-13 用户讨论二分阈值（未批准改代码）：** 用户提出“>=0.2未飞行，否则飞行”，意图取消中间UNKNOWN。当前生产是<=0.10飞行、>=0.20未飞行、中间未知；现有比较符为>=而非严格>。需要区分实现规则和物理必然：知道某些未飞行样本>=0.2，或代码将>=0.2判未飞行，不能证明所有<0.2都是飞行；当前两次截图0.530535与0.138389未独立绑定用户确认的真实飞行状态，不能据此完成二分阈值校准。把UNKNOWN直接归为FLYING会改变鬼王pending消费/是否发Alt+C的业务，不在本轮讨论中擅改；图像缺失UNKNOWN也不能因二分规则被归成飞行。未改生产/阈值，无新截图、测试或输入。
+- **2026-09-13 UNKNOWN调用行为澄清（只读源码）：** `FlyingSaturationLocalMechanics.classify`本身仅返回结果。Client `WindowObservationSampler.sampleGhostKingChangshouFlightAssist`在UNKNOWN时直接return，位于清pending/写handled之前，故本轮不按Alt+C、也不结束待办；下一个采样周期再次检查，同intent状态离开ACTIVE/UNKNOWN或换intent后才丢弃pending。该辅助函数没有UNKNOWN专用次数/超时兜底，连续UNKNOWN可一直不切飞行，但不阻塞外层观察/寻路。天庭暗雷上传原始meanSaturation而非直接消费此枚举，走G081既有前后差分/超时路径，不能概括为所有任务UNKNOWN都一样。另一个Cloud面板探针的`NpcClickService`直接战斗前置在UNKNOWN时返回`skipped(direct-combat-flying-state-unknown)`，不会继续直接进战。未改生产、未测试/截图/输入。
+- **2026-09-13 第二次按用户要求重截：** 同角色光牛的滑子°、同外窗/ROI，再用上一轮隔离编译的生产classify计算；`window-raw-02.png`→`flight-roi-02.png`（同`images/test-cases/flight-current-20260913-1789334503858/`），平均饱和度`0.138388702954`，返回`UNKNOWN`，0.10<S<0.20。原图已再次发聊天。上次0.530534698108→本次0.138388702954不是已知受控按键前后采样，不能据下降直接宣称已起飞；本轮无输入/生产修改。命令与证据见同目录RESULT.md。
+- **2026-09-13 用户指定单帧核验（不变更原卡状态）：** 用户要求找飞行函数阈值并截当前窗口实际计算。computer-use唯一绑定光牛的滑子°/387545229，原图1036×783、窗口截图原点(338,207)，宝象国(92,87)。归档`images/test-cases/flight-current-20260913-1789334503858/window-raw.png`；按当前源码ROI(688,71,67×38)裁`flight-roi.png`，隔离编译实际`FlyingSaturationLocalMechanics.classify`后得到2546像素、meanSaturation=`0.530534698108`、`NOT_FLYING`；源码阈值仍为<=0.10飞行、>=0.20未飞行、中间未知。原图及ROI已在聊天展示；ROI所见是树叶/背景，本次未独立确认真实飞行状态，**不算天庭暗雷差分验收，不算运行Runner日志回放，不宣布又一次误判**。这不是生产截图后端，保留原截图坐标，未擅自扣标题栏或改阈值；不能据此证明当前进程将报告同值。Cloud另有`NpcClickService.detectFlyingStateName`的Alt+U飞行/降落模板判断，阈值0.84，本轮未按键执行。只运行用户指定的这一张图纯函数核验，未运行其它测试、未改生产/输入/重启。详情和命令见同目录`RESULT.md`。
 - **状态：** `P1 SOURCE REPAIRED / OFFLINE ACCEPTANCE PASSED / FRESH REQUIRED`。2026-08-14 23:26 首次天庭
   fresh 证明饱和度分类错误地把实际飞行画面判成 `NOT_FLYING`；修复前不得关闭本卡。本卡只替换天庭暗雷腿停稳后的飞行
   判定，不改变普通天庭、鬼王、抓鬼、其他任务、暗雷分类、Tracker、巡逻点或输入实现。
@@ -14002,6 +14673,33 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 
 | Card | Owner | Status | Files | Goal |
 | --- | --- | --- | --- | --- |
+| G194 | Codex | **已实现 / 双端隔离编译与合同5/5通过 / 待fresh实跑** | Client队长队伍飞行状态及物理失效；Cloud公共G181；双仓typed协议 | 队员不持独立状态；多队长按exact HWND隔离。公共飞行服务复用连续状态，入战记落地，队长Alt+C及角色/HWND/run变化失效。 |
+| G193 | Codex | **调查完成 / 未改生产代码 / 待用户决定** | Cloud 五倍/修罗医宝宝导航、公共小地图与 NPC 点击；Client fresh 输入日志 | 五倍固定逻辑目标但已有 `4px` 小地图抖动；修罗额外有每轴 `±1` 地图单位随机。若统一应下沉公共策略，不复制私有函数。 |
+| G192 | Codex | **已实现 / 双端隔离编译及合同8/8通过 / 待fresh实跑** | Client/Cloud `PreparedDialogAction`；Cloud 公共 Dialog observer 与 exact-action 退休 | 保留 Dialog `interestId` 到已发布动作，interest 明确撤销/换代时通用精确退休；不误清 tracker、route、机械动作。 |
+| G191 | Codex | **已实现 / 回放及隔离编译通过 / 待fresh实跑** | Client `BagService.MAIN_BAG` 扫描 ROI、五倍回城道具失败帧 | 主背包扫描宽度由 `312px` 补到完整 `328px`；边缘回放从 `0.370` 不命中恢复为 `1.000` 命中，不降阈值。 |
+| G190 | Codex | **已实现 / 隔离打包通过 / 待 Cloud 重启实跑** | Cloud `WubeiTask` phase-owned accept 退休；prepared-action exact actionId CAS；G190合同 | 非接任务阶段精确退休迟到的旧 `WUBEI_ACCEPT_TASK`，并在显形镜故事等待内复核；不泛清、不新增点击，恢复故事结果和白龙马点击链。 |
+| G189 | Codex | **已实现 / 隔离编译通过 / 待 Cloud 重启实跑** | Cloud `WubeiTask` 五倍四个预扫入口；BR-WUBEI-013 | 一个 false 总门关闭普通回程与显形镜全部提前开包；真正使用显形镜和正式回城继续现找现用。 |
+| G188 | Codex | **调查完成 / 后续已转 G189 实施** | 五倍 09:24～09:26 双端日志、G182 边界、显形镜实拍证据 | 证明接任务后开包匹配的是 `wubei_probe_item.png` 显形镜，不是普通回程预扫；正式回城另有一次 `wubei_return_item.png action=USE`。 |
+| G187 | Codex | **已实现 / 隔离编译通过 / 待客户端重启实跑** | 客户端 JVM 参数真源、启动/打包脚本、轻量内存诊断 | 初始堆降至512MiB、显式上限6GiB并启用5分钟G1周期回收；统一本地与成品参数，记录真实堆/直接内存/线程/窗口/输入队列。 |
+| G186 | Codex | **已实现 / 合同2项通过 / 待重启实跑** | Cloud 修罗、五倍成功出口；通用盒子规则与合同 | 成功轮归队后先消费队长盒子，再记进度和随机休息；最后一轮也尝试，避免30秒pending被长等待吃掉。 |
+| G185 | Codex | **已实现 / 合同4项通过 / 待重启实跑** | Cloud 公共轮间休息策略、修罗、五倍；业务规则与合同 | 修罗和五倍共用七档拟人轮间休息，替代复制的三档 `80/17/3`，将140～180秒降到0.05%；主源码编译通过。 |
+| G184 | Codex | **fresh启动预验包已生成 / 双机升级未验** | 双机发布更新、专属大脑与运行中禁版 | 已解除无大脑不能打开UI的限制，并补齐安装器Java运行时；277MB本地预验包已打出，未运行/发布。正式双机升级待候选发布和验收。 |
+| G183 | Codex | **历史实现 / 分布已由G185替代** | 五倍成功轮间休息边界 | 五倍只在成功且有下一轮时休息的边界继续有效；旧三档数值和私有实现已由G185公共七档策略替代。 |
+| G182 | Codex | **普通预扫已禁用 / 隔离编译通过 / 未测试待部署** | 五倍提前开包、修罗同款禁用开关 | 三入口已加false开关；正式回城及显形镜专用记录保留，召唤指代待澄清，未重启。 |
+| G181 | Codex | **G194已修复连续状态 / 双端编译通过 / 待fresh复验** | 可复用飞行初筛、公共队长连续状态、五倍绿链确保飞行 | 同一白龙马无战斗链现在复用队长状态；入战/Alt+C等边界失效。换地图误触发须以fresh无重复采样/按键确认。 |
+| G180 | Codex | **已实现 / 双端隔离编译通过 / 未测试待评审部署** | 共用NPC历史点击记忆、候选循环及验证回执 | 启动副本不再取出即删除；成功点无限次复用，逐点连续失败三次才停用，成功清零；未点击或截图不可用不计数，永久库不删，未重启。 |
+| G173 | Codex | **已实现 / 隔离编译通过 / 待双端运行验收** | Cloud NPC点击生产链；Client候选执行门 | 全任务取消紫名公式/紫名点及衍生Ctrl路径，客户端拒收迟到紫名方案；保留成功记忆与非点击ROI证据，未重启、未跑测试。 |
+| G172 | Codex | **黄字实跑成功 / 紫名延迟转G173实施 / ROI待实跑验收** | Cloud NPC黄字识别与学习ROI、Client续帧 | 11:09实跑黄字点击成功，83,75新点已保存；用户已裁定全任务禁紫名点击，42.9秒旁支延迟交G173处理。 |
+| G174 | Codex | **指定点优先已改 / 待部署 / 未测试** | 白龙马角落多点记忆 | 白龙马条件匹配先点相对(102,722)，优先于普通历史记忆和黄字；失败才继续原策略。配置启用、隔离编译通过，未部署实跑。 |
+| G175 | Codex | **首适配已实现 / 迁移清单已存 / 未测试待审核部署** | 公共帧邮箱、白龙马首适配及后续迁移盘点 | 一在途加一最新帧；已列通用对话、Tracker、新手、答题及同步识图入口，排除本地匹配与声明接口；现有队列不叠加，实际框裁剪待办。 |
+| G171 | Codex | **P1重开 / 已取证 / 待批准修复** | Cloud `WubeiTask`；点击后入战确认与重试 | 15:55:44通用清障确已点魁星，但未入战后防重复门挡住后续候选，约57秒只等战斗；需补确认失败后的恢复，不恢复无条件连点。 |
+| G170 | Codex | **交接已运行 / 续接修复待运行验收** | Cloud `WubeiTask`；进战阶段交接、事件唤醒及计时收尾 | 12:23交接成功但战后误回城；G176已补意外战分类续接，未部署，整体运行门仍待验收。 |
+| G176 | Codex | **已实现 / 隔离编译通过 / 未测试 / 待审核与运行验收** | 五倍意外战续接、归队与回城失败恢复 | 按修罗鬼王保留意外战分类，任务仍在则查香归队后续绿链；回城未验证走失败导航，不再等不存在的退战。仅Cloud改动，未部署重启。 |
+| G177 | Codex | **已调整 / 隔离编译通过 / 待重启验收** | 共用医治框上扩，修装备原范围不变 | 两端医治框上扩13px；五倍无损回放0.998通过，超级巫医沿用已有图且原范围保留；未重启或实点。 |
+| G178 | Codex | **已修 / 隔离编译通过 / 未测试待运行验收** | 五倍本腿等待、镜像与到达帧登记 | 保存新寻路编号；旧terminal和旧镜像不能放行第二段，到达帧也不再登记旧编号；仅Cloud改动，未重启。 |
+| G179 | Codex | **地图门及识别失败计数已改 / 隔离编译通过 / 未测试待验收** | 五倍本地入战；面板第三次识别失败即停 | 面板失败独立计数，第三次在重接前停，成功清零；普通入战不等地图。全局地图覆盖和退战缺失仍未解决；未重启、不宣称运行通过。 |
+| G169 | Codex | **已实施 / 隔离编译通过 / 未运行测试 / 待运行验收** | Cloud `WubeiTask`；热启动、归队续接及 NPC 点击位置门 | **五倍归队后按实际进度续接。** 启动等待完成回 tracker 判定，回城等待完成先导航，已到 NPC 后才接任务；无到达凭证且缓存位置不在 NPC 附近则拒点回导航。 |
+| G168 | Codex | **已实现 / Cloud 编译通过 / G168 合同 3/3 / 待重启验收** | Cloud `WubeiTask.java`、`G168PostAcceptPrepathRemovalContractTest.java`；治理文档 | **五倍接任务后取消旧式出村预点击。** 接任务成功后直接后台读取 tracker，不再发送 `Alt+C` 或点击宝象国出口/补宠预走点；真正的补宠、修装备、暗雷回接任务 NPC 和正式绿链点击保持原业务。 |
 | G144 | Codex | **审计完成 / NO PRODUCTION CODE / 待批准修复** | Client 全部图像判断/截图/证据路径；Cloud 远程图片判定边界；`G144_IMAGE_DECISION_EVIDENCE_AUDIT.md` | **图像判断全链路取证缺口审计。** 总截图池排除成员、五分钟抽样且可丢；翻转证据会跨窗覆盖，自动战斗面板、坐标判稳、Dialog 框体等多条关键判断没有 exact 图片。建议以图片 hash 去重并为每次判断追加不可静默丢的关联 manifest。 |
 | G143 | Codex | **源码已修 / G143合同4/4 + owner家族26/26 / 待 Review / 待 fresh** | Client `WindowTaskControlService.java`、`WindowRuntimeContext.java`、`G143ColdStartOwnerRebindContractTest.java` | **新任务重扫窗口后仍沿用旧角色缓存。** 启动时已正确扫描到 3473/3511 换窗，但失败恢复仍按换窗前 owner 每 3 秒拒绝；现从 exact HWND 活标题抓取本轮 owner 并固化进不可变恢复计划，ACK 前临时切号会暂停而不会改认主人。 |
 | G142 | Codex | **源码已修 / G142合同2/2 + 身份上下文5/5 / 待 Review / 待 fresh** | Client `WindowTaskControlService.java`、`WindowRuntimeContext.java`、`G142RecoverableRestartOwnerContractTest.java` | **五环失败后自动重启误用上一轮角色，导致 3473 永久卡死。** 可恢复失败时当前 run 仍保存 owner=3473，旧代码却只读上一轮 lastOwner=3519，每 3 秒永久拒绝重启；改为当前 run owner 优先、last owner 仅在当前 owner 已清空时兜底，临时切走/切回的防串号语义保持。 |
@@ -14010,9 +14708,9 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | G135 | Claude | **SOURCE FIXED / 合同 3/3 / 变异 3/3 全杀 / 回归全绿 / FRESH REQUIRED** | Cloud NpcClickRequest+NpcClickService+TiantingTask | **封妖符跨坐标误点(用户还原:同屏整屏找怪把 #3 的怪在 #2 点掉)**:tooltip 候选加"到人物(屏幕中心)最大距离"约束,默认不限零影响;封妖符半径 250 标定初值,距离逐条落日志供校准。 |
 | G136 | Claude | **SOURCE FIXED / 合同 9/9 / 变异 3/3 全杀 / 天庭回归一致 / FRESH REQUIRED** | Cloud TiantingTask+RoundContext+NpcClickService(公开区域截取) | **封妖符 while 循环重设计(用户判据:格子非一次性;浮窗解析目的地比对到达;缺席/没动=可能已做过软跳;一圈无进展清标记再循环;圈数3+分支预算15min 兜底——85次重试无超时生效=此前无分支级预算)**。 |
 | G134 | Claude | **SOURCE FIXED / 合同 2/2 / 变异 2/2 全杀 / 天庭 92绿6红=基线 / FRESH REQUIRED** | Cloud `TiantingTask` 封妖符终局消费一处 | **封妖符"点了没动"照常推进 Alt+A（用户拍板:没动是合法结果,人可能已在坐标上）**:旧逻辑没动=无限重试同一坐标(85次/Alt+A 永不执行),此前靠像素噪声假报"动了"顶开门;G130 说真话后合法情形被拦死。修=没动分支与 moved 汇合推进,STORY 保护保留。教训:G130 后所有依赖噪声假移动的消费点会陆续暴露,需排查。 |
-| G133 | Claude | **SOURCE FIXED / 合同 6/6 / 变异 4/4 全杀 / 七任务回归全绿 / FRESH REQUIRED** | Cloud 新 `StartupQuestPanelResyncGate`（唯一实现）+ 七任务接线（修罗改薄委托） | **热启动绿链防过期门通用化（用户拍板:所有任务全接）**:门 08-21 只落地修罗,天庭 fresh 未触发暴露"首发未铺开"。语义原样(无绿链不走/失败 fail-open/停止上抛)+新增每 run 一次闩;五环不读面板故入口无条件重同步一次。 |
+| G133 | Claude（原实施）/ Codex（入口规则核对） | **入口纠正由G179承接 / 原刷新代码未改 / 待运行验收** | 七任务启动刷新、普通失败禁止热重启 | 普通失败不能进入整条热启动；用户追加允许明确致命失败清理后重启同任务。G179已实施分流，保留原刷新逻辑。 |
 | G134 | Claude | **SOURCE FIXED / 行为合同 2/2 / 变异杀 / G127 回归绿 / FRESH REQUIRED** | Cloud `TaskTrackerPanelService.dumpMatchMiss`（一次性 20 张限额 → 最近 20 张滚动池） | **判定取证改滚动池（用户:为什么每次 debug 都没图）**:旧语义存满永久沉默,锚点/暗雷位点月初满额后一整月事故全无图。改槽位取模+先删后写,磁盘占用不变,永远保留最近 N 张;全部 dumpMatchMiss 位点一次受益。数字型判定不落盘的缺口随 G133 修;翻转才存图是用户自定的性能策略不动。 |
-| G132 | Claude | **SOURCE FIXED / 合同 4/4 / 变异 3/3 全杀 / 回归全绿 / FRESH REQUIRED** | Cloud `LeaderTeamReturnCoordinator`（accept-entry 守卫）+ 六组队任务 execute 入口各 1 行 | **接任务入口守卫（用户拍板:归队门超时停任务后,下一轮不得绕过成员归队）**:此前 fail-stop 被自动重启抵消,新一轮直接接任务。守卫复用归队门 advance 按现实分流:全员在位 1-2 秒过;有人缺席重开协调(成员 G131 自愈)停等,180s 超时照停,下一轮重进守卫,队长永不独自接任务。接缝否决记录:beforeTask 在观察者启动前,接那儿会 HUD 采样永等死循环。 |
+| G132 | Claude | **已重开 / 五倍 fresh 绕过导航 / G169 接管修复** | Cloud `LeaderTeamReturnCoordinator`、六组队任务入口；五倍阶段续接由 G169 修复 | **接任务入口守卫本体能等待归队，但五倍通过后阶段续接错误。** `00:08` 已知角色在火云戈壁，启动归队门完成后却直接进入 `ACCEPT_TASK`，绕过接任务导航并误点当地 NPC；G169 拆分启动等待与已到 NPC 等待的 source，并增加地图 fail-closed。 |
 | G131 | Claude | **SOURCE FIXED / 合同 5/5 / 变异 4/4 全杀 / 归队家族回归全绿 / FRESH REQUIRED** | Cloud `TeamReturnService`（重按前清障+腿登记+半路停下判定）+ `AutoBattleTask`（停下续探豁免） | **归队接入绿链停下恢复链（用户设计:归队与绿链同构,都是长时间走路）**:归队链路零清障+探针5轮烧完永久安静,OPTION框挡脸时白点到队长门超时。修=重按前走绿链同一条清障链(null任务码,触发点仍唯一)+停在半路(G130终局,intentId精确配对)且队长门开着即继续探到归位。完成判据仍归队长两道门。 |
 | G130 | Claude | **SOURCE FIXED / 合同 4/4 / 变异 3/3 全杀 / 回归零退化 / FRESH REQUIRED** | Client `WindowObservationSampler`（isValueStabilityMode 恒真=全任务数值判稳） | **停稳判定全任务统一读坐标数字（用户裁定：不能比图片）**：归队腿等非五环任务还在像素差值老路，背景飘红使 34.9% 像素超 5% 阈值被判"在动"，停稳计时永远清零、STOPPED_AWAY 永不触发（55,22 三分钟没变判 750 次）。云端翻译层本就通用零改动。遗留：像素死代码清理、归队门超时后下一轮自启冷却（待拍板）。 |
 | G127 | Claude | **SOURCE FIXED / 合同 14/14 / 变异 5/5 全杀 / 天庭零退化 / FRESH REQUIRED** | Cloud `TaskTrackerPanelService`（抓鬼与江湖历练暗雷判定接天庭现成 OCR 兜底腿） | **抓鬼/江湖历练暗雷漏判**：任务栏换行把"暗雷"二字拆开致模板必瞎（七次 0.319–0.392，阈值 0.65），任务空转十分钟。模板腿仍为第一腿，判 false 时以 2.5s 有界、fail-open 的 OCR 兜底改判；判据复用天庭现成的一份，天庭一行未动。待拍板：单字"暗"兜底是否收紧为只认"雷战"（收紧则本事故仍可修且消除含"暗"地名误判，代价是失去对 OCR 腐蚀的兜底）。 |

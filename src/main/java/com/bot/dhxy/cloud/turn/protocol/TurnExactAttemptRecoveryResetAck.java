@@ -21,5 +21,25 @@ public record TurnExactAttemptRecoveryResetAck(
         boolean pendingCombatTicketCleared,
         boolean preparedDialogActionCleared,
         boolean preparedActionJobCleared,
+        boolean combatAlreadyConfirmed,
+        boolean localEntryFailureInvalidated) {
+
+    /** Source compatibility for callers without conditional stationary recovery. */
+    public TurnExactAttemptRecoveryResetAck(
+        String taskRunId,
+        int round,
+        String attemptId,
+        boolean exactAttemptMatched,
+        boolean pathingCleared,
+        boolean observationLineageCleared,
+        boolean scheduleCleared,
+        boolean clickClaimCleared,
+        boolean clickProgressCleared,
+        boolean expectedCombatClaimCleared,
+        boolean pendingCombatTicketCleared,
+        boolean preparedDialogActionCleared,
+        boolean preparedActionJobCleared,
         boolean combatAlreadyConfirmed) {
+        this(taskRunId, round, attemptId, exactAttemptMatched, pathingCleared, observationLineageCleared, scheduleCleared, clickClaimCleared, clickProgressCleared, expectedCombatClaimCleared, pendingCombatTicketCleared, preparedDialogActionCleared, preparedActionJobCleared, combatAlreadyConfirmed, false);
+    }
 }

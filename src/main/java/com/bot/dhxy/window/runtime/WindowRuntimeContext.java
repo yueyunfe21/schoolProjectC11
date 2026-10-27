@@ -35,6 +35,8 @@ import com.bot.dhxy.model.dialog.DialogType;
 import com.bot.dhxy.window.model.WindowFlyingState;
 import lombok.extern.slf4j.Slf4j;
 
+import com.bot.dhxy.cloud.turn.protocol.TurnLocalEntryFailure;
+
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -93,13 +95,15 @@ public class WindowRuntimeContext {
     private final AtomicReference<PreparedDialogAction> preparedDialogAction = new AtomicReference<>();
     // CR253: 修罗 green-chain typed prepared jobs plus the attempt identity they are gated on.
     private final AtomicReference<XiuluoGreenChainSchedule> xiuluoGreenChainSchedule = new AtomicReference<>();
+    // G179: no ownership-release ACK while Wubei's queued physical click is unfinished.
+    private XiuluoGreenChainSchedule wubeiEntryInputInFlight;
     // TURN-40G: attempt-scoped one-shot local-kanda click claim (winner's attemptId; reset with the schedule).
     private final AtomicReference<String> xiuluoEnterBattleClickClaim = new AtomicReference<>();
     // A physical 看打 click is not a battle confirmation. This keeps the bounded local confirmation/retry state
     // attached to the exact schedule, while Cloud remains the only owner of a later green-link fallback.
     private final AtomicReference<XiuluoLocalKandaClickProgress> xiuluoLocalKandaClickProgress = new AtomicReference<>();
     /** Exact attempt whose terminal pathing ended before any local 看打 template became available. */
-    private final AtomicReference<String> xiuluoMissingKandaAfterPathingTerminalClaim = new AtomicReference<>();
+    private final AtomicReference<MissingKandaClaim> xiuluoMissingKandaAfterPathingTerminalClaim = new AtomicReference<>();
     /** Exact local-kanda attempt whose IN_COMBAT edge won before a concurrent recovery reset. */
     private final AtomicReference<XiuluoConfirmedCombatAttempt> xiuluoConfirmedCombatAttempt =
             new AtomicReference<>();
@@ -153,6 +157,8 @@ public class WindowRuntimeContext {
             new AtomicReference<>();
     private final AtomicReference<WindowFlyingState> taskQueueStartupFlyingState = new AtomicReference<>();
     private final AtomicReference<String> taskQueueStartupFlyingStateSource = new AtomicReference<>();
+    /** G194: one team-level flying fact, stored only on the exact leader window that owns the team. */
+    private final AtomicReference<LeaderFlyingStateSnapshot> leaderFlyingState = new AtomicReference<>();
     private final AtomicReference<DialogPreparationStatus> dialogPreparationStatus =
             new AtomicReference<>(DialogPreparationStatus.none());
     /** Current accepted run's numeric progress; null when the task has no finite counter. */
@@ -201,7 +207,14 @@ public class WindowRuntimeContext {
 
     public WindowRole getRole() { return role; }
 
-    public void setRole(WindowRole role) { this.role = role == null ? WindowRole.UNKNOWN : role; }
+    public void setRole(WindowRole role) {
+        WindowRole next = role == null ? WindowRole.UNKNOWN : role;
+        WindowRole previous = this.role;
+        this.role = next;
+        if (previous != next && (previous.isLeader() || next.isLeader())) {
+            clearLeaderFlyingState("window role changed:" + previous + "->" + next);
+        }
+    }
 
     public void updateRole(WindowRole role, String roleName) {
         setRole(role);
@@ -975,6 +988,7 @@ public class WindowRuntimeContext {
         taskQueueStartupPreparationDone.set(null);
         taskQueueStartupUiCleanupProbe.set(null);
         clearTaskQueueStartupFlyingState(source);
+        clearLeaderFlyingState("task queue reset:" + source);
     }
 
     /** @return true when this accepted queue already completed common startup UI preparation. */
@@ -1040,6 +1054,7 @@ public class WindowRuntimeContext {
         taskQueueStartupFlyingStateSource.set(normalizedSource == null ? "unknown" : normalizedSource);
         log.info("[window startup flying] marked: windowId={} state={} source={}",
                 windowId, normalizedState, taskQueueStartupFlyingStateSource.get());
+        updateLeaderFlyingState(normalizedState, "startup:" + source);
     }
 
     /**
@@ -1064,6 +1079,72 @@ public class WindowRuntimeContext {
         if (cleared != null || observedSource != null) {
             log.info("[window startup flying] cleared: windowId={} state={} observedSource={} source={}",
                     windowId, cleared, observedSource, normalize(source));
+        }
+    }
+
+    /**
+     * Read the current team flying state from the exact leader window.
+     *
+     * <p>Members deliberately return UNKNOWN: they follow the leader and never run their own flight
+     * detector or Alt+C adjustment. The stored HWND must still equal the current binding so a reused
+     * runtime cannot leak one team leader's state into another native window.</p>
+     *
+     * @param source diagnostic read source; nullable.
+     * @return FLYING/NOT_FLYING for the current exact leader, otherwise UNKNOWN.
+     */
+    public WindowFlyingState readLeaderFlyingState(String source) {
+        LeaderFlyingStateSnapshot snapshot = leaderFlyingState.get();
+        String currentHwnd = nativeBinding == null ? null : nativeBinding.getNativeHandle();
+        boolean exactLeader = isLeader()
+                && snapshot != null
+                && Objects.equals(currentHwnd, snapshot.hwnd());
+        WindowFlyingState result = exactLeader ? snapshot.state() : WindowFlyingState.UNKNOWN;
+        long ageMs = snapshot == null ? -1L : Math.max(0L, System.currentTimeMillis() - snapshot.updatedAtMs());
+        log.info("[leader flying state] read: windowId={} hwnd={} role={} state={} ageMs={} storedSource={} readSource={}",
+                windowId, currentHwnd, role, result,
+                ageMs, snapshot == null ? null : snapshot.source(), normalize(source));
+        return result;
+    }
+
+    /**
+     * Publish one team flying fact on the exact leader window.
+     *
+     * @param state FLYING/NOT_FLYING, or UNKNOWN/null to invalidate the fact.
+     * @param source diagnostic fact source; nullable.
+     * @return true when the exact leader accepted the requested state/clear; false for members,
+     *         missing HWND, or a stale FLYING write that arrived after combat became visible.
+     */
+    public boolean updateLeaderFlyingState(WindowFlyingState state, String source) {
+        WindowFlyingState normalizedState = state == null ? WindowFlyingState.UNKNOWN : state;
+        if (!isLeader() || normalizedState == WindowFlyingState.UNKNOWN) {
+            clearLeaderFlyingState(source);
+            return isLeader();
+        }
+        String hwnd = nativeBinding == null ? null : nativeBinding.getNativeHandle();
+        if (hwnd == null) {
+            clearLeaderFlyingState("missing leader HWND:" + source);
+            return false;
+        }
+        if (normalizedState == WindowFlyingState.FLYING && localCombatVisible) {
+            clearLeaderFlyingState("combat already visible:" + source);
+            log.info("[leader flying state] update rejected during combat: windowId={} hwnd={} role={} state={} source={}",
+                    windowId, hwnd, role, normalizedState, normalize(source));
+            return false;
+        }
+        LeaderFlyingStateSnapshot snapshot = new LeaderFlyingStateSnapshot(
+                normalizedState, hwnd, System.currentTimeMillis(), normalize(source));
+        leaderFlyingState.set(snapshot);
+        log.info("[leader flying state] updated: windowId={} hwnd={} role={} state={} source={}",
+                windowId, hwnd, role, normalizedState, snapshot.source());
+        return true;
+    }
+
+    /** Clear the current leader-owned team flying fact without probing pixels or sending input. */
+    public void clearLeaderFlyingState(String source) {
+        LeaderFlyingStateSnapshot cleared = leaderFlyingState.getAndSet(null);
+        if (cleared != null) {
+            log.info("[leader flying state] cleared: windowId={} hwnd={} role={} state={} storedSource={} source={}",
+                    windowId, cleared.hwnd(), role, cleared.state(), cleared.source(), normalize(source));
         }
     }
 
@@ -2122,6 +2203,10 @@ public class WindowRuntimeContext {
                 return false;
             }
             claimed = xiuluoEnterBattleClickClaim.compareAndSet(null, expected.getAttemptId());
+            WindowDialogInterest interest = dialogInterest.get();
+            if (claimed && interest != null && interest.getTaskType() == TaskType.WUBEI) {
+                wubeiEntryInputInFlight = expected;
+            }
         }
         log.info("[latency] event=window.local-kanda.claim windowId={} claimed={} expected=[{}] reason={}",
                 windowId, claimed, expected.identityText(), normalize(reason));
@@ -2178,6 +2263,9 @@ public class WindowRuntimeContext {
             return;
         }
         synchronized (xiuluoKandaTransitionLock) {
+            if (wubeiEntryInputInFlight != null && wubeiEntryInputInFlight.sameFullIdentity(expected)) {
+                wubeiEntryInputInFlight = null;
+            }
             XiuluoGreenChainSchedule schedule = xiuluoGreenChainSchedule.get();
             if (schedule == null || !schedule.sameFullIdentity(expected)) {
                 return;
@@ -2193,59 +2281,54 @@ public class WindowRuntimeContext {
     }
 
     /**
-     * Claims the bounded failure edge for a tracker shortcut that has already reached a terminal
-     * pathing state but never exposed a local 看打 template.
-     *
-     * <p>The terminal snapshot is retained across Cloud's pathing-clear command. Matching the exact
-     * attempt id prevents an old route from failing a replacement attempt, while the current ACTIVE
-     * guard prevents this recovery from firing during normal movement.</p>
-     *
-     * @param expected exact green-chain schedule being sampled.
-     * @return true exactly once when the same pathing attempt is terminal and no newer pathing owns
-     *         the window; false while moving, for stale attempts, or after the edge was claimed.
+     * Claims a missing-template failure for this exact schedule and stationary interval.
+     * STABLE only means 900ms coordinate stability; G156/G179 require 2200ms of observed
+     * stationary time for recovery. No wall-clock wait may mature an old snapshot.
+     * @param expected exact run/window/round/attempt being sampled; null is rejected.
+     * @return Client-clock failure identity, or null while moving, stale, or already reported.
      */
-    public boolean tryClaimXiuluoMissingKandaAfterPathingTerminal(XiuluoGreenChainSchedule expected) {
+    public TurnLocalEntryFailure claimXiuluoMissingKandaFailure(XiuluoGreenChainSchedule expected) {
         if (expected == null || expected.getAttemptId() == null || expected.getAttemptId().isBlank()) {
-            return false;
+            return null;
         }
         synchronized (xiuluoKandaTransitionLock) {
             XiuluoGreenChainSchedule liveSchedule = xiuluoGreenChainSchedule.get();
             if (liveSchedule == null || !liveSchedule.sameFullIdentity(expected)) {
-                return false;
+                return null;
             }
-
-            WindowPathingSnapshot current = pathingSnapshot.get();
-            WindowPathingIntent currentIntent = current == null ? null : current.getIntent();
-            if (currentIntent != null) {
-                if (!Objects.equals(expected.getAttemptId(), currentIntent.getIntentId())) {
-                    return false;
-                }
-                if (current.getState() == WindowPathingState.ACTIVE) {
-                    return false;
-                }
+            Long since = missingKandaStationarySince(pathingSnapshot.get(), expected.getAttemptId());
+            if (since == null) {
+                return null;
             }
-
-            WindowPathingSnapshot terminal = currentIntent != null
-                    ? current : lastKnownPathingLocation.get();
-            WindowPathingIntent terminalIntent = terminal == null ? null : terminal.getIntent();
-            /*
-             * G130(2026-08-31,停稳判定全任务数值判稳)通用回归修复:数值判稳的本地终态是
-             * STABLE——客户端侧从此不再产出 ARRIVED/STOPPED_AWAY(那是云端翻译层的词),这张
-             * 早于 G130 的白名单便永远放不行,"模板始终未出现"的看打耗尽上报全任务断供,
-             * 云端"清障+重按绿链"恢复链因此整条失火(2026-09-01 修罗 13:03 起、鬼王 19:4x 起
-             * 全天等待烧穿看门狗)。STABLE 语义上就是旧世界的"停下了",一并放行。
-             */
-            if (terminalIntent == null
-                    || !Objects.equals(expected.getAttemptId(), terminalIntent.getIntentId())
-                    || (terminal.getState() != WindowPathingState.ARRIVED
-                    && terminal.getState() != WindowPathingState.STOPPED_AWAY
-                    && terminal.getState() != WindowPathingState.STABLE
-                    && terminal.getState() != WindowPathingState.UNKNOWN)) {
-                return false;
+            MissingKandaClaim claim = new MissingKandaClaim(expected.getAttemptId(), since);
+            if (claim.equals(xiuluoMissingKandaAfterPathingTerminalClaim.get())) {
+                return null;
             }
-            return xiuluoMissingKandaAfterPathingTerminalClaim.compareAndSet(
-                    null, expected.getAttemptId());
+            xiuluoMissingKandaAfterPathingTerminalClaim.set(claim);
+            return new TurnLocalEntryFailure(TurnLocalEntryFailure.Kind.PATHING_TEMPLATE_MISSING, since);
         }
+    }
+
+    /** Compatibility entry for existing callers that only need the one-shot claim result. */
+    public boolean tryClaimXiuluoMissingKandaAfterPathingTerminal(XiuluoGreenChainSchedule expected) {
+        return claimXiuluoMissingKandaFailure(expected) != null;
+    }
+
+    private Long missingKandaStationarySince(WindowPathingSnapshot snapshot, String attemptId) {
+        if (snapshot == null || snapshot.getIntent() == null
+                || !Objects.equals(attemptId, snapshot.getIntent().getIntentId())) {
+            return null;
+        }
+        long since = Math.max(snapshot.getLocationChangedAtMs(), snapshot.getIntent().getCreatedAtMs());
+        if (since <= 0) {
+            return null;
+        }
+        if (snapshot.getState() == WindowPathingState.STABLE) {
+            return snapshot.getUpdatedAtMs() - since >= 2_200L ? since : null;
+        }
+        // Preserve older explicit terminal producers; UNKNOWN is not proof of stopping.
+        return snapshot.getState() == WindowPathingState.ARRIVED
+                || snapshot.getState() == WindowPathingState.STOPPED_AWAY ? since : null;
     }
 
     /**
@@ -2292,7 +2375,8 @@ public class WindowRuntimeContext {
                 && ("XIULUO_V2".equalsIgnoreCase(claim.taskCode())
                 || "XINSHOU_TRAINING".equalsIgnoreCase(claim.taskCode())
                 || "CATCH_GHOST".equalsIgnoreCase(claim.taskCode())
-                || "GHOST_KING".equalsIgnoreCase(claim.taskCode()));
+                || "GHOST_KING".equalsIgnoreCase(claim.taskCode())
+                || "WUBEI".equalsIgnoreCase(claim.taskCode()));
     }
 
     /**
@@ -2307,6 +2391,9 @@ public class WindowRuntimeContext {
         }
         boolean released;
         synchronized (xiuluoKandaTransitionLock) {
+            if (wubeiEntryInputInFlight != null && wubeiEntryInputInFlight.sameFullIdentity(expected)) {
+                wubeiEntryInputInFlight = null;
+            }
             XiuluoGreenChainSchedule schedule = xiuluoGreenChainSchedule.get();
             if (schedule == null || !schedule.sameFullIdentity(expected)) {
                 return;
@@ -2364,6 +2451,20 @@ public class WindowRuntimeContext {
      */
     public ExactAttemptAbandonResult abandonExactXiuluoAttempt(
             String taskRunId, int round, String attemptId, String reason) {
+        return abandonExactXiuluoAttempt(taskRunId, round, attemptId, reason, null);
+    }
+
+    /**
+     * Revokes exact ownership only while the supplied local failure is still valid.
+     * @param taskRunId nonblank business run id.
+     * @param round one-based round.
+     * @param attemptId nonblank pathing/schedule id.
+     * @param reason nullable diagnostic text.
+     * @param failure nullable legacy unconditional reset, otherwise Client stationary identity.
+     * @return invalidated acknowledgement without side effects if the old stop no longer holds.
+     */
+    public ExactAttemptAbandonResult abandonExactXiuluoAttempt(
+            String taskRunId, int round, String attemptId, String reason, TurnLocalEntryFailure failure) {
         if (taskRunId == null || taskRunId.isBlank()) {
             throw new IllegalArgumentException("taskRunId must not be blank");
         }
@@ -2390,8 +2491,29 @@ public class WindowRuntimeContext {
                     && Objects.equals(nativeBinding.getNativeHandle(), schedule.getHwnd());
             boolean matchingJobPresent = preparedActionJobs.values().stream()
                     .anyMatch(job -> exactAttemptMatches(job, taskRunId, round, attemptId));
+            if (scheduleMatched && wubeiEntryInputInFlight != null
+                    && wubeiEntryInputInFlight.sameFullIdentity(schedule)) {
+                throw new IllegalStateException("Wubei entry input still in flight; retry exact revocation");
+            }
             if (!scheduleMatched && !matchingJobPresent) {
                 return ExactAttemptAbandonResult.noMatch(taskRunId, round, attemptId);
+            }
+
+            if (failure != null && failure.kind() == TurnLocalEntryFailure.Kind.PATHING_TEMPLATE_MISSING) {
+                MissingKandaClaim expectedFailure = new MissingKandaClaim(attemptId, failure.stationarySinceMs());
+                Long liveSince = missingKandaStationarySince(pathingSnapshot.get(), attemptId);
+                if (!scheduleMatched || !Objects.equals(liveSince, failure.stationarySinceMs())
+                        || !expectedFailure.equals(xiuluoMissingKandaAfterPathingTerminalClaim.get())) {
+                    // A late old failure must not erase a newer stop's claim or revoke its route.
+                    MissingKandaClaim currentFailure = xiuluoMissingKandaAfterPathingTerminalClaim.get();
+                    if (expectedFailure.equals(currentFailure)) {
+                        xiuluoMissingKandaAfterPathingTerminalClaim.compareAndSet(currentFailure, null);
+                    }
+                    log.info("[local-runner] missing-template failure invalidated: windowId={} attemptId={} oldSince={} liveSince={}",
+                            windowId, attemptId, failure.stationarySinceMs(), liveSince);
+                    return new ExactAttemptAbandonResult(taskRunId, round, attemptId,
+                            true, false, false, false, false, false, false, false, false, false, false, true);
+                }
             }
 
             boolean clickClaimCleared = xiuluoEnterBattleClickClaim.compareAndSet(attemptId, null);
@@ -2451,7 +2573,7 @@ public class WindowRuntimeContext {
                     taskRunId, round, attemptId, true, pathingCleared, true, scheduleCleared,
                     clickClaimCleared, clickProgressCleared, expectedCombatClaimCleared,
                     pendingCombatTicketCleared, preparedDialogActionCleared,
-                    preparedActionJobCleared, false);
+                    preparedActionJobCleared, false, false);
         }
     }
 
@@ -2489,16 +2611,17 @@ public class WindowRuntimeContext {
             boolean pendingCombatTicketCleared,
             boolean preparedDialogActionCleared,
             boolean preparedActionJobCleared,
-            boolean combatAlreadyConfirmed) {
+            boolean combatAlreadyConfirmed,
+            boolean localEntryFailureInvalidated) {
 
         private static ExactAttemptAbandonResult noMatch(String taskRunId, int round, String attemptId) {
             return new ExactAttemptAbandonResult(taskRunId, round, attemptId,
-                    false, false, false, false, false, false, false, false, false, false, false);
+                    false, false, false, false, false, false, false, false, false, false, false, false);
         }
 
         private static ExactAttemptAbandonResult combatConfirmed(String taskRunId, int round, String attemptId) {
             return new ExactAttemptAbandonResult(taskRunId, round, attemptId,
-                    true, false, false, false, false, false, false, false, false, false, true);
+                    true, false, false, false, false, false, false, false, false, false, true, false);
         }
     }
 
@@ -3094,10 +3217,17 @@ public class WindowRuntimeContext {
      * @param snapshot fresh observation from the window watcher. Null is ignored.
      */
     public void updatePathingSnapshot(WindowPathingSnapshot snapshot) {
-        if (snapshot != null) {
-            pathingSnapshot.set(snapshot);
-            if (snapshot.getCurrentX() != null && snapshot.getCurrentY() != null) {
-                lastKnownPathingLocation.set(snapshot);
+        synchronized (xiuluoKandaTransitionLock) {
+            if (snapshot != null) {
+                pathingSnapshot.set(snapshot);
+                MissingKandaClaim claim = xiuluoMissingKandaAfterPathingTerminalClaim.get();
+                if (claim != null && !Objects.equals(
+                        missingKandaStationarySince(snapshot, claim.attemptId()), claim.stationarySinceMs())) {
+                    xiuluoMissingKandaAfterPathingTerminalClaim.compareAndSet(claim, null);
+                }
+                if (snapshot.getCurrentX() != null && snapshot.getCurrentY() != null) {
+                    lastKnownPathingLocation.set(snapshot);
+                }
             }
         }
     }
@@ -3601,6 +3731,7 @@ public class WindowRuntimeContext {
     }
 
     private void clearPlayerScopedTransientState(String reason) {
+        clearLeaderFlyingState("player-scoped reset:" + reason);
         clearPathingSignal(reason);
         clearOrdinaryPreBattleTimer(reason);
         clearVisibleDialogSnapshot(reason);
@@ -3895,6 +4026,12 @@ public class WindowRuntimeContext {
                                                   String source) {
     }
 
+    private record LeaderFlyingStateSnapshot(WindowFlyingState state,
+                                             String hwnd,
+                                             long updatedAtMs,
+                                             String source) {
+    }
+
     private static final class PendingDirectCombatEnterTicket {
         private final WindowExpectedCombatEnterClaim claim;
         private final long armedAtMs;
@@ -3950,4 +4087,5 @@ public class WindowRuntimeContext {
     public interface PreparedDialogActionValidator {
         PreparedDialogAction validate(PreparedDialogAction action);
     }
+    private record MissingKandaClaim(String attemptId, long stationarySinceMs) { }
 }

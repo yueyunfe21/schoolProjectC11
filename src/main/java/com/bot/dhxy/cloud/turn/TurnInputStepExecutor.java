@@ -107,6 +107,13 @@ public final class TurnInputStepExecutor {
     /** Deliver one validated key tap through the frozen exact-window input queue. */
     private Result deliverKeyTap(TurnExecutionWindow window, TurnInputSpec input) {
         String key = input.key();
+        if (com.bot.dhxy.cloud.turn.protocol.observation.FlightSaturationReading.GUARDED_ALT_C.equals(key)) {
+            // Only this opt-in flight adjustment key has a live combat gate. Ordinary Alt+C/Alt+8
+            // retain their existing behavior. The worker rechecks this after queueing, before input.
+            return toResult(submitThroughQueue(window, "turn:input:flight-adjustment:ALT_C",
+                    List.of(InputAction.pressAltC()), () -> window.context().isLocalCombatVisible()
+                            ? InputActionSafetyReason.COMBAT_ACTIVE : InputActionSafetyReason.CLEAR));
+        }
         TurnKeyboardKeys.AltShortcut alt = keyMapper.findBackgroundTap(key).orElse(null);
         if (alt != null) {
             InputAction serializedAlt = toSerializedAltAction(alt);

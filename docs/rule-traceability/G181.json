@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "card": "G181",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "repositories": {"cloud":"../dhxy-cloud-brain"},
+  "baseline": {
+    "clientBranch":"dev",
+    "clientCommit":"2236357413ffc64621626917ca4a66183895390d",
+    "cloudCommit":"c10078142bdc769717cf8980ffcf56e2e45da8aa",
+    "pushedReference":"2026-09-13 ls-remote origin dev verified both; existing dirty preserved; flight classifier and Tianting delta policy unchanged against pushed baseline"
+  },
+  "rules":["BR-FLIGHT-001","BR-WUBEI-010"],
+  "affectedPaths":["docs/业务逻辑.md","docs/rule-traceability/G181-contract.md",
+    {"repo":"client","path":"src/main/java/com/bot/dhxy/model/flight/FlightStateAdjustment.java"},
+    {"repo":"cloud","path":"src/main/java/com/bot/dhxy/model/flight/FlightStateAdjustment.java"},
+    {"repo":"client","path":"src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/FlightSaturationReading.java"},
+    {"repo":"cloud","path":"src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/FlightSaturationReading.java"},
+    {"repo":"client","path":"src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/ObservationFactType.java"},
+    {"repo":"cloud","path":"src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/ObservationFactType.java"},
+    {"repo":"client","path":"src/main/java/com/bot/dhxy/window/observation/WindowObservationSampler.java"},
+    {"repo":"client","path":"src/main/java/com/bot/dhxy/core/MatchEvidenceStore.java"},
+    {"repo":"client","path":"src/main/java/com/bot/dhxy/cloud/turn/TurnInputStepExecutor.java"},
+    {"repo":"cloud","path":"src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java"},
+    {"repo":"cloud","path":"src/main/java/com/yueyunfe/dhxy/cloudbrain/observation/CloudFlightAdjustmentService.java"},
+    {"repo":"cloud","path":"src/main/java/com/yueyunfe/dhxy/cloudbrain/host/CloudTurnRuntimeConfiguration.java"}],
+  "implementationStatus":"TWO_SECOND_GREEN_DELAY_AND_EXACT_FRAME_ROI_EVIDENCE_IMPLEMENTED_ISOLATED_COMPILE_PASSED_NOT_DEPLOYED_OR_TESTED",
+  "latestRepair":"User approved only 1000ms to 2000ms after green completion and exact sample evidence. Client Sampler/MatchEvidenceStore and Cloud WubeiTask/CloudFlightAdjustmentService isolated javac exit0. Thresholds and 1500ms post-key settle unchanged. No runtime evidence-write verification, restart or input; 19:11 visual misclassification not claimed fixed.",
+  "repairCompilation":"CloudTurnRuntimeConfiguration + CloudFlightAdjustmentService + WubeiTask current sources isolated javac exit 0; temp dhxy-g181-import-fix-0179f23395a148c4ab5bc62bc5a9b35b; no target/classes write or runtime execution",
+  "runtimeFailure":"2026-09-13 18:45-18:46 WubeiTask constructor parameter 19 cannot resolve CloudFlightAdjustmentService. Missing CloudTurnRuntimeConfiguration @Import; class exists. Diagnostic-only request, no production edit or runtime action this turn.",
+  "compilation":"Both repos javac -encoding UTF-8 -implicit:none -cp target/classes plus target/cp.txt -sourcepath src/main/java -d dedicated temp directory; 5 explicit sources each, exit 0. No target/classes writes, no class execution.",
+  "businessDifference": {
+    "kind":"USER_APPROVED",
+    "conflictSummary":"五倍绿链新增飞行调整、等待及失败分流为明确批准的业务新增；天庭等原调用不迁移",
+    "userDecision":"19:11现场后用户明确将五倍绿链后延迟从一秒改两秒，保存同帧原图/ROI及采样身份；不改阈值/按后等待，最终无法确认继续寻路。",
+    "decisionRecordedAt":"2026-09-13",
+    "cardReference":"docs/PACKAGE_ARCHITECTURE.md#G181"
+  },
+  "connectivity":[{
+    "rule":"BR-WUBEI-010",
+    "producer":"WubeiTask two actual green click success branches; WindowObservationSampler existing shared flight ROI",
+    "transport":"FLIGHT_SATURATION typed value with stage token and capture/geometry identity; exact observation run/window/HWND; serialized Turn Alt+C outcomes",
+    "consumer":"CloudFlightAdjustmentService and FlightStateAdjustment target FLYING; Wubei leaves original pathing result unchanged on UNCONFIRMED",
+    "ordering":"BR-WUBEI-010; post-input stage token requires new shared frame, one claim per key, combat/stop worker fence; final interest removed",
+    "contracts":[{"repo":"client","path":"docs/rule-traceability/G181-contract.md","command":"NOT RUN: no test authorization","proves":["two real green success sites only; no maintenance trigger; two-second minimum; exact shared raw/ROI evidence linked by token seq capture; fresh shared frames after input; unknown is not success; stop/combat retires"]}]
+  }],
+  "testStatus":"NOT RUN: no test authorization. Production call wiring implemented and compiled; no runtime/fresh verification, deployment or input. Not REVIEW_PASSED."
+}

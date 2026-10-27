@@ -56,7 +56,57 @@ public record TurnWholeTaskRuntimeArguments(
         Integer recoveryRound,
         String recoveryAttemptId,
         TurnDialogFollowUpClick dialogFollowUpClick,
+        String teamReturnTaskRunId,
+        TurnLocalEntryFailure localEntryFailure) {
+
+    /** Source compatibility for callers without conditional stationary recovery. */
+    public TurnWholeTaskRuntimeArguments(
+        String source,
+        TurnPathingIntent pathingIntent,
+        String intentId,
+        String sourcePrefix,
+        Long protectionMs,
+        String currentMapName,
+        Integer currentX,
+        Integer currentY,
+        String targetMapName,
+        Integer targetX,
+        Integer targetY,
+        Integer tolerance,
+        Long confirmTimeoutMs,
+        String taskCode,
+        String targetKeyword,
+        Long blockedMs,
+        List<String> interestOperations,
+        Long absentAllowedAtMs,
+        Boolean probeOnly,
+        Integer completedRuns,
+        Integer totalRuns,
+        Long dialogSnapshotMaxAgeMs,
+        TurnPendingTransferChoice transferChoice,
+        TurnPendingRouteOutcome routeOutcome,
+        String routeOutcomeReplacementReason,
+        String startupFlyingState,
+        Long probeStartAtMs,
+        String scheduleAttemptId,
+        Integer scheduleRound,
+        String scheduleTaskRunId,
+        Long scheduleOpenedAtMs,
+        String scheduleObservationRunId,
+        String replayObservationRunId,
+        String replayBusinessTaskRunId,
+        String expectedCombatClaimId,
+        String expectedCombatObservationRunId,
+        String expectedCombatBusinessTaskRunId,
+        String expectedCombatAttemptId,
+        TurnNpcArrivalFrameFifoSpec npcArrivalFifo,
+        String recoveryTaskRunId,
+        Integer recoveryRound,
+        String recoveryAttemptId,
+        TurnDialogFollowUpClick dialogFollowUpClick,
         String teamReturnTaskRunId) {
+        this(source, pathingIntent, intentId, sourcePrefix, protectionMs, currentMapName, currentX, currentY, targetMapName, targetX, targetY, tolerance, confirmTimeoutMs, taskCode, targetKeyword, blockedMs, interestOperations, absentAllowedAtMs, probeOnly, completedRuns, totalRuns, dialogSnapshotMaxAgeMs, transferChoice, routeOutcome, routeOutcomeReplacementReason, startupFlyingState, probeStartAtMs, scheduleAttemptId, scheduleRound, scheduleTaskRunId, scheduleOpenedAtMs, scheduleObservationRunId, replayObservationRunId, replayBusinessTaskRunId, expectedCombatClaimId, expectedCombatObservationRunId, expectedCombatBusinessTaskRunId, expectedCombatAttemptId, npcArrivalFifo, recoveryTaskRunId, recoveryRound, recoveryAttemptId, dialogFollowUpClick, teamReturnTaskRunId, null);
+    }
 
     /** Backward-compatible full constructor before exact recovery identity was added. */
     public TurnWholeTaskRuntimeArguments(

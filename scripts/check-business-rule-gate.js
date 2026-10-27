@@ -48,7 +48,7 @@ function validateRegistry(root, registry) {
 
   const seen = new Set();
   for (const rule of registry.rules) {
-    if (!rule || !/^BR-[A-Z0-9]+-[0-9]{3}$/.test(rule.id || "")) {
+    if (!rule || !/^BR-[A-Z0-9]+(?:-[A-Z0-9]+)*-[0-9]{3}$/.test(rule.id || "")) {
       errors.push(`非法业务规则 ID: ${rule && rule.id}`);
       continue;
     }

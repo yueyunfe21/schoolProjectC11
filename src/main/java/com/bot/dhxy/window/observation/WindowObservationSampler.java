@@ -40,6 +40,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.imageio.ImageIO;
+import com.bot.dhxy.cloud.turn.protocol.TurnLocalEntryFailure;
+
 import java.awt.Color;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
@@ -688,6 +690,10 @@ public final class WindowObservationSampler {
      * clearSharedCycleFrame 一并清零。
      */
     private volatile long sharedCycleFrameCapturedAtMs;
+    // Wall-clock start of the SAME physical capture, not the later upload/interest processing time.
+    private long sharedCycleFrameStartedAtEpochMs;
+    private String flightAdjustmentStageToken;
+    private long flightAdjustmentStageAfterFrameMs;
 
     /**
      * G103-CR：pace 绝对 deadline 读取口。0 = 当前无共享帧（清屏/捕获失败/静默成员）。
@@ -715,12 +721,14 @@ public final class WindowObservationSampler {
     private void refreshSharedCycleFrame() {
         clearSharedCycleFrame();
         int[] rect = coordinateHelper.getScaledRect(0, 0, 1024, 768);
+        long captureStartedAtMs = System.currentTimeMillis();
         BufferedImage frame = tracker.captureToMemory(
                 "observe:shared-cycle-frame", rect[0], rect[1], rect[2], rect[3]);
         if (frame != null) {
             sharedCycleFrame = frame;
             sharedCycleFrameRect = rect;
             sharedCycleFrameCapturedAtMs = monotonicMillis();
+            sharedCycleFrameStartedAtEpochMs = captureStartedAtMs;
         }
     }
 
@@ -731,6 +739,7 @@ public final class WindowObservationSampler {
             sharedCycleFrameRect = null;
         }
         sharedCycleFrameCapturedAtMs = 0L;
+        sharedCycleFrameStartedAtEpochMs = 0L;
     }
 
     /**
@@ -1169,7 +1178,8 @@ public final class WindowObservationSampler {
             armGhostKingChangshouFlightAssistFromMovingFrame();
             List<ObservationKeyEvent> events = new ArrayList<>();
             List<ObservationRoi> ignoredRois = new ArrayList<>();
-            if (localKandaEnabled && isDue(KANDA_PROBE_KEY, KANDA_PROBE_PERIOD_MS, now)) {
+            if ((localKandaEnabled || hasActiveWubeiEnterBattleInterest())
+                    && isDue(KANDA_PROBE_KEY, KANDA_PROBE_PERIOD_MS, now)) {
                 markSampled(KANDA_PROBE_KEY, now);
                 sampleXiuluoLocalKanda(now, events, ignoredRois);
             }
@@ -1191,7 +1201,7 @@ public final class WindowObservationSampler {
         });
     }
 
-    /** Whether the frozen 100ms WUBEI_ENTER_BATTLE preparation cadence currently applies. */
+    /** Wubei retains its 100ms physical-lane demand; local entry matching uses the shared 1s duty. */
     boolean hasActiveWubeiEnterBattleInterest() {
         WindowDialogInterest interest = context.getDialogInterest().orElse(null);
         return interest != null
@@ -1239,7 +1249,8 @@ public final class WindowObservationSampler {
         List<TerminalCandidateFrame> terminalFrames = new ArrayList<>(1);
         // Local kanda owns first refusal for this observation cycle. A successful click publishes its claim in
         // the dialog fact below and prevents a stale Cloud ROI from being captured in the same request.
-        if (localKandaEnabled && isDue(KANDA_PROBE_KEY, KANDA_PROBE_PERIOD_MS, now)) {
+        if ((localKandaEnabled || hasActiveWubeiEnterBattleInterest())
+                && isDue(KANDA_PROBE_KEY, KANDA_PROBE_PERIOD_MS, now)) {
             markSampled(KANDA_PROBE_KEY, now);
             try {
                 sampleXiuluoLocalKanda(now, events, rois);
@@ -1269,8 +1280,8 @@ public final class WindowObservationSampler {
         sampleTerminalCoordinateFrame(pathingFacts, rois, terminalFrames);
         sampleWalkingBaselineCoordinateRoi(pathingFacts, rois, now);
         List<ObservationDialogInterestFact> dialogInterests = sampleCurrentDialogInterestFact();
-        List<ObservationPreparedDialogFact> preparedDialogs =
-                sampleWubeiEnterBattlePrepared(dialogInterests, observerSeq, now);
+        // G179: no clickable candidate is sent to a second (Cloud) execution owner.
+        List<ObservationPreparedDialogFact> preparedDialogs = List.of();
         if (combatSignalInterestActive
                 && isDue(LocalCombatSignalMechanics.INTEREST_KEY, LocalCombatSignalMechanics.SAMPLE_PERIOD_MS, now)) {
             markSampled(LocalCombatSignalMechanics.INTEREST_KEY, now);
@@ -1311,6 +1322,55 @@ public final class WindowObservationSampler {
             try {
                 if (INTEREST_PREBATTLE_TIMER.equals(interest.interestKey())) {
                     samplePreBattleTimerEdge(now, events);
+                    markSampled(interest.interestKey(), now);
+                } else if (com.bot.dhxy.cloud.turn.protocol.observation.FlightSaturationReading.INTEREST_KEY
+                        .equals(interest.interestKey())) {
+                    // A new stage is issued only after the preceding input ACK/settle (or green delay).
+                    // Refuse even a freshly uploaded cached frame captured before this stage arrived.
+                    String token = interest.detail();
+                    if (token == null || token.isBlank() || localCombatVisible) {
+                        continue;
+                    }
+                    if (!Objects.equals(flightAdjustmentStageToken, token)) {
+                        flightAdjustmentStageToken = token;
+                        flightAdjustmentStageAfterFrameMs = sharedCycleFrameCapturedAtMs;
+                        continue;
+                    }
+                    if (sharedCycleFrameStartedAtEpochMs <= 0L
+                            || sharedCycleFrameCapturedAtMs <= flightAdjustmentStageAfterFrameMs
+                            || !isDue(interest.interestKey(), 500L, now)) {
+                        continue;
+                    }
+                    int[] flightRect = coordinateHelper.getScaledRect(
+                            FlyingSaturationLocalMechanics.ROI_LEFT,
+                            FlyingSaturationLocalMechanics.ROI_TOP,
+                            FlyingSaturationLocalMechanics.ROI_WIDTH,
+                            FlyingSaturationLocalMechanics.ROI_HEIGHT);
+                    String geometry = java.util.Arrays.toString(sharedCycleFrameRect) + ":"
+                            + java.util.Arrays.toString(flightRect);
+                    // Classify and preserve the SAME shared-frame crop. No extra capture, no re-match.
+                    BufferedImage flightRoi = cropSharedCycleFrame(flightRect);
+                    FlyingSaturationLocalMechanics.Sample sample;
+                    try {
+                        sample = FlyingSaturationLocalMechanics.classify(flightRoi);
+                        String sampleId = token + "-seq-" + observerSeq + "-at-" + sharedCycleFrameStartedAtEpochMs;
+                        MatchEvidenceStore.saveSample("flight-adjustment", context.getWindowId(), sampleId,
+                                sharedCycleFrame, flightRoi,
+                                "windowId=" + context.getWindowId() + "\nrun=" + taskRunId
+                                        + "\ntoken=" + token + "\nobserverSeq=" + observerSeq
+                                        + "\ncapturedAtMs=" + sharedCycleFrameStartedAtEpochMs
+                                        + "\ngeometryScreenAbsoluteLTRB=" + geometry
+                                        + "\nmeanSaturation=" + sample.meanSaturation()
+                                        + "\npixelCount=" + sample.pixelCount() + "\n");
+                    } finally {
+                        if (flightRoi != null) {
+                            flightRoi.flush();
+                        }
+                    }
+                    facts.add(new ObservationFact(ObservationFactType.FLIGHT_SATURATION,
+                            new com.bot.dhxy.cloud.turn.protocol.observation.FlightSaturationReading(
+                                    token, sample.meanSaturation(), geometry).encode(),
+                            sharedCycleFrameStartedAtEpochMs));
                     markSampled(interest.interestKey(), now);
                 } else if (FlyingSaturationLocalMechanics.TIANTING_DARK_THUNDER_INTEREST_KEY.equals(
                         interest.interestKey())
@@ -1691,6 +1751,13 @@ public final class WindowObservationSampler {
                 localCombatGeneration++;
                 localCombatEntryPublished = false;
                 context.updateLocalCombatGeneration(localCombatGeneration, true);
+                if (context.isLeader()) {
+                    // Entering combat deterministically grounds the whole team. Members follow this
+                    // leader and never maintain an independent flight cache.
+                    context.updateLeaderFlyingState(
+                            com.bot.dhxy.window.model.WindowFlyingState.NOT_FLYING,
+                            "runner combat entry:generation=" + localCombatGeneration);
+                }
                 boundExpectedCombatClaim =
                         context.bindExpectedCombatEnterClaim(taskRunId, localCombatGeneration);
                 context.confirmLocalTemplateCombatEntry(boundExpectedCombatClaim);
@@ -3142,6 +3209,8 @@ public final class WindowObservationSampler {
      * the single input queue. Click success waits for Runner-confirmed {@code IN_COMBAT}; no combat within four
      * seconds re-arms the same attempt for at most two more local clicks. Only the final local exhaustion is
      * reported to Cloud, which alone may decide a saved-green fallback.
+     * G179 adds Wubei's washed-template adapter to this same owner; its interest operation is
+     * WUBEI_ENTER_BATTLE, and Cloud receives execution facts rather than a second clickable candidate.
      */
     private void sampleXiuluoLocalKanda(long now,
                                         List<ObservationKeyEvent> events,
@@ -3156,11 +3225,13 @@ public final class WindowObservationSampler {
         if (interest.getTaskType() != TaskType.XIULUO_V2
                 && interest.getTaskType() != TaskType.XINSHOU_TRAINING
                 && interest.getTaskType() != TaskType.CATCH_GHOST
-                && interest.getTaskType() != TaskType.GHOST_KING) {
+                && interest.getTaskType() != TaskType.GHOST_KING
+                && interest.getTaskType() != TaskType.WUBEI) {
             return;
         }
         if (interest.getOperations() == null
-                || !interest.getOperations().contains(DialogOperation.XIULUO_ENTER_BATTLE)) {
+                || !interest.getOperations().contains(interest.getTaskType() == TaskType.WUBEI
+                        ? DialogOperation.WUBEI_ENTER_BATTLE : DialogOperation.XIULUO_ENTER_BATTLE)) {
             return;
         }
         if (!interest.isLocalTemplateProbeOnly()) {
@@ -3211,7 +3282,8 @@ public final class WindowObservationSampler {
                     "enter-battle-click-failed-" + schedule.getAttemptId(),
                     ObservationKeyEventType.ENTER_BATTLE_CLICK_FAILED,
                     now, null, schedule.getAttemptId(), schedule.getRound(), "local-kanda",
-                    "reason=no-in-combat-after-three-executed-clicks", null, null, null, null));
+                    "reason=no-in-combat-after-three-executed-clicks", null, null, null, null,
+                    new TurnLocalEntryFailure(TurnLocalEntryFailure.Kind.CLICK_CONFIRMATION_FAILED, null)));
             return;
         }
         long epochBefore = context.getPlayerIdentityEpoch();
@@ -3241,15 +3313,19 @@ public final class WindowObservationSampler {
                         ObservationKeyEventType.ENTER_BATTLE_CLICK_FAILED,
                         now, null, schedule.getAttemptId(), schedule.getRound(), "local-kanda",
                         "reason=template-gone-without-combat-after-executed-click",
-                        null, null, null, null));
-            } else if (retryState == WindowRuntimeContext.XiuluoKandaRetryState.AVAILABLE
-                    && context.tryClaimXiuluoMissingKandaAfterPathingTerminal(schedule)) {
+                        null, null, null, null,
+                        new TurnLocalEntryFailure(TurnLocalEntryFailure.Kind.CLICK_CONFIRMATION_FAILED, null)));
+            } else if (retryState == WindowRuntimeContext.XiuluoKandaRetryState.AVAILABLE) {
+                TurnLocalEntryFailure failure = context.claimXiuluoMissingKandaFailure(schedule);
+                if (failure == null) {
+                    return;
+                }
                 events.add(new ObservationKeyEvent(
-                        "enter-battle-click-failed-" + schedule.getAttemptId(),
+                        "enter-battle-click-failed-" + schedule.getAttemptId() + "-stop-" + failure.stationarySinceMs(),
                         ObservationKeyEventType.ENTER_BATTLE_CLICK_FAILED,
                         now, null, schedule.getAttemptId(), schedule.getRound(), "local-kanda",
                         "reason=template-never-appeared-after-pathing-terminal",
-                        null, null, null, null));
+                        null, null, null, null, failure));
             }
             return;
         }

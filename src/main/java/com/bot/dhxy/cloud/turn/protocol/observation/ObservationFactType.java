@@ -51,6 +51,8 @@ public enum ObservationFactType {
     UNKNOWN_PHASE_DIALOG_FRAME_BOUNDS,
     /** On-demand local saturation classification for one confirmed 天庭暗雷 attempt. */
     TIANTING_DARK_THUNDER_FLIGHT_STATE,
+    /** G181 raw shared-frame saturation; value encoded by FlightSaturationReading. */
+    FLIGHT_SATURATION,
     /**
      * Client-local 天庭 dialog option outcome; the value names the matched option template and whether
      * the local click executed, so the Cloud learns what its window just answered without ever

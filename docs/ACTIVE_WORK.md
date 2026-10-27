@@ -1,5 +1,529 @@
 # DHXY Active Work
 
+## G184 软件内自动更新真实 A→B 发布测试（2026-10-26）
+
+- **用户授权与目标：** 用户明确要求现在生成并发布一个可供软件内点击更新的测试新版；用户侧不得手工下载、解压或选择安装目录，点击更新后由客户端后台取包、校验、安装并重启。本轮允许制作和公开一个 `optional` 测试 Release，并激活推荐版本公告；不启用 `required`、不禁用任何旧版、不启动游戏或发送输入。
+- **活动工作树与推送基线：** 目标为 `D:\mavenProject\DHXY-cr271`，shell 已确认 `dev@2236357413ffc64621626917ca4a66183895390d`，`HEAD == origin/dev`；`origin/master@0468cc101b383700e224e7e4bf2fee551de930f1`。受保护 `D:\mavenProject\DHXY` 不修改。当前多卡 dirty 与未跟踪文件全部保留，发布前不得用宽泛 add/commit 混入未知文件；先核实际编译闭包、凭据门、干净 A/B 产物和远端发布能力。
+- **开始前事实：** 本地更新按钮真实匿名请求已部署 Worker；2026-10-26 只读返回 `revision=0 / enforced=false / latestVersion="" / releaseUrl=""`。GitHub 公共仓库当前无 Release；更新器、工作流和发布脚本仍在本地 dirty/untracked，远端尚不可运行。现有 `g184-fresh-package-20260921-r2` 为 `dirty=true / NOT_TESTED`，`ClientUpdateService.checkedRoot()` 会拒绝其自动替换，不能冒充测试基准 A。
+
+## G194 跨绿链飞行状态连续性与失效边界调查（2026-10-25）
+
+- **目标与基线：** 用户指出五倍白龙马第一个坐标已经确认/切为飞行，显形镜未召出目标后转第二个坐标却再次判断飞行，既慢又受地图画面影响。本轮按调查优先规则只读 Client `D:\mavenProject\DHXY-cr271`（`dev@2236357413ffc64621626917ca4a66183895390d`）与 Cloud `D:\mavenProject\dhxy-cloud-brain`（`dev@c10078142bdc769717cf8980ffcf56e2e45da8aa`）；两端 HEAD 与 `origin/dev` 一致，既有多卡 dirty 全保留，受保护 `D:\mavenProject\DHXY` 未修改。未改生产代码、未编译/测试、未重启或发送输入。
+- **现有缓存结论：** Client `WindowRuntimeContext.taskQueueStartupFlyingState` 只保存任务队列启动阶段的 Alt+U 模板结果，并由 `consumeTaskQueueStartupFlyingState()` 一次性取走；注释也限定“首任务首轮”。当前 Cloud 仍有读写该值的接口，但全仓没有运行调用方消费它，旧五倍首接消费逻辑已随历史 prepath 删除。因此它不是当前人物飞行状态缓存，不能让白龙马第二个绿链复用。`CloudFlightAdjustmentService.adjust` 的 attempt、判定器和样本状态全部是单次调用局部变量，调用结束即丢失。
+- **源码触发原因：** 五倍公共 `clickTrackerGreenSegment` 在每次 tracker 绿链点击成功且登记寻路后，无条件执行 `flightAdjustmentService.adjust(... FLYING ...)`。`first-probe`、`second-probe` 及同一 second-probe 的再次点击都走这个入口；没有“本窗口已知飞行且之后未失效”的短路条件。所以第二个 link 不是碰巧复检，而是必然重新建一个 G181 attempt。
+- **09:19～09:21 fresh 证据：** 同一窗口 `hwnd-710F5E`、同一 WUBEI run 中，09:20:01 first-probe 取样 `S=0.066063`，以 `ASSUMED_TARGET` 在 `1229ms` 结束；09:20:25 使用显形镜未出现目标，09:20:29 转 second-probe。09:20:35 新 attempt 取样 `S=0.315910` 后执行两次 Alt+C，09:20:41 才以 `CONFIRMED_TARGET` 结束，耗时 `9076ms`。随后同一 second-probe 又在 09:20:47、09:21:04 重点，每次均新建 attempt、各按两次 Alt+C，后一次耗时 `9583ms`；这些动作之间没有战斗入口。该日志直接证明飞行连续性没有保存，且复检实际造成重复切换与持 turn 延迟。
+- **同帧图片核对：** 两次决策使用同一窗口绝对 ROI `[1565,366,1632,404]`。first-probe 实际 `roi.png` 为灰绿色地表，second-probe 实际 `roi.png` 已变为黄褐色地表；并非同一视觉分布。证据目录分别为 `images/temp/match-evidence/flight-adjustment/hwnd-710F5E/1ced18f4-1f23-4e6a-a252-b03c1a9783bd_0-seq-350-at-1792934400974/` 与 `.../4a68b398-f54d-46b0-8517-ad7d3769b81b_0-seq-381-at-1792934435256/`。这支持用户关于固定 ROI 受地图背景影响的判断；不据此声称任意地图阈值都能统一修好。
+- **用户批准与语义澄清：** 用户批准实施，并明确一支队伍的飞行状态由队长代表，不是五个角色各自判断。队长飞行时队员随队飞行；队员没有检测、切换或独立缓存。多支独立队伍则由各自队长隔离保存。缓存机制也不能写成五倍专用：它属于公共 `CloudFlightAdjustmentService`，任何以后调用该服务的队长任务都会复用；当前仓库只有五倍实际调用，所以本轮可见效果首先落在五倍。
+- **实现：** Client `WindowRuntimeContext` 新增 exact leader HWND 绑定的 `FLYING/NOT_FLYING/UNKNOWN` 连续状态，startup Alt+U 结果可作为初值；成员读写均收口为 UNKNOWN/无状态。新增两条 typed whole-task local operation 供 Cloud 公共服务读取/更新，双仓协议文件保持同字节。`CloudFlightAdjustmentService.adjust` 在两秒等待和像素采样之前先读状态，目标已知时立刻记录 `skipPixels=true skipAltC=true` 并返回；G181 实际以 `ASSUMED_TARGET`/`CONFIRMED_TARGET` 成功后统一写回，不在 `WubeiTask` 增加任务私有 boolean 或 taskCode 分支。
+- **失效边界：** Runner 对队长窗口确认真实 `IN_COMBAT` 时直接记 `NOT_FLYING`；`InputActionWorker` 在队长真实物理 `PRESS_ALT_C` 执行前清空为 UNKNOWN，G181 只有确认后才写回。角色由队长变队员/反向变化、HWND/玩家身份漂移、任务运行清空均失效。普通换地图、点绿链、自动寻路和使用显形镜不清。程序外人工 Alt+C 仍无法可靠观察，这是明确限制。
+- **验证：** Client 340 主源码隔离编译到 `.release-build/g194-leader-flight-client-final2` 成功；Cloud 692 主源码隔离编译到 `.release-build/g194-leader-flight-cloud` 成功。常规 Maven 定向测试在运行 G194 前被既有 `LocalTurnActionExecutorContractTest` 缺失 `LocalPathingStartProofMechanics` 的 testCompile 错误阻断；改用同一 JUnit 1.10.2 对 G194 单文件隔离编译/运行，5/5 通过，覆盖成员不持状态、两个队长不串、角色/HWND/run 失效、入战后迟到飞行写入被拒、公共服务无五倍专用分支及两个物理失效接点。未重启、未发送输入；fresh 验收应在 first-probe 成功后看到 second-probe 的 `G194 leader flight continuity reused`，且期间不得再出现新 flight sample/Alt+C；入战后下一次应先读到 NOT_FLYING 再走 G181。
+
+## G193 五倍与修罗医宝宝坐标随机层级核对（2026-10-25）
+
+- **目标与基线：** 用户观察五倍去医宝宝时点击位置似乎固定，要求对照修罗。活动治理/Client 树为 `D:\mavenProject\DHXY-cr271` 的 `dev@2236357413ffc64621626917ca4a66183895390d`，Cloud 为 `D:\mavenProject\dhxy-cloud-brain` 的 `dev@c10078142bdc769717cf8980ffcf56e2e45da8aa`；两树既有多卡 dirty 全保留，受保护 `D:\mavenProject\DHXY` 未修改。本卡只读调查，未修改生产代码、未发送输入。
+- **地图目标层结论：** 五倍 `WubeiTask` 的医宝宝目标固定为宝象国 `(95,126)`，每次直接把 `npc.getX()/getY()` 传给 `NavigationRequest`。修罗 `XiuluoTaskV2` 的基准目标为灵兽村 `(116,70)`，每次导航前调用 `randomizedNpcTargetPoint`，X/Y 独立取 `-1/0/+1`，因此有九种逻辑地图目标组合。用户记得的“修罗已经随机”指的是这一层；五倍确实没有这一层。
+- **小地图屏幕点击层结论：** 两条任务都未关闭 `NavigationRequest.randomizeMiniMapClickPoint`，所以都会沿用默认 `true` 和 `4px` 半径；`MiniMapPointResolver` 在逻辑坐标转换成窗口内小地图点后，对 X/Y 各施加 `[-4,+4]px` 随机偏移，并避免 `(0,0)`。因此五倍不是每次点击同一个屏幕像素，只是围绕同一个逻辑地图目标做小抖动。
+- **fresh 日志证据：** 同一 `hwnd-710F5E` 的两次五倍医宝宝小地图点击分别为 `2026-10-25 09:45:31 (1220,677)` 与 `10:16:52 (1222,684)`，随后均登记 `source=wubei:heal-pet-npc:currentMap`；这直接排除“实际屏幕坐标完全相同”。真正 NPC 点击也不是固定点：同窗两次沙拉买提 tooltip 点击为 `(1490,588)`、`(1468,549)`；另一窗口的记忆点击为 `(686,395)`。其中成功记忆重放还会由公共 `NpcClickService` 加截断高斯抖动（X 最大 `±5px`、Y 最大 `±4px`）。
+- **待用户决策：** 若要让五倍与修罗行为一致，不能再在五倍复制一个私有随机函数。建议把“维护 NPC 逻辑地图目标抖动半径”做成公共维护配置/入口，五倍与修罗均设为每轴 `1` 个地图单位；保留现有小地图 `4px` 抖动和 NPC 点击策略不变。该建议会改变任务导航业务行为，须用户明确批准后另行实施并补合同/实跑验收。
+
+## G192 prepared action 与 Dialog Interest 生命周期脱节（2026-10-25）
+
+- **目标与基线：** 用户指出 G190 不应只在五倍显形镜故事阶段清理旧接任务动作，本轮按“是否应下沉为全任务通用机制”只读横查，尚未修改生产代码。治理/Client 树为 `D:\mavenProject\DHXY-cr271` 的 `dev@2236357413ffc64621626917ca4a66183895390d`，Cloud 为 `D:\mavenProject\dhxy-cloud-brain` 的 `dev@c10078142bdc769717cf8980ffcf56e2e45da8aa`，均与 `origin/dev` 一致；两树现有多卡 dirty 全保留，受保护 `D:\mavenProject\DHXY` 未修改。
+- **结论：** 用户判断正确。G190 在 `WubeiTask` 的 phase 边界精确退休 `WUBEI_ACCEPT_TASK` 是现场止血和最终防线，不是完整根修；显形镜仅是旧接任务动作恰好阻塞新 `WUBEI_PROBE_STORY` 的首个实跑暴露点。根因属于所有“由当前 Dialog Interest 授权产生并发布到共享 prepared-action 单槽”的动作，与五倍或显形镜业务本身无关。
+- **公共缺口：** `ObservationDialogInterestFact` 已携带稳定 `interestId`，并明确约定 inactive clear 仍保留被撤销的 id；同一上传内的 ROI/Client-prepared fact 也会按 id、revision、observerSeq 复核。但 `CloudWholeTaskObserver` 将识别结果转换成 `PreparedDialogAction` 后没有保留 `interestId`，发布后便无法回答“这个槽中动作属于哪一代 interest”。因此旧帧在撤销前已上传、撤销后才完成识别时，可以合法发布并无限占槽。
+- **影响面：** 旧 `probeAttention` 公共路径同时为五倍接任务和修罗兼容族（修罗、新手历练、抓鬼、鬼王）的 `XIULUO_ENTER_BATTLE` 产生动作；Client-prepared 转换也存在同样的发布后代次丢失。五环家族已有更完整的 demand/interest 退休链，G175 的五倍故事 mailbox 也会在 interest 变化时清理已发布 action，但这些局部实现没有覆盖旧公共发布路径。鬼王/天庭等本地接任务 ready-event 不是该单槽来源，不能把“所有任务”误做成无条件清空所有动作。
+- **用户批准与实施：** 用户明确要求按通用机制修复，不再为单个任务继续复制清理分支。Client/Cloud 同名 `PreparedDialogAction` 已增加可空 `dialogInterestId`；旧公共 Dialog、G175 mailbox、五环 demand/ABSENT、Client-prepared 转换和修罗兼容族 stopped-static 发布都写入准确来源代次。`CloudWholeTaskObserver` 每轮在任务专属探针前统一对账：同一 active id 保留；明确 inactive 或新 active id 换代时，按刚观察到的 exact actionId CAS 退休；事实缺失和 lineage 为空均不清。inactive fact 没有 taskCode，公共读取现按绑定/run 接受它作为明确撤销证据。G190 phase 守卫保留为五倍末端保险。
+- **安全边界：** 该规则不按 operation、任务名或 phase 猜测；tracker 绿链、title rearm、纯 route 和机械动作没有 `dialogInterestId`，不会被清。若 interest 与动作之间发生并发替换，`clearForRunOwnerActionId` 只删除原 actionId，新动作存活。五环自己的 demand/receipt 状态会在看到槽被精确退休后继续执行既有 frame 取消和状态收口，不新增鼠标或键盘输入。
+- **验证结果：** Cloud 692 个主源码隔离编译到 `.release-build/g192-dialog-interest-lifecycle` 成功，Client 340 个主源码同名隔离编译成功。G192 通用合同 3 项、G190 五倍末端保险 2 项、G118 五环跨链移交 3 项合计 `8/8` 单独执行通过；覆盖同 id 保留、明确撤销/换代、事实缺失、非 Dialog 动作、lineage 接线和 exact actionId 清理。Cloud `package` 已通过主源码阶段，但全仓既有 234 个测试的 `testCompile` 仍被多处旧构造参数/枚举/方法签名错误阻断，不是 G192 错误。未重启、未发送输入；fresh 验收应看到 `dialog-interest action retired` 后新 interest 的动作正常发布/消费，且不得出现 tracker/route/mechanical 被该日志清理。
+
+## G191 五倍回城道具最右格扫描截断（2026-10-25）
+
+- **目标与基线：** 用户先要求调查约 11:00 队长回城道具为什么反复识别失败，确认最右格截断后明确批准实施。活动树 `D:\mavenProject\DHXY-cr271` 为 `dev@2236357413ffc64621626917ca4a66183895390d`，HEAD 与 `origin/dev` 一致；修改前 `BagService.java` 对推送基线无差异，现有其它卡 dirty 全保留，受保护 `D:\mavenProject\DHXY` 未修改。
+- **时间线：** `10:42:10.064` 当前页道具仍在内侧格，运行时 `score=1.000` 并于 `10:42:11.569` 使用成功。`10:43:35` 起道具移到最右格；`10:43`、`10:57`、`10:59` 三次流程均连续执行两次 `FIND_AND_USE_TASK_PAGE`，背包正常打开、锚点正常、任务页点击正常，但模板均未命中。Cloud 收到 not-used 后进入 `ROUTE_TO_MAIN_TASK`，所以画面上表现为普通导航回城。
+- **根因证据：** 主背包扫描矩形固定为 `(899,732)-(1211,940)`、宽 `312px`，而六列网格右边界约为相对 `x=328`。失败图 `images/temp/match-evidence/bag-item-current-page/20261025_104335_282_unknown_ABSENT_score-na.png` 的最佳候选为 `(285,120)`，模板尺寸 `27x15`，右边恰好落在 `x=312` 截图边界；生产同算法得分 `0.7611582279`，低于 `BAG_ITEM_MATCH_RATE=0.85`。`10:59` 的四张 miss 图哈希一致，均能肉眼看到最右格残缺道具。对照成功证据为 `images/temp/match-evidence/bag-item-current-page/20261025_104210_064_unknown_PRESENT_score-1.000.png`。
+- **实现：** 用户批准后仅把 `BagService.MAIN_BAG.gridW` 从 `312` 补到 `328`；当前页和切页扫描共享该布局。模板、`0.85` 阈值、点击算法、回城重试及 Cloud fallback 均未改。生产源码 diff 只有该数值和一行解释第六格边界的注释。
+- **真实裁图验证：** 使用 `images/test-cases/bag/wuhuan-6056-main-bag-zhengli-anchor.png` 完整原帧；当前 `anchor_cunkuan.png` 回放 `score=1.000`、中心 `(217,394)`。按生产公式从 `(41,435)` 裁出 `312x208` 与 `328x208`，结果保存到 `images/test-cases/bag/g191/`；标记图 `main-bag-grid-312-vs-328-marked.png` 中红线为旧 `312px` 截止位置，右侧16px来自同一原帧，清楚包含第六格剩余部分和完整右边框。执行工具为 Python/OpenCV `matchTemplate(TM_CCOEFF_NORMED)` 与等坐标裁图；未改生产参数。
+- **边缘匹配回放：** 使用同一真实背包原帧及仓库真实 `wubei_return_item.png` 制作第六格边缘 testcase，生产同款算法下旧 `312px` 为 `score=0.370 / matched=false`，新 `328px` 为 `score=1.000 / matched=true`，新图上的绿色框和红色点击点均落在道具中心。输入及标记输出为 `images/test-cases/bag/g191/edge-return-item-replay-*.png`；此处仅边缘位置为合成测试，不冒充11点完整现场。
+- **编译与fresh门：** 首次 Maven 调用被 PowerShell 拆坏 `-D` 参数，未进入编译；改用完整引号后，340 个主源码隔离编译到 `.release-build/g191-main-bag-roi` 成功（27.834s），`javap` 确认字节码常量 `328`。`git diff --check` 无新增错误，仅仓库既有 CRLF 警告。未重启客户端、未发送游戏输入；下一次真实最右格回城需验收扫描 `endX=startX+328`、模板分数达到阈值并出现 `action=USE success=true`。
+
+## G190 五倍接任务旧帧迟到重发占槽（2026-10-25）
+
+- **目标与基线：** 用户在根因与修改方案确认后批准实施。治理树 `D:\mavenProject\DHXY-cr271` 为 `dev@2236357413ffc64621626917ca4a66183895390d`，Cloud `D:\mavenProject\dhxy-cloud-brain` 为 `dev@c10078142bdc769717cf8980ffcf56e2e45da8aa`；两树既有多卡 dirty 全保留，受保护 `D:\mavenProject\DHXY` 未修改。当前 Cloud PID 仍是 G189 隔离重编前启动的旧 JVM，且活动 `target/classes` 曾被误刷新，后续任何实跑都必须先完整重启。
+- **现场结论：** 第一条 `WUBEI_ACCEPT_TASK` 在 09:47:29.122 发布、29.183 消费，Client 29.184 清 interest 并执行点击。observerSeq 2078 已在 29.152 依旧 interest 发出，Cloud 30.214 处理后又发布 actionId `3659bc09-d7c4-47a7-aefb-ecb0438ab7b7`。任务随后识别 `宝象谜情|显形镜`，但从 09:48:03 起等待 `WUBEI_PROBE_STORY` 时一直命中 `mismatch=operation`；09:49:58 waitAgeMs=120031。队长有 turn、寻路已有 terminal，真正阻塞点是过期接任务动作占用单槽。
+- **与用户现场一致：** 09:47:56.990 已实际点击显形镜，09:47:58.490 Client 回报使用成功，09:47:58.492 Cloud 记录 `probe item used=true`；画面此后出现白龙马符合现场。当前链本应取得 `WUBEI_PROBE_STORY` 结果后启动白龙马 smart-click。槽中 `WUBEI_ACCEPT_TASK` 只是早期接任务旧帧迟到产生的垃圾状态，不表示当前阶段仍要接任务；它拦住了故事结果，因而没有走到点击白龙马。
+- **源码归因：** Client 清 interest 只先改本地 `WindowRuntimeContext`；`WindowObservationSampler` 会在下一次请求发送一次 inactive fact，本轮直到 09:47:31.424 才应用新 interest 集。Cloud `probeQueuedDialogAttention` 的 G175 邮箱门仅支持 operations 精确 `[WUBEI_PROBE_STORY]`，接任务仍由旧 `probeAttention/prepareParkedDialog` 路径发布；其同样本校验发生时 Cloud 仍只见旧 active interest，因此迟到旧帧合法发布。之后新故事 interest 不会覆盖单槽，旧接任务动作也无人消费/退休。
+- **实施边界：** `WUBEI_ACCEPT_TASK` 现在只在 `ACCEPT_TASK` phase 合法。`consumeCurrentPreparedBeforeNormalPhase` 在年龄门之前发现 phase-mismatch accept 时，使用当前槽 exact actionId 调 `clearForRunOwnerActionId`；`waitForPreparedProbeStory` 内再次执行同一检查，覆盖 phase 边界后迟到发布。合法 accept 和新轮 accept 仍走原消费链；没有把 accept 接进 G175 只读邮箱，没有新增点击或改动 OCR/模板/ROI/坐标。
+- **并发安全确认：** 两处都先读取当前 run/window 绑定槽，再按刚观察到的 actionId 条件 CAS。底层复核 run owner、窗口/HWND 和当前 actionId；若并发替换已经发生，清理返回 false 并保留新动作。没有全槽清空，也没有跨窗口清理。生产侧完整 interest 代次围栏保留为后续架构收口，不阻塞本次恢复。
+- **验证结果：** 主代码在 `.release-build/g190-phase-owned-accept-r1` 隔离目录完成编译与 shaded jar 打包，`BUILD SUCCESS`；新增 `G190PhaseOwnedAcceptRetirementContractTest` 单独执行 `2/2` 通过，既有 exact-action/槽移交合同 `G118WuhuanTitleRearmCrossChainContractTest` 单独执行 `3/3` 通过，另有独立源码合同 10 项通过。常规 Maven 定向命令会先编译整个测试树，并被仓库已有无关测试的 `testCompile` 错误阻断（多处旧构造参数和协议签名未同步），该阻塞不来自 G190。`git diff --check` 通过。未重启或发送输入；fresh 验收需观察退休日志后 `WUBEI_PROBE_STORY` 正常发布消费并点击白龙马。
+
+## G189 五倍关闭全部提前道具预扫（2026-10-25）
+
+- **目标与基线：** 用户在 G188 结论后明确批准“预扫先全部关掉”，本卡只改 Cloud `D:\mavenProject\dhxy-cloud-brain` 的五倍预扫接线，治理文档写入 `D:\mavenProject\DHXY-cr271`；受保护 `D:\mavenProject\DHXY` 不修改。Client `dev@2236357413ffc64621626917ca4a66183895390d`，Cloud `dev@c10078142bdc769717cf8980ffcf56e2e45da8aa`，两端 `origin/dev` 与该推送基线一致；两树现有多卡 dirty 全部保留。Cloud 推送版五倍预扫仍未加 G182 门，当前 dirty 已有普通三入口 false 门及显形镜 required 例外；本卡只收口该例外，不夹带其它五倍阶段差异。
+- **全仓盘点：** 五倍主动预扫调用共四处：普通回程道具 `afterTrackerGreen`、`whilePathing`、`whileInCombat` 三处已受 false 门；显形镜 `afterTrackerGreenRequired(PROBE_ITEM_TEMPLATE)` 一处未受门。修罗与新手历练的普通预扫开关均已为 false；其它命中为共享服务、协议或正式 `useCached/completeRound/invalidate` 状态操作，不是新的提前开包入口。
+- **批准边界：** 五倍统一为一个 `ITEM_PRESCAN_ENABLED=false` 总门，普通回程和显形镜绿链后 required 预扫都不再派发。显形镜真正需要时仍走现有 `executeFindAndUseFromBack`；战后正式回城仍走无缓存时 `FIND_AND_USE_TASK_PAGE` 并验证宝象国。共享服务、Client 包裹实现、修罗/新手历练、模板/ROI/点击坐标不改。新行为记为 BR-WUBEI-013，替代 G182 对显形镜预扫的保留边界。
+- **交付与验证：** Cloud `WubeiTask` 已改为单一 `ITEM_PRESCAN_ENABLED=false`，四个主动预扫调用全部在门内；正式显形镜 `executeFindAndUseFromBack` 与回城 `FIND_AND_USE_TASK_PAGE` 保留。静态盘点、diff-check、G189规则门通过。首次 Maven 误用无效的 `project.build.directory`，compile exit 0 但实际在 PID `374000` 运行期间刷新活动 `target/classes`；已停止继续把该进程当作可靠运行版本。随后以正确 `dhxy.build.directory=.release-build/g189-all-prescan-off-r2` 隔离编译 exit 0，产物存在；`javap` 显示五倍、修罗、新手历练三个成品类的主动预扫派发调用均为 0，五倍正式 find/use 调用保留。未运行测试、未主动重启或输入；下一次跑任务前必须完整重启 Cloud，再按 G189 日志门验收。
+
+## G188 五倍白龙马接任务后开包归因（2026-10-25）
+
+- **目标与基线：** 只读调查 `D:\mavenProject\DHXY-cr271`（`dev` / `2236357413ffc64621626917ca4a66183895390d`）及 Cloud `D:\mavenProject\dhxy-cloud-brain` 当前 `WubeiTask`；受保护 `D:\mavenProject\DHXY` 未修改。两树均含既有多卡 dirty，本卡只追加治理文档，不改生产源码、不运行测试/重启/输入。
+- **现场结论：** 第 7 轮 `09:24:58.898` 开始，`09:25:04.481` 接任务，`09:25:07.902` 识别 `宝象谜情|显形镜`；`09:25:18.122` 开包源为 `wubei:probe-mirror-slot:first-probe:after-tracker-green`，模板 `bag/wubei_probe_item.png`，`09:25:20.138` 在 `(1143,855)` 命中。匹配证据 `images/temp/match-evidence/bag-item-current-page/20261025_092520_138_unknown_PRESENT_score-1.000.png` 与模板已人工查看。`09:25:47` 真正使用显形镜，`09:26:25` 点击白龙马。
+- **G182 对账：** 普通 `wubei_return_item.png` 的绿链后/寻路中/战斗中预扫仍受 `RETURN_ITEM_PRESCAN_ENABLED=false`；探查任务分支单独调用 `afterTrackerGreenRequired(... PROBE_ITEM_TEMPLATE ...)`，G182 当时明确保留它。因此不是“普通预扫没关”，而是用户当前看到的是未被 G182 纳入取消范围的显形镜位置记录。`09:24:46` 的 `wubei_return_item.png action=USE` 是上一轮正式回城，不属于预扫。
+- **下一门：** 用户若要求显形镜也取消提前开包，需要明确批准新的行为变化，再评估到达目标后现找现用的延迟/失败恢复；当前只给结论，不擅自删除专用 required 路径。
+
+## G187 客户端空闲内存与 JVM 伸缩治理（2026-10-20）
+
+- **目标与基线：** 只修改 `D:\mavenProject\DHXY-cr271`，当前分支 `dev`，HEAD 与 `origin/dev` 均为 `2236357413ffc64621626917ca4a66183895390d`；受保护的 `D:\mavenProject\DHXY` 不修改。工作树包含 G169～G186/G184 发布链等大量既有 dirty，本卡只触碰 JVM 参数、轻量诊断及治理文档，不覆盖其它卡。`scripts/restart-local-dhxy-stack.ps1` 的 JVM 参数对推送基线无差异；`scripts/release/build-client.ps1` 是 G184 未跟踪发布文件，本卡仅把其中重复的 JVM 参数改为共用真源。
+- **现场证据：** 2026-10-20 读取 PID 36692（窗口 `DHXY Robot 控制台`），运行约8.3天；工作集采样约0.9～2.1GiB，private bytes稳定约8.625GiB，峰值工作集约5.329GiB。`logs/dhxy-console.log` 最后活动为 2026-10-12，明确记录 ObservationRunner interests=0、turn loop停止；不是任务仍在运行。JDK21等效参数确认 `InitialHeapSize=2GiB`、自动 `MaxHeapSize≈8GiB`、G1 region=16MiB。因进程权限不同，`jcmd/jstat`不能附加，现阶段不能把private bytes等同于live heap。
+- **用户批准：** 采用单一 JVM 选项文件，开发启动与jpackage共同消费：`-Xms512m -Xmx6g -XX:G1HeapRegionSize=16m -XX:G1PeriodicGCInterval=300000`。增加启动、任务开始/停止、每5分钟结构化内存快照；只读MXBean及现有计数，不调用 `System.gc()`，不进截图/输入热路径。6GiB是基于历史5.3GiB峰值的过渡安全上限；fresh数据证明live peak低于3GiB后才评估4GiB。
+- **交付状态：** `IMPLEMENTED / ISOLATED COMPILE PASSED / FRESH RESTART PENDING`。新增 `config/client-jvm.options`，本地启动和jpackage都从它生成参数并拒绝空白/非法行；新增 `ClientMemoryMetricsService`，应用就绪、每5分钟及远程任务开始/暂停/停止记录heap/non-heap/direct/mapped/thread/window/input queue。Runner只在已有生命周期状态提交后调用，不改变控制流；公共日志入口fail-safe吞掉诊断异常，没有 `System.gc()`。规则门因既有多段规则ID暴露检查器正则缺陷，已将门禁格式收窄修正为“一个或多个大写DOMAIN段+三位编号”，G187随后PASS。PowerShell两脚本语法与JSON解析PASS；最终340主源码隔离编译于 `.release-build/g187-memory-policy-20261020-3` 成功（19.212s），没有写活动 `target/classes`。按仓库禁令未运行测试，也未启动/重启客户端、截图或发送输入。下一步由用户正常重启后核对 `[client-memory]` fresh日志和实际工作集。
+
+## G186 队长盒子优先于轮间随机等待（2026-10-12）
+
+- **目标与基线：** Client 治理文档只在 `D:\mavenProject\DHXY-cr271`（`dev` / `2236357413ffc64621626917ca4a66183895390d`）；Cloud 实现只在 `D:\mavenProject\DHXY-cloud-brain`（`dev` / `c10078142bdc769717cf8980ffcf56e2e45da8aa`）。受保护 `D:\mavenProject\DHXY` 不修改。Cloud 推送基线中修罗在成功轮后直接记进度并进入旧 G150 休息，五倍直接记进度；当前 dirty 叠加 G185 公共休息及其它既有卡改动，本卡只在两个任务的既有成功出口插入盒子消费，不覆盖其它差异。`CommonBoxService` 对推送无差异，30秒 TTL 与精确窗口/任务/角色门保持不变。
+- **问题证据：** 队长回城验证后只创建30秒 pending；当前消费入口位于下一轮接任务之后，而 G185 在两轮之间可能等待2～180秒。抽中超过剩余 TTL 的等待时，下一轮消费会先清掉过期 pending；最后一轮没有下一轮消费入口，也会漏掉。队员仍走 `AutoCombatService` 的安全回合优先消费，不属于本卡顺序修复。
+- **用户批准顺序：** 本轮成功并完成归队门后，先对当前队长窗口调用公共 `consumePendingBoxIfAllowed`，再记录完成进度；仍有下一轮才进入 G185 随机等待。这样盒子优先于随机等待，最后一轮也会尝试；无 pending、开关关闭或未命中时原流程继续。点击失败/过期、停止与不确定终端继续沿 `CommonBoxService` 既有语义，不改模板、ROI、坐标、TTL、输入队列或任务 phase。
+- **交付状态：** `IMPLEMENTED / CONTRACT PASSED / FRESH RUNTIME PENDING`。Cloud 修罗/五倍均已接到同一公共盒子消费入口；主源码 692 个文件 Maven compile 成功。G186 定向顺序合同 2/2 通过；与 G185 合并定向运行共 6/6 通过，确认两个任务均为“成功门 → 盒子消费 → 记进度 → 有下一轮才休息”，且最后一轮不会跳过消费。Client G186 卡、通用盒子业务规则、追踪与 dashboard 已同步。未开游戏、未发送输入、未重启运行实例；新 Cloud 生效后仍需 fresh 实跑核对有 pending 时先出现 `COMMON_BOX_CLICKED ... round-success-box-before-rest`，随后才允许出现 G185 休息。
+
+## G185 修罗/五倍共用七档拟人轮间休息（2026-10-12）
+
+- **目标工作树：** Client 治理文档只在 `D:\mavenProject\DHXY-cr271`；Cloud 实现在 `D:\mavenProject\DHXY-cloud-brain`。已由 shell 核对两仓均为 `dev`。受保护基线 `D:\mavenProject\DHXY` 不修改。
+- **最新推送基线：** Client `2236357413ffc64621626917ca4a66183895390d`；Cloud `c10078142bdc769717cf8980ffcf56e2e45da8aa`。Cloud 推送基线中修罗已有 G150 三档轮间休息；五倍推送基线尚无轮间休息，当前工作树的 G183 dirty 才加入复制实现。`XiuluoTaskV2.java` 对当前推送无本地差异，`WubeiTask.java` 含 G168～G183 等既有 dirty，本卡只外科式替换轮间休息调用/方法，不覆盖其它任务改动。
+- **用户批准：** 旧 `80% 2～8s / 17% 20～60s / 3% 90～180s` 改为共用七档：`70% 2～6s / 20% 6～12s / 7% 12～25s / 2% 25～45s / 0.7% 45～75s / 0.25% 75～140s / 0.05% 140～180s`。修罗与五倍必须调用同一个公共策略；只在成功且仍有下一轮时等待，最后一轮/失败不等，继续按最多 1 秒切片响应暂停停止。
+- **交付状态：** `IMPLEMENTED / CONTRACT PASSED / FRESH RUNTIME PENDING`。Cloud 新增 `HumanizedInterRoundRest` 作为唯一七档真源，修罗与五倍均在原 `SUCCESS + shouldStartNextRound()` 门后调用；旧私有三档方法已删除。Cloud 主源码 692 个文件 Maven compile 成功；G185 定向合同 4/4 通过（概率边界、七档时长、非法掷骰、双任务单一接线）。全量 Maven `test` 在 G185 执行前被仓库既有旧测试签名漂移阻断，本卡未改那些测试，阻断不冒充 G185 失败。未开游戏、未发送输入、未重启；新 Cloud 生效后仍需按 `[inter-round-rest] G185` 日志做 fresh 运行验收。
+
+## G184 fresh 包启动修复（2026-09-21）
+
+- **交付：** `.release-build/g184-fresh-package-20260921-r2/artifacts/client-0.1.0-b20260921.2-windows-x64.zip`，277207693字节，SHA256 `6d53e1ade9172cb70937b094dc846a0306884aedb5d6a4b9ffa9f4ac32ea39a9`；339源码隔离compile、jar、jpackage、ZIP均exit0。只读包内容核对Java启动器/主EXE/JAR/入口/配置，PS语法通过。首包缺javaw已发现并通过jlink-options修复，勿用r1。无产品运行、测试或输入；独立启动验证的异步问题待用户回答。包为dirty预验，不能作为正式Gamma/Prod或声称双机自动升级已验收。
+
+- 目标树 shell 已确认 `D:\mavenProject\DHXY-cr271` / dev；最新 pushed dev `2236357413ffc64621626917ca4a66183895390d`、master `0468cc101b383700e224e7e4bf2fee551de930f1`，均未变化。TurnClientProperties/FakerInputProvider 对推送无差异；两 HTTP 通道和更新 UI 保留本卡既有改动，其它卡 dirty 不覆盖。
+- 用户明确要可 fresh run 的客户端更新链。发现启动器没有 Cloud 配置直接退出；包内已清空 token 也会被 Spring transport 构造拒绝。按用户“无服务器也能在软件内更新”的裁决补明确 update-only 启动：不连接大脑、不启动截图/输入设备、无任务运行权限；正常已配置启动不变。不以假 token/假登录绕过校验。
+- 本轮只改此启动边界并隔离构建，运行验证限发布/更新，不触发游戏、不关闭活动客户端；正式 Gamma 人工验收不由编译代替。
+
+## G184 当前优先项：两台电脑之间的客户端更新
+
+- 2026-09-21 用户确认尚未买服务器，当前要求是本机发布新版，另一台电脑通过软件内更新下载安装/重新打开。无正式大脑服务器只阻断大脑部署，不能阻断客户端更新交付；前一轮将两者一起停工的判断已纠正。目标树仍为 `D:\mavenProject\DHXY-cr271`，本轮仅定向读取与文档记录。
+- 现状依据：`AppVersionService.checkForUpdate` 匿名 HTTPS 读取已部署 Worker 的版本公告；更新 UI 调用独立下载/安装服务，不需要大脑连接。`.github/workflows/`、`scripts/release/`、`release/` 仍是本地未跟踪写集，不能说远端按钮已可用；发布脚本仍需 CI 专用 D1 凭据激活公告。
+- 当前交付目标：首次安装含更新器的基准包 A 到第二台电脑，本机按 dev→master/Gamma→人工晋级发布包 B，第二台从真实公告下载签名包并确认安装/重开、保留配置。源码 push 本身不等于发布。大脑部署/强制禁版运行验收保留在原目标中另行完成，不改成已完成。不得发布未验收 Gamma，不启动游戏或关闭现有客户端。
+
+## G184 收尾阻断审计：等待用户条件
+
+- 本轮只更新治理记录，目标工作树已由 shell 确认为 `D:\mavenProject\DHXY-cr271`，不改生产源码、不运行测试或游戏。连续三轮确认同一阻断：正式服务器/HTTPS连接信息未提供、CI 专用 Cloudflare D1 凭据缺失、运行验收尚未授权。无待完成的后台编译或部署作业，不再自动空转。
+- 最近一次只读 GitHub API：`CLIENT_UPDATE_SIGNING_KEY` 返回 200；环境及仓库的 `CLIENT_POLICY_API_TOKEN` 均返回 404；`CLIENT_PUBLIC_RELEASE_READY` 返回 404。没有读取/输出 secret 值，也没有启用发布。
+- 源码编译不等于全链验收。G184 尚未完成：正式部署、实例绑定、行为验收、Gamma 晋级与 Prod 发布仍待完成。安装说明存在旧阶段描述，获得条件后收尾时同步校正，不能将旧本地包当新候选。恢复入口为用户提供服务器条件/安全配置 CI 凭据/明确验收许可。
+
+## G184 云端会话撤销接线开工
+
+- **本次已编译：** Cloud691源码final隔离compile exit0，`.release-build/g184-cloud-revocation-final-20260920`/17.615s/23:14:36-04:00。Session不可复活/继承，入口+最终CHECK，2秒后台明确拒绝触发Runtime/MapSurvey/Exchange停止；旧HTTP未退出不接新Session，旧worker无命令发布权限。详细源码和未验边界已写G184卡。服务器已异步询问；CI专用D1 token/测试验收许可仍缺。没有测试/运行/输入/重启/推送/发版/启政策，不能标目标完成。
+
+- 上轮为Client代码/隔离编译进展。本轮Cloud `D:\mavenProject\dhxy-cloud-brain`、Client治理树 `D:\mavenProject\DHXY-cr271` 已shell核对；Cloud dev远端仍c10078142bdc769717cf8980ffcf56e2e45da8aa。Instance/Server为本卡既有写集；Exchange与MapSurvey对推送无差异，Runtime保留其它卡改动。只接正式实例授权边界，不改任务匹配/导航/phase。
+- 已核Cloud Runtime.start与注册表有现存stop入口，Exchange可撤回未决命令，MapSurvey为独立worker；全HTTP响应通过Filter可统一拦截。拟正式实例持单当前会话及不可复活permit，任务/观察new Thread继承permit；明确撤销先作废permit再停全部Runtime/MapSurvey、清未决命令，旧worker后续publish拒绝。每请求入口与最终回复均CHECK，无允许缓存；另每2秒检查当前会话用于无业务请求时发现撤销，非放行宽限，不宣称网络零时延。普通授权网络失败不冒充明确禁版；响应仍503拒绝。会话变更期间旧结果不得撤新会话；未验收/未启政策/不测试或启动实例。
+
+## G184 旧生产者跨登录隔离开工
+
+- **本次源码交付：** Factory→Loop固定generation→runLoop可继承上下文→观察/上传/维护子线程→sessionToken/队列/HID同代际门；Control活动startOne计数+锁外启动预检退出门。Client339源码compile exit0/12.026s，`.release-build/g184-producer-authority-20260920`。未测试/运行/输入/重启；仍需静态复核异步池是否另有未携带上下文的生产者，Cloud在途撤销待续。用户询问为何一小时仍没完，已明确不是编译卡住，是实现范围尚未收口；goal实际active/3757秒。
+
+- 上轮为源码/编译实际进展。本轮目标树 `D:\mavenProject\DHXY-cr271`，shell确认dev，远端仍2236357413ffc64621626917ca4a66183895390d。Factory对推送零diff；Control193+/113-、Loop78+/2-保留其它卡业务差异，本步只补授权生命周期。观察/maintenance实际用new Thread在turn子树内启动；preflight的并行探针allOf.join后才返回；Control批量启动异步startOne可能延迟，因此另计已进入startOne的活动数。
+- BR-RELEASE-002既定新登录不得恢复旧输入：Loop构造固化授权代际，runLoop绑定可继承上下文，观察/transport/maintenance子线程延续旧代际；HTTP读token、入队和HID同时消费它。InputWorker仍显式绑定请求代际，不信其启动线程继承值。Control撤权先阻止执行、作废epoch，离开生命周期锁后最多等30秒确认预检/已进入startOne退出；这是清理/重新登录门，不是允许旧任务继续运行的宽限。失败保持无许可并要求重启。未测试，不发输入。
+
+## G184 客户端全窗撤权接线续做
+
+- **已完成编译：** 最终Client339源码到`.release-build/g184-client-revocation-final-20260920`，Maven exit0/10.257s/23:00:03-04:00；相关diff-check无错误。补了Survey未决future异常完成及ACK等待不持Control锁。未测试/运行/截图/输入/重启/推送。下一步明确P1：输入代际现在固定入队，但旧producer跨新登录晚入队仍可能领新代际；须沿turn/observation/preflight寿命固定或确认退出。Cloud活动执行与最终返回/主动撤销尚缺，不称已闭环。完整证据已写G184卡。
+
+- 继续目标的上一轮仅解释强制更新语义，属无进展；本轮复核文件后继续安全可行的源码工作，不重复等待资源。工作树仍 `D:\mavenProject\DHXY-cr271` / dev，shell 与远端再次确认推送基线 2236357413ffc64621626917ca4a66183895390d；Control 的 124+/98- 非本卡已有改动保留，UI 的本卡 120+/2- 保留，Registry 未改；业务规则门已通过。
+- 已补 Control 全窗事件监听、四处启动入口/预检与 MapSurvey 的许可门，撤销启动/恢复 epoch、hard stop loop 与 abort handle，不发业务 stop 握手、不 join。队列先清，清理任一窗口失败仍尝试其余窗口，失败后不允许重新授权恢复。
+- 锁序发现：UI 停止可能持 lifecycle monitor 等 transport worker 退出，故明确403先同步清内存许可，随后在唯一撤权线程发事件（而非被拒的 worker 同步等 monitor）；清理期间不可激活新登录。已有物理报告门立即阻止非中立输入，全松开保留。此项为撤权机制接线，不改任务阶段/正常游戏动作。
+- 待做隔离编译与静态复核。仍未测试/输入/重启/写活动 target；云端在途撤销和旧生产者跨新登录的完整代际范围仍须继续审查，不能称即时停用闭环已验收。
+
+## G184 客户端全窗撤权与实际输入门开工
+
+- 本工作树已shell确认`D:\mavenProject\DHXY-cr271`/dev，推送仍2236357413ffc64621626917ca4a66183895390d。InputActionQueue/Request/Worker、FakerInputDevice对推送零diff；WindowTaskControlService保留其它卡124+/98-，仅改授权接线，不改任务阶段/点击算法。已核abort会取消各run排队输入，但独占回调可继续直接调Provider；生产Provider只有FakerInput，实际HID写入口集中在Device三个update方法，releaseAll直接中立报告保留。
+- 按BR-RELEASE-002已批准即时撤权：统一内存授权代际/事件，403匹配原请求会话才撤当前许可，双通道同事件；事件先清所有窗口启动/恢复代际、abort所有handle并stop loop，不等待UI。输入四个队列发布点记录授权代际，Worker绑定该代际，Device每条非中立物理报告重新校验；新登录不能让旧输入恢复，松开键鼠不受禁版阻挡。只清待执行队列，不从网络线程抢物理输入。新登录须等撤权广播完成，过期响应不撤新会话；UI保持可下载。
+- 本步仍不自动测试/运行/截图/输入/重启，只隔离编译；云端主动撤销/长轮询最终返回门另续。上轮为消费与UI代码实际进展，不属阻断重述。
+
+## G184 Client/Cloud会话消费开工
+
+- **本轮进展/未完成边界：** 正式verify→OPEN→内存会话→turn/observation头→Cloud每请求CHECK已接；明确403授权码让turn退出，不伪造task terminal/不重试。UPDATE_REQUIRED显示禁用旧版，即使推荐版本数字较低也可按签名安装；无包/目标被禁不盲装。Client最终337源码隔离compile exit0 `.release-build/g184-session-ui-20260920`；Cloud691源码exit0 `.release-build/g184-session-consumer-20260920`。受限HTTP收包helper双仓同字节，body累计限256KiB且Future有全程时限。无测试/运行/输入/重启/活动target写入。
+- **必须继续的P1：** 当前Cloud仅入口CHECK，没有中途取消worker/撤回长轮询结果；Client只有turn明确403退出，观察通道还未加入统一撤权通知；UI投影markRemoteFailed会abort/取消排队，但不是即时全窗广播。现有abort文档明确保持已开始的原子输入事务，因此还需授权撤权专用停止边界（允许松开已按下键/鼠标，不继续业务输入）。本地启动preflight在Cloud准入前可能发输入，也必须加正式授权门。公共发行/required仍阻断，不能根据此次编译宣称已能立刻全停。上一goal轮为生产接口部署进展，本轮为消费源码进展，不属于阻断重复。
+
+- 更新提示补缺：当前AppVersionService只比较版本大小，较新但已撤销的版本会显示“未发现更新”；UI又只在verify成功后检查。按已批准强制更新语义补UPDATE_REQUIRED，明确拒绝的验证也显示更新入口；目标仍须为政策允许且签名可信的维护者推荐版本，不因版本号较低就挡住维护者撤销后指定的可用成品。相关UI/更新服务对推送的差异均本卡既有发布写集（115+/2-、89+/2-），不触及游戏算法。
+
+- 追加精确拒绝停止分支：WindowTurnLoop对origin/dev仅其它卡41+/2-（observer teardown/fatal子事件），catch重试分支仍同推送；保留这些改动，只在明确403授权码时记录lastFailure并退出，不生成业务FAILED或触发致命任务恢复。UI同步既有markRemoteFailed会abort旧handle、清待执行input；它尚非即时全客户端广播，活动原子输入仍有既定保护，完整立即停止另需继续接线。未知403/普通网络故障仍按原重试，不扩成业务失败。
+
+- Client `D:\mavenProject\DHXY-cr271`、Cloud `D:\mavenProject\dhxy-cloud-brain`已shell确认；Cloud推送仍c100781，Client基线2236357未变。Client LicenseAuthService/Https两通道/TurnConfiguration及Cloud ClientBrainInstance/Server为本卡既有写集；WindowTaskControlService、WindowTurnLoop等存在其它卡dirty，本步不改其业务。已核stopAll会广播各窗停止/abort而非等待一轮，不另改任务phase。
+- 本步接登录与请求消费：正式实例UUID客户端成功verify后再OPEN（设备匹配必须true）；会话仅内存，HTTP两通道发送X-DHXY-Session。Cloud专属模式所有入口在绑定门后CHECK当前政策/许可，无允许缓存；缺会话/明确拒绝不能进入业务。保留旧开发入口，无网络/游戏自动启动。长任务停止、在途返回栅栏及UI禁版提示另续，不把本步入口门称完整撤销。仅双仓隔离编译，不测试/重启或写活动target。
+
+## G184 运行会话准入实施开工
+
+- **本轮落地：** 新`client-session.ts` OPEN/CHECK/CLOSE、0004空表、owner `brain-binding.mjs`登记/只读入口。TS编译、Worker打包、脚本解析exit0，未测试。备份DB29141字节`.release-build/g184-session-backup-20260920/database-before.sql`后应用0004并部署`6419544f-a955-4361-896a-a1dc53f2539f`；部署列表100%/无待迁移，主库只读3个legacy-test仍active、两政策revision0/enforced0、bindings/sessions均0。未注册/改码/禁版；API并未被Cloud/Client消费，活动任务立即撤销仍待接线。上一轮为进展（强制更新裁决落盘），本轮亦为实际进展，持续目标未完成。
+
+- 目标Client治理`D:\mavenProject\DHXY-cr271`、Worker`D:\mavenProject\dhxy-license-worker`，已定向shell核对。Client dev推送仍2236357413ffc64621626917ca4a66183895390d；LicenseAuthService仅本卡版本字段传输diff。Worker无Git，index.ts与已部署基线SHA256相同`7fb81739b4690352fa7a9b59bd43047c36b00f4dc22c66680573c293470baab4`；不覆盖其它修改。
+- 现有status可能ok但currentDeviceMatched=false，不能拿ok作运行授权；verify首次条件绑定亦未复查竞争胜者。新增专用会话入口，不重用其ok，不改变历史测试码验证。正式绑定表由维护者配置（clientId/专属token哈希/正式license归属），OPEN必须核对当前绑定电脑、许可、版本才生成随机会话；CHECK每次读主库最新许可/政策及该客户端唯一当前会话，不缓存允许结果。单次SQL联结读取保持同一裁决快照；OPEN写入再CAS防并发撤权。只实现准备，不迁移/注册/禁版或测试；运行中撤权通知与停止链另续。
+
+## G184 强制更新停止方式裁决
+
+- 文档目标`D:\mavenProject\DHXY-cr271`已shell确认，dev。用户明确强制更新要立刻断开旧版服务，不等任务当前轮结束。已写入BR-RELEASE-002、卡片与待验清单：云端撤销既有/新会话业务权限，客户端停止任务和后续输入、取消待执行动作，明确显示需更新而非普通连接故障；界面和下载保留。普通发布兼容允许版本，不要求所有服务停机；跨网络有传播时间，不能撤回已完成输入。这里只记录决定，不声称运行中禁版已接通；不启用政策、不测试或重启。
+
+## G184 一客户端一大脑实施开工
+
+- 用户批准按一对一目标实施。目标Client `D:\mavenProject\DHXY-cr271` / Cloud `D:\mavenProject\dhxy-cloud-brain`均shell确认dev；最新ls-remote仍2236357413ffc64621626917ca4a66183895390d / c10078142bdc769717cf8980ffcf56e2e45da8aa。CloudBrainApplication/Server、Client HttpsTurnClient/ObservationClient/TurnConfiguration对推送无diff；现有其它多卡dirty保留。
+- 已读Cloud启动/host/storage/OCR生命周期与Client传输。Cloud进程独占static状态但存在相对路径config/logs/data；正式模式须在启动host前锁定客户端私有工作目录，校验专属ID/高熵token/端口，所有HTTP入口先校验绑定，再交原handler。开发旧入口保持原样，新增正式实例配置入口，不启动实例、不测试，只隔离编译。授权许可与运行中禁版仍要继续接，不把独立token当成完整license门。
+
+## G184 一对一服务关系裁决记录
+
+- 目标文档工作树`D:\mavenProject\DHXY-cr271`已shell确认。用户明确：一个本地客户端对应一个大脑，一对一映射、一对一服务。隔离单位是客户端，不笼统按账号/用户，也不是每个游戏窗口另开大脑。同一客户端管理的多游戏窗口仍由其专属大脑处理，并按设备/窗口隔离。更新权威规则、卡片与追踪，解除隔离选择未决项；本轮仅文档，不声称Cloud绑定/路由/授权已实现或已部署，服务器/CI凭据/测试授权缺口仍保留。
+
+## 2026-09-20 / G184 客户端自动更新继续实施
+
+- **本轮增量：** Client335源码隔离Maven compile exit0到`.release-build/g184-updater-20260920`；新增受信下载/独立安装/签名及用户确认退出、新目录与原子指针回执。GitHub已实际建master-only `client-production` Environment、上传`CLIENT_UPDATE_SIGNING_KEY`环境Secret并读metadata确认；秘密仅内存/DPAPI加密，未入Git。发布→D1推荐CAS脚本已写只解析，仍缺CI专用D1 token。没有测试、产品运行/重启、target写入、代码推送/master合并/Release。
+- **当前待裁决：** Cloud单scope/host只属一位用户；生产多用户应先每用户独立实例还是共享host管理，已问用户，未改Cloud。正式server/HTTPS未提供。本机Wrangler OAuth scopes不含API token创建，不能当CI永久凭据。自动安装代码尚需后续授权验证，不得称Gamma验收或完整强制授权闭环。
+
+- 用户要求持续完成，直至需要用户账号/服务器/决策。目标Client `D:\mavenProject\DHXY-cr271`，shell已确认dev；推送基线仍2236357413ffc64621626917ca4a66183895390d，master仍0468cc101b383700e224e7e4bf2fee551de930f1。已读现有发布脚本、版本服务、UI和AutoBot：推送无自动安装；本地G184通知/发布是既有本卡未提交写集。MainWindowService关窗口仅Platform.exit，不保证Spring/JVM退出，安装器必须等待真实进程退出。保留G169～G183等全部无关dirty；不动保护树DHXY，不写target/classes。
+- 本轮先补受信签名、限量下载及外部安装：签名通过才接收包，退出后版本目录切换，旧版保留；开发版禁止自动替换。安装器不能发游戏输入，也不能强杀仍在运行的进程。仅语法/隔离编译，不新增/运行测试、不发布未验收Gamma、不合并master。授权政策仍关闭，正式分发开关仍关闭。
+
+## 2026-09-19 / G184 授权服务继续实施
+
+- **本轮已完成：** 授权Worker已部署`79649e1f-0328-42da-b1af-7c1e19d27e7f`（Cloudflare部署列表100%确认，2026-09-19T05:03:12Z）；0002/0003迁移已应用，无待迁移项；只读库状态3个legacy-test码均active，两应用revision=0/enforced=0、允许/禁用清单空。数据库完整备份26729字节在`.release-build/g184-auth-backup-20260919/database-before.sql`，不得入Git或发行包；同目录含worker变更前源文件/配置，线上旧部署可回退，迁移为加法无需删列。未删码、未改绑定/到期、未启用禁版/新发授权码。worker非Git目录仍需后续纳入版本管理，源码实际路径见卡。
+- **Client本地交付：** LicenseAuthService所有请求统一带版本；AppVersionService读取真实HTTPS政策（无正式版本时明确提示，不称最新版），说明页“检查更新”、成功验证授权后新正式版提示、仅在用户点击后打开固定仓库精确版本下载页。开发版不自动弹更新，网络后台8秒有界，不上传授权码/设备、不自动下载/退出/重启。先331后332源码两次隔离Maven compile exit0（最新`.release-build/g184-update-ui-20260919`），TypeScript/noEmit及Worker仅打包通过，管理脚本node --check通过。无测试/新截图/输入/Client重启/target/classes写入；无GitHub合并/提交/推送/发版。UI本地代码尚未运行生效。自动下载安装/签名、Release→推荐政策自动激活及Cloud任务/会话门未完成，正式大脑未部署；不能称全部打通。
+
+- 用户确认没有外部用户，仅本人测试；此前允许修改并部署授权服务继续有效。目标worker `D:\mavenProject\dhxy-license-worker`及治理/Client `D:\mavenProject\DHXY-cr271`均shell已核。线上基线仍5月16日版`07ad5af4-d5dd-4ebc-b11b-3396dde109e3`，已下载；DB只读确认3条active测试码、无app_id。先完整备份，再沿现有0002加软件列，0003将升级前现有测试码标legacy-test保持两款原用法，新增正式码必须指定app_id；版控默认关闭，启用时legacy-test必须先分配归属。新增版本政策和verify/status消费，不将旧未上线自助renew顺带开放；不删码、不改绑定/到期、不主动开启禁版。TypeScript/Java只编译不测试，远端部署权限来自用户明确批准；正式大脑和客户端更新器仍未接通。
+
+## 2026-09-19 / G184 客户端发布分支约定更正
+
+- **本轮交付/实际阻断：** master构建/手动/晋级来源门已对齐，新增公开Release脚本与独立写权限作业（先draft、三文件上传后核digest、最后公开；不覆盖旧tag/Release；required拒绝）。四PS脚本语法通过，未测试/推送/发布。Cloudflare已重新登录成功，线上仅5月16日部署；下载基线`.release-build/g184-worker-baseline-20260919/deployed-worker.multipart`，D1只读PRAGMA确认licenses仅9列、无app_id；本地worker不是Git仓且有未上线app_id/renew改动，直接部署会因缺列失败，先跑0002又会把旧码全归自动战斗工具。需用户确认旧码用途/归属后再决定兼容迁移。worker源码SHA256仍`b8ec06f4798c6e787c9a5544636aed8959ab43375bc1238243ece3818fe284a5`，未编辑、未部署、未改库。还发现Client授权当前只由验证UI/诊断读取，未接任务入口，故公共发行开关`CLIENT_PUBLIC_RELEASE_READY`必须在真实运行授权接线与Gamma验收后才启用，不能宣传现状已具强制准入。大脑正式服务器未部署由用户确认。
+
+- **继续实施开工：** 用户要求继续打通，并明确成品公开下载、运行仍需授权。目标仍为shell确认的`D:\mavenProject\DHXY-cr271`、dev；ls-remote仍为Client dev `2236357413ffc64621626917ca4a66183895390d` / master `0468cc101b383700e224e7e4bf2fee551de930f1`。update/auth/MainWindowController对origin/dev无diff；发布文件均本卡未跟踪，其他dirty不动。先对齐master来源门，再接公开GitHub Release完整上传后发布；不执行合并、推送或发布，也不将发行文件可下载冒称自动安装/服务器准入已完成。正式Cloud地址、授权服务本轮可改/可部署范围已询问；禁止自动测试、启动产品/截图/输入保持。
+
+- 本轮仅文档，目标`D:\mavenProject\DHXY-cr271`已由shell确认，当前dev；保留已有发布基础及其它dirty。用户明确`dev=Alpha开发 → master=Gamma验收 → 手动发布Prod`，默认分支保留master，不再建议改dev。现有workflow仍以dev生成Gamma、晋级脚本仍校验dev，尚未按新约定调整，禁止启用旧配置；本轮不合并、不推送、不修改工作流、不测试。ZIP是成品运输格式而非源码Git上传的替代，具体安装格式仍可讨论；无须用户手工打包。
+
+## 2026-09-18 / G184 软件更新与服务端版本准入方案
+
+- **本轮结果：** 本地发布基础实现，未提交或推送。331源码隔离编译和实际Java/WGC完整目录ZIP打包exit0，产物`.release-build/g184-local-package/artifacts/`（276660450字节，dirty=true/NOT_TESTED，不可晋级）；三PS脚本语法解析通过。首次跨盘Maven输出失败后改同盘隔离成功，未动活动target。构建venv仅在`.release-build/g184-build-tools`，不改全局Python；WGC依赖固定到本机现有windows-capture2.0.1/numpy2.2.6/opencv4.13.0.92。本地Python3.10.6、CI配置3.12，未宣称GitHub实跑通过。GitHub默认master/public已只读查明；未建仓、未改默认分支/可见性、未启用workflow。用户需确认默认分支方案及分发权限；完整更新器/签名/服务器准入仍未实施，详见G184。没有自动测试/产品启动/截图/输入/重启。
+
+- **实施开工（用户批准搭发布基础）：** 目标Client/治理`D:\mavenProject\DHXY-cr271`，shell已核，分支dev；ls-remote最新推送仍`2236357413ffc64621626917ca4a66183895390d`，默认分支master指向`0468cc101b383700e224e7e4bf2fee551de930f1`。git diff origin/dev在pom.xml/update/application.properties无差异，现有G169～G183多文件dirty全保留。当前无.github、无完整打包流水线；旧mock已删除。本轮写集仅发布脚本/工作流、隔离构建POM配置及本卡文档，不改任务、输入算法、云端部署或授权政策。构建输出必须隔离，禁止覆盖运行中的target/classes；不运行/新增测试，不启动客户端/截图/输入。网站默认分支同步、分发可见性、正式托管/签名/政策服务待配置，不能把本地配置文件交付称为网站按钮已生效或用户更新已闭环。
+
+- **按钮位置说明：** 本轮在已核DHXY-cr271仅补G184文档；向用户解释GitHub客户端仓库Actions→拟配置的发布工作流→Run workflow。此入口需先配置，并非当前已有Gamma/Prod按钮；未创建或触发任何流水线。
+
+- **用户澄清两端独立发布：** 本轮治理目标DHXY-cr271已shell确认，仅修改文档。客户端UI是唯一面向用户的下载/安装对象；Cloud大脑由维护者独立部署，不随客户端包分发、不因Cloud发布触发客户端升级。G184已明确两仓独立版本及流水线，仅在协议不兼容时协调发布和准入；前述两仓固定清单不得解释为强制捆绑发版。未改生产代码/流水线，未部署或测试。
+
+- **Git概念澄清：** 目标仍为已核对的治理工作树DHXY-cr271，本轮仅补文档。现有Client/Cloud两仓不因Gamma/Prod翻倍；worktree仅本地开发目录；推荐保留dev、固定候选版本、内部验证后手动同产物晋级。环境及更新渠道隔离，不要求两个Git地址或两个新分支；未创建工作流/环境/仓库，未部署或测试。
+
+- **Gamma→Prod交互澄清：** 用户希望push仅进内部候选，点击按钮才正式发布并触发用户启动更新检查。已核GitHub Actions手动workflow能力；建议固定两仓发布清单、同产物晋级、包和兼容Cloud就绪后最后切Prod公告/政策。只补G184方案，不实施pipeline/部署/测试；治理工作树已核DHXY-cr271，保留dirty。
+
+- 用户要求先查UI旧更新入口并解释方案，未授权实施。工作树Client/治理`D:\mavenProject\DHXY-cr271`、Cloud`D:\mavenProject\dhxy-cloud-brain`已shell确认，dev；只读核对Git历史及本地授权worker源码，保留所有dirty，不修改授权服务器/运行态。6月30日旧mock更新框架与按钮被清理，当前只有版本显示；显示与license请求版本两套配置，worker版本仅日志。拟用明确发布的成品包、服务器版本政策、客户端提示和独立更新器四部分实现，不将push直接等同发布。完整已知事实/建议/待决策在G184；本轮仅文档，不部署、不下载执行、不运行测试或程序。
+
+## 2026-09-13 / G183 修罗与五倍拟人化接线只读盘点
+
+- **实施交付：** Cloud仅WubeiTask在成功进度后、还有下一轮时restBetweenRounds，同修罗80/17/3及三档时长，按1秒切片TaskSleep，日志含窗口/轮/restMs；最后一轮/失败/黄袍单场不新增等待。当前源码隔离javac exit0，Temp `dhxy-g183-cloud-cad4099c095a4733a7e39cd40202bc14`；未测试/重启/游戏输入/target写入，待Cloud部署。业务规则门与看板同步，既有多卡dirty保留。
+
+- **用户批准补齐五倍轮间休息开工：** 目标Cloud `D:\mavenProject\dhxy-cloud-brain`、治理Client `D:\mavenProject\DHXY-cr271`已shell核对，均dev；最新推送ls-remote仍2236357/c100781。XiuluoTaskV2对推送无改动，成功报告进度后且还有下一轮才休息；推送WubeiTask同位置零休息。当前五倍G179～G182 dirty保留，仅在相同成功边界补修罗80/17/3分布及1秒切片TaskSleep，不动最后一轮/失败恢复/Client整run续跑。新增BR-WUBEI-012并先过门；不测试、不重启/输入，仅隔离编译。
+
+- 用户仅要求确认，不改业务。治理Client DHXY-cr271、Cloud dhxy-cloud-brain；对照推送修罗G150轮间rest与五倍recordRoundCompleted，当前和推送五倍均未接任务内部休息。19:31:16.148 round21结束、16.152 round22开始，仅4ms；同run无限轮不会触发客户端有限run成功续跑随机休息。共用输入节奏已接，NPC落点抖动19:33:35.053/19:34:44.745有实际提交日志，战斗清理19:29:29.234/19:30:49.437等有执行记录；批量启动错峰为共用1～3秒，仅启动时生效。完整范围/未证项在G183，不把任务专有未迁移说成现有共用功能失效。仅文档、未改Java/测试/输入/重启。
+
+## 2026-09-13 / G182 五倍暂时禁用回程道具预扫
+
+- **交付：** 仅Cloud WubeiTask普通回程预扫三入口加同名false开关，显形镜required/正式回城/两秒飞行和取证保持原样。隔离javac exit0，Temp `dhxy-g182-cloud-4857ba8a203c4e348a0f24b27eeb9adc`；未测试、未重启/输入/target写入。待Cloud部署生效；用户“召唤出来”指代仍待确认，未擅改。
+
+- 用户明确要求取消19:27这项预扫并对照修罗。目标Cloud `D:\mavenProject\dhxy-cloud-brain`、治理Client `D:\mavenProject\DHXY-cr271`已shell确认，均dev；最新推送ls-remote Client2236357413ffc64621626917ca4a66183895390d / Cloudc10078142bdc769717cf8980ffcf56e2e45da8aa。Cloud WubeiTask已有721+/316-多卡dirty保留；修罗对推送零diff，G088常量false只禁预扫而保留正式回城useCached/find-use。五倍推送与当前都有绿链后/寻路中/战斗中三个普通回程预扫入口，按用户最新决定同款开关false拦住，旧规则显式替代。显形镜required位置记录/使用/召唤未获明确追加指代，已问用户，暂不修改；只做明确的普通回程预扫取消。仅隔离编译，不测试/重启/输入。
+
+- **09-13 G179停步失败修复交付：** 活动Client DHXY-cr271 / Cloud dhxy-cloud-brain，已实施共用2200ms采样门、结构化失败与停步身份贯穿、五倍原子条件撤权、失效保留寻路、后续停步重新上报；同步等待异常回同一门，点击耗尽/真实战斗/no-match原边界保持。双端隔离javac exit0，协议5文件同字节；Temp产物分别dhxy-g179-stop-client-deffcd24834a4836b43a6926b6173377与dhxy-g179-stop-cloud-47adac29092246baa39f01af1817b101。未测试/回放/输入/重启/提交，不写target/classes；待评审和双端部署后的运行验证，详见G179卡。其它agent在途G180/G181记录保留。
+
+## 2026-09-13 / G181 可复用飞行初筛与按键差分确认
+
+- **19:27包裹问询只读核对：** 活动Client DHXY-cr271 / Cloud dhxy-cloud-brain；光牛的滑子°第19轮在飞行初筛结束后执行原有回程道具预扫，05.029～07.714约2.768秒，找到后缓存并关包，不使用物品。推送与业务MD均已有此路径，非本轮飞行改动新增；证据/图/调用点写回G181。仅文档，未改生产或游戏输入。
+
+- **两项限定返修交付：** 三处五倍绿链后延迟统一2000ms；同共享帧ROI原判定并保存原帧/ROI/sample.txt，经token/seq/capture对应Cloud消费日志与attempt按键ACK。仅四生产文件，阈值/按后1500ms/失败继续寻路不改；既有dirty保留。Client隔离javac exit0目录`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g181-evidence-client-3541cbd6f56541c8b2fcb7f2c427ac2f`，Cloud exit0目录`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g181-delay-cloud-84a9b6acaf244d6e82a5ca39aa2f75e9`。未测试/实际取证落盘验证/重启/输入/target写入；原P1不称根治，待两端新产物运行后取证。业务规则、卡/看板与账本同步。
+
+- **19:11后用户批准两项返修开工：** 目标Client `D:\mavenProject\DHXY-cr271`、Cloud `D:\mavenProject\dhxy-cloud-brain`，shell已确认；dev最新推送经ls-remote仍2236357/c100781。推送无G181飞行接线，当前Wubei三处延迟均为本卡dirty的1000ms；Client MatchEvidenceStore对推送零diff，Sampler既有多卡dirty保留。仅将绿链后等待改2000ms，并从实际共享采样原帧/ROI留证，Cloud日志补token/capture绑定；初筛/差分/按后1500ms/失败继续寻路不改。沿现有有界后台writer保存，不新增截图/上传；仅隔离编译、不测试/重启/输入。
+
+- **19:11飞行误切只读排查：** 目标治理工作树`D:\mavenProject\DHXY-cr271`已shell核对，沿本节dev/推送基线，既有dirty保留；本轮只写调查记录。光牛的滑子°领任务后19:11:38.050绿链成功，39.905采样0.29223864触发Alt+C；Client40.012实际发送、40.278成功回执；43.644采样0.21680845，delta=-0.07543019，被判CONFIRMED_TARGET并结束，无第二次纠正。用户实见原本飞行、按后落地；不是未触发或云端拒收。精确seq1198/1204的ROI原图未在本采样链保存，不能凭数值断言背景变化为本次已证根因。G181登记P1及E39/E29复现；未改Java/编译/测试/重启/输入。修复方向待用户批准，详见卡。
+
+- **P1注册修复交付：** 仅CloudTurnRuntimeConfiguration新增CloudFlightAdjustmentService的@Import及注释，依赖GameContext/ReadyEvents已在清单。配置+service+WubeiTask当前源码一起隔离javac exit0，产物`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g181-import-fix-0179f23395a148c4ab5bc62bc5a9b35b`；源码diff仅2行新增。未测试/host实例化/部署重启/写target/classes/游戏输入；不能称运行验收通过。卡/看板同步，E47记录修复状态。
+
+- **P1修复开工（用户“赶紧修”）：** 目标Cloud `D:\mavenProject\dhxy-cloud-brain`、治理Client `D:\mavenProject\DHXY-cr271`，shell已核。Cloud dev最新推送c100781经ls-remote确认，CloudTurnRuntimeConfiguration对origin/dev零diff；仅追加显式服务Import，保留其它dirty。依赖GameContext/CloudWholeTaskReadyEventState已在同清单。只隔离编译，不运行测试/任务、不重启、不写target/classes。
+
+- **18:46启动失败只读诊断：** 已核工作树Client DHXY-cr271、Cloud dhxy-cloud-brain；光牛的滑子°，18:46:13/19（及18:45:06）均runtime-pre-execute缺CloudFlightAdjustmentService。Cloud host非全包扫描，新Service漏CloudTurnRuntimeConfiguration.@Import，class实际18:44:12存在。P1归本卡，编译门漏运行装配；修复只需登记真实服务，GameContext/ReadyEvent依赖已有。用户当前只问原因，未改Java/编译/测试/重启/输入，不派修复agent越权；完整证据及修复owner回G181，E47重复+1。G179/G180业务在实例化前未执行，无运行结论。
+
+- **本轮五倍接线交付：** 普通/probe及非缓存续战在clickTaskTrackerGreen成功分支、缓存续战在clickCachedChainedTrackerGreen成功分支接CloudFlightAdjustmentService；失败只记录继续、不更改clicked。共享帧新事实、阶段新图围栏、专用Alt+C进战worker围栏均已接。两仓5个显式源码分别隔离javac exit=0（sourcepath当前生产源码、依赖现有target只读）；Client输出`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g181-wiring-client-bb0d75adb2604cc7873cd21b2c899423`，Cloud输出`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g181-wiring-cloud-8c872b3e03cb4646872fb81af266e0d2`。规则门/看板同步；没有测试/回放、运行target写入、部署重启或游戏输入。其它任务未迁移，既有G179/G180 dirty保留。
+
+- **本轮解除暂停并开工：** 用户明确无法确认就继续寻路，禁止本轮新增停止/重按/重启。已核shell Client `D:\mavenProject\DHXY-cr271`、Cloud `D:\mavenProject\dhxy-cloud-brain`，dev最新推送仍2236357/c100781；Sampler/WubeiTask等既有dirty保留。沿已读五倍业务MD及前轮两处真实点击基线，新增按需通用饱和度事实和Cloud调整服务；两处绿链成功分支调用，延迟1秒、目标FLYING。输入仅新增专用受进战围栏保护的Alt+C形式，不改普通Alt+C/Alt+8及其它任务。采样使用既有共享帧，阶段token排除旧帧；仅隔离编译、不测试/重启/游戏输入。
+
+- **五倍接线核对（用户追加三项定案）：** 目标仍为已核shell的Client DHXY-cr271、Cloud dhxy-cloud-brain；两仓dev的ls-remote仍为2236357/c100781。Cloud WubeiTask现有707+/316-、Client Sampler等多卡dirty保留。本轮只读核实五倍普通/probe共用`clickTaskTrackerGreen`与黄袍续战`clickCachedChainedTrackerGreen`两个实际输入入口；均以executeInputTurn返回true为触发前提，医宝宝/修装备导航不在此门内。用户明确目标FLYING，点击成功后延迟1000ms才判。原绿链输入坐标/模板/业务分流不改。
+- **当前接线暂停点：** 已通过异步问题询问“飞行仍无法确认时停止当前任务，还是保留寻路继续”；尚无用户裁决。该项影响任务终态/恢复，不以一般接线授权擅自选择。卡与trace标记待裁决，本轮未改Java、未编译或测试、未重启/游戏操作。已有纯函数编译结果仅属于上一轮，不冒充本轮接线完成。采用既有天庭按需饱和度事实链的候选方案已查，正式接线需保证旧帧、真实采样时间/回执时间、exact run/HWND及停止边界，不机械借用天庭专用事实名。
+
+- **交付：** 双仓新增纯策略`FlightStateAdjustment.java`；无现有生产调用改动。两仓JDK21 `javac -encoding UTF-8 -proc:none -Xlint:all -Werror -d <独立temp> <源码>`exit=0；Client产物`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g181-client-4fcc02ba970d434aaaf1a0d4bc5f39ff`，Cloud产物`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g181-cloud-eaf6650d346d476587fce47f1c2a4f47`。无测试/回放/运行，未写target/classes。门禁是文档检查，不是行为验证；看板随卡同步。任务接线尚未做，不能宣称重启生效。
+
+- 用户批准“把卡建好，然后实施”；首版按前文“先把函数写出来”落实纯决策函数，不批量替换稳定任务入口。目标 Client `D:\mavenProject\DHXY-cr271`、Cloud `D:\mavenProject\dhxy-cloud-brain`，shell已核；保护基线DHXY不动。
+- 两仓dev，ls-remote本轮核对最新推送Client `2236357413ffc64621626917ca4a66183895390d`、Cloud `c10078142bdc769717cf8980ffcf56e2e45da8aa`。git status既有多卡dirty全部保留；相关`FlyingSaturationLocalMechanics` / `TiantingDarkThunderPlan`对origin/dev无差异：旧初筛0.10/0.20，天庭差分0.02。新增独立策略，不还原或修改其它卡文件。
+- 批准初筛0.20±0.03，闭区间0.17～0.23模糊；差分参数独立，默认沿用天庭0.02。保留同窗口/轮次/ROI、新帧、实际按键回执和有界纠正；实现前登记BR-FLIGHT-001并运行文档门禁。仅隔离编译，不建/跑测试、不写target/classes、不重启、不截图/输入。接线与实测未完成，不能宣称运行已修复。
+
+- **09-13 G179停步失败交接开工：** 用户明确批准2.2秒producer门+旧停步失败失效方案。目标Client D:\mavenProject\DHXY-cr271、Cloud D:\mavenProject\dhxy-cloud-brain，shell已核，dev推送仍2236357/c100781。Client既有dirty Context18+/1-、Sampler13+/7-、runtime executor9+/1-保留；推送与当前missing-kanda皆直接接受STABLE，Cloud失败桥只保留boolean。拟共享producer按采样时间2.2秒、结构化失败类型/停步起点贯穿event与reset，五倍在现有精确撤权处校验，撤回只保留寻路/兴趣；点击耗尽语义不动。双仓协议同字节，旧签名兼容；仅隔离编译，不测试/运行/输入。
+
+## 2026-09-13 / G180 NPC成功记忆持续复用，连续失败三次才停用（用户定案建卡）
+
+- **实施交付：** Cloud记忆库/识别器、Client FIFO执行器三源码已改；启动一次快照、非破坏性LIFO遍历、逐点三次失败停用、成功清零、唯一候选回执与defer结算接线，记忆回执同步提交且截图不可用不计失败。双端隔离javac exit0：Temp `dhxy-g180-cloud-21ba461cb4124313acd62bf1618ab232` / `dhxy-g180-client-f1670305576e4f77bfc4dbabc689c5ca`；源码hash和命令见卡。未测试/独立review/重启/输入，不写共享target/classes，未修改运行库。G180状态已实现待评审部署，不是Done。
+
+- **本轮正式实施授权：** 用户“那你去做这个修改一下”。shell再次确认Client治理/执行器DHXY-cr271、Cloud dhxy-cloud-brain；前述推送基线和既有dirty保留。程序启动边界落实到CloudBrainServer创建DecisionEngine/NpcClickMemoryStore时；该canonical记忆库的启动副本不随taskRunId退休或持久化reload重建。拟写Cloud记忆库/候选生产器、Client记忆回执顺序，必要时保留现有延迟验证接线；只隔离编译，不建/跑测试、不写共享target、不重启。
+
+- 目标治理工作树 `D:\mavenProject\DHXY-cr271`，拟实施 Cloud `D:\mavenProject\dhxy-cloud-brain`，shell已核对，两仓dev；保护基线DHXY不动。ls-remote核对最新推送Client `2236357413ffc64621626917ca4a66183895390d` / Cloud `c10078142bdc769717cf8980ffcf56e2e45da8aa`。两仓已有多卡dirty，全部保留；Cloud记忆类既有246行diff、队列30行diff，不能整文件还原。
+- 当前/推送记忆路径均为taskRunId首次复制、lookupNext以pollLast取出即移除；用户明确批准替换为启动副本长期复用、逐点连续失败三次才停用，成功清零，不限轮次/次数。程序启动边界不能再由每轮/session自行冒充；临时删除不写永久库。
+- 本轮先落G180卡及源表、同步看板；状态为已批准待实施，未声称代码修改或测试完成。后续必须追踪候选真实下发→本地真实点击及验证→回执去重→临时计数，核清启动/停止/持久化重载的所有副本修改入口，再实施。未改Java、未编译/测试、未重启/游戏输入。
+
+- **09-13 17:43五倍移动中重按只读调查：** 目标治理/日志DHXY-cr271（shell确认），Cloud源码dhxy-cloud-brain。G179/G156关联P1：Client本腿稳定995ms→STABLE，missing-kanda立即发失败；Cloud2200ms门正确保留ACTIVE却不管此失败出口；坐标已变值撤回，失败仍被消费撤权清障重按。日志03.037绿链410,468；不是旧腿/超时。来源及修复方向已回两卡，未改代码/测试/重启/输入，精确miss原图缺口已记。责任Codex，修复等用户批准。
+
+## Codex - 2026-09-13 / G081 飞行阈值与当前窗口单帧核验
+
+- 历史模糊带核查：目标仍为D:\mavenProject\DHXY-cr271，仅归档日志只读统计和文档增补，保护其它dirty。713条天庭采样关联得到67组首按前序列，P95跨度0.0447/max0.1149；提案0.2±0.12为保守试用初筛带，未批准/未实施，不能宣称全地图校准。完整方法与明细已写G081-flight-threshold-log-review-20260913.md并链接同卡；无游戏操作或测试。
+- 追加只读确认UNKNOWN处理：鬼王辅助保留pending、当帧return、后续tick再判，无专用超时/次数兜底；换/结束寻路丢弃。天庭用原始数值差分，NPC面板探针UNKNOWN跳过direct-combat，不混称同一机制。结论补回G081卡，未执行任何新测试或输入。
+- 用户再次明确要求重截图计算：同窗口第二张`window-raw-02.png`，同ROI和生产classify得`0.138388702954 / UNKNOWN`，exit=0。已补G081卡和RESULT.md；没有自行按键，不当作受控起落对照试验。
+- **核验结果：** 当前源码`FlyingSaturationLocalMechanics.classify`隔离编译后直接执行，2546像素meanSaturation=`0.530534698108`，返回`NOT_FLYING`。原图角色光牛的滑子°、宝象国(92,87)；ROI原像素已保存并显示聊天，实际是树叶/背景。仅证明该截图喂给函数的输出，不证明真实飞行状态，也不是正在运行Runner的原始采样回放。另查到Cloud `NpcClickService.detectFlyingStateName`面板模板阈值0.84，需Alt+U，本轮未执行。证据与可重复命令见本次图片目录`RESULT.md`。未改生产、未写target/classes、未切飞行。
+- 用户明确授权找飞行阈值、截当前游戏图并用函数判一次；不授权按键/飞行切换。目标治理/Client `D:\mavenProject\DHXY-cr271`已shell核对，dev，origin/dev `2236357413ffc64621626917ca4a66183895390d`；`FlyingSaturationLocalMechanics`对origin/dev无diff。生产不改。
+- computer-use绑定当前光牛的滑子°/387545229，外窗截图1036×783，原点338,207；原图归档`images/test-cases/flight-current-20260913-1789334503858/window-raw.png`，已显示聊天。使用本次截图原坐标(688,71,67×38)验证分类器，不擅自减标题栏。单帧数值不等同于已证明人物真实飞行；既有G081记有跨地图误判。临时核验程序输出隔离于`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-flight-check-3070dd9430db4d78aaa2d60d029c3210`，只调用当前源码纯classify，禁止启动Spring/游戏或写target/classes。
+
+- **G179面板失败计数交付：** Cloud仅WubeiTask新增consecutiveTrackerReadFailures与单次pending标记；完整未找到判据+1，恢复门消费标记，第三次普通FAILED返回在清障/导航前；前两次next回接而非recoverTo，不增加通用恢复次数；面板成功/新轮清零。真实进战与撤权保护仍在终止前。隔离javac exit0，scratch=`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g179-tracker-failure-7bb292d945014c0089ff9d9001e996c8`。代码复读确认消费/清零/终止顺序，未测试、未重启/输入，未写target/classes。
+
+- **G179面板三次失败即停开工：** 用户明确批准上一轮方案；治理工作树D:\mavenProject\DHXY-cr271，生产D:\mavenProject\dhxy-cloud-brain，shell已确认，两仓dev；ls-remote仍Client2236357/Cloudc100781。Wubei已有多卡dirty保留；推送与当前runReadTrackerPhase皆直接failed，recoverRoundAfterFailure皆recoveryCount>=3才停、recoverTo累加，造成第三次仍重接。只新增面板负判据独立连续计数与失败门分流：第三次负判据停止，成功/新轮清零，前两次不借用通用恢复预算；不改其他失败上限、真实战斗优先、安全撤权、模板及识别次数。仅隔离编译，不运行测试/程序/输入。
+
+- **G179地图开窗删除交付：** 本轮仅Cloud `WubeiTask.java`生产改动：删除普通怪地图门的启动/读取/开启；绿链完成既有准备后直接注册本地入战，显形镜/黄袍窗口不变；同腿ARRIVED/STOPPED_AWAY保留快照并等本地CLICKED/FAILED，不再自行清障重按。明确失败后精确撤权恢复保留。隔离javac exit0，输出`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g179-mapless-cloud-258a2820af614c80be85eb569477c949`；未测试、未重启/输入、未写target/classes。全局旧地图覆盖新识别的withTranslatedState缺陷本轮仅解释来源，尚未修复，不与五倍去门混称修完。
+
+- **G179地图开窗删除开工（用户明确“那就清掉”）：** Cloud `D:\mavenProject\dhxy-cloud-brain`改WubeiTask，治理Client `D:\mavenProject\DHXY-cr271`，shell已确认；两仓dev及ls-remote Client2236357/Cloudc100781，Wubei既有648+/232-全部保留。origin/dev仍有startOrdinaryEnterBattleTargetMapGateIfNeeded及停步直接清障重按，新批准明确替代这两处；CloudObservationHttpHandler旧字段覆盖新图名已定位但用户本轮对该处问来源，未授权全局缓存策略修改。先更新BR-WUBEI-007及普通怪对应规则、通过门禁，再删五倍地图开窗调用并改为绿链后注册，停步只等本地事实；现有明确失败撤权后的恢复保留。未授权测试，仅隔离javac，不重启/输入。
+
+- **G179本地/Cloud职责再核实：** 修罗绿链输入后即登记本地执行；本地匹配→本地直接入队点击→点击后上报，Cloud不二次批准坐标。20:32展示图属Cloud错误清障旁路不是本地匹配。旧图名已追到Client `updateValueSnapshot`读PlayerCharacter.currentMapName→snapshot→pathing fact，Cloud复制器旧字段抢新识别；日志上一轮20:30平顶山、本轮20:32万寿山。仅补G179证据，不改生产/测试/输入；不擅自移除原保留地图门。
+
+- **2026-09-10 20:32 G179运行P1只读调查：** 目标Client治理/日志`D:\mavenProject\DHXY-cr271`、Cloud源码`D:\mavenProject\dhxy-cloud-brain`，shell确认dev；既有dirty保留。新帧万寿山被CloudObservationHttpHandler.withTranslatedState旧图名优先覆盖成平顶山（推送同病），五倍目标地图门未开；localEnterBattleAttemptId=null却授权清障，入战目录已移除后只匹配接任务模板，继而fallback点击离开(1639,481)，09.131点击绿链(1471,335)，14秒重复。全程同run，无fatal/重启；17.878用户暂停。已发洗字证据和错误/正确业务模板，原始未洗图缺失已明报。G179重开，修地图复制器+区分未开启/已释放待用户批准；仅文档，无生产/编译/测试/输入。
+
+- **G179致命恢复例外交付：** 本轮生产4文件（Client控制器、WindowTurnLoop、TurnModeGuard；CloudTurnTaskRuntime）。致命类型终态先截队列，Client精确child事件授权同任务后缀重启，保留次数、清理未确认退避；普通FAILED/SKIPPED不热重启。观察join超时保留旧执行引用供恢复继续等；exact loop移除与生命周期检查挡旧回调。终态投影异步并与UI共锁，避免阻塞turn退出。Client最终scratch`dhxy-g179-fatal-client-final-6850cd595e734116b2499d151996e969`、Cloud`dhxy-g179-fatal-cloud-fb3c86b743104364ac5edc791774f68d`（系统Temp），隔离javac exit0。未测试、未重启/输入，未写target/classes；生产证据/未执行验收规格和最新规则已回G179。
+
+- **G179致命恢复例外开工（用户“可以，按照这种边界干”）：** 目标Client `D:\mavenProject\DHXY-cr271`、Cloud `D:\mavenProject\dhxy-cloud-brain`，shell已确认；dev、ls-remote仍Client2236357413ffc64621626917ca4a66183895390d / Cloudc10078142bdc769717cf8980ffcf56e2e45da8aa。Client控制器上一轮禁止全部失败重启的dirty及用户错峰1～3秒保留为比较基线；CloudTurnTaskRuntime、WindowTurnLoop原与推送一致。推送基线全部FAILED/SKIPPED可重启、Cloud CONTINUE_ON_FAILURE会提前跳任务，与最新批准不同。拟改共用Runtime致命终态阻止推进，沿用队列事件exceptionType给Client分类，Client保留失败子任务进度、等待观察/维护退出再清理重启；普通失败及各任务phase不动。只隔离javac，不创建/运行测试，不启动程序或游戏输入。
+
+- **G179最新用户调整（2026-09-10，未实施）：** 用户接受致命终止后自动重启任务，不希望停住等UI；普通失败仍原run恢复，不恢复全部FAILED/SKIPPED无差别热启动。需核实致命路径安全撤销旧执行者、保留次数并重启同任务，不能凭fatal名字放行。治理目标`D:\mavenProject\DHXY-cr271`已由shell确认，仅记录新边界，未改生产/测试/编译/重启/输入；此前共用终态停止代码仍是已实现版本，不能宣称已按新意图激活。
+
+- **2026-09-10 G179致命终止分类追问（只读核实）：** 目标治理工作树`D:\mavenProject\DHXY-cr271`已由shell确认，Cloud只读。当前Client日志31871/32018确认16:56:06.634和16:56:26.487两次WUBEI `TaskFatalException: Wubei local entry exact revocation identity mismatch: round-recovery`；均为此前G179注册参数回归的恢复后果，不是游戏死亡。G114历史卡另记01:50:50.911修罗错代reset终止，区分历史取证与本轮原日志。代码还包含修罗连续失败10次、归队门180秒、窗口/执行ACK不一致、模板加载异常、部分transport UNKNOWN等终止分支；除上述身份错配外，本轮未确认这些类别的实际触发。仅补文档，不改生产/运行测试/编译/重启/输入；G179待运行验收状态不变。
+
+- **G179返修完成，所有任务范围已落实：** 共用控制层FAILED/SKIPPED不再自动startOneRemote，延迟回调只允许SUCCESS；原run内部重接恢复、UI启动/暂停后启动、正常成功续跑未改。五倍0L→null；新增TurnActionValidationException仅标记execute之前构造拒绝，Wubei据此清假身份，网络不确定及no-match严格语义保留。未给Alt+Q加标志、未改协议/模板/ROI。Client最终scratch`dhxy-g179-client-final-410837670ff24ccca3e4fc0daaa99748`，Cloud`dhxy-g179-cloud-repair-4c503eec8e2642a3b473aecef4a8b643`（均系统Temp下），隔离javac exit0；未测试/重启/输入，不写target/classes。生产4文件，责任Codex，最终规则/交付已回G179、G133及错误清单。
+
+- **G179正式返修开工（用户明确催实施，并纠正为整条热启动线）：** 目标Client `D:\mavenProject\DHXY-cr271`、Cloud `D:\mavenProject\dhxy-cloud-brain`，shell已验证。两仓dev，刚以ls-remote复核Client2236357413ffc64621626917ca4a66183895390d / Cloudc10078142bdc769717cf8980ffcf56e2e45da8aa。Client控制器dirty只有用户已定的错峰1～3秒，完整保留；Cloud Wubei的G168～G179既有638+/232-保留，只修此次注册块；TurnGameClient当前与推送一致。基线FAILED/SKIPPED自动startOneRemote(PAUSE_RESUME)与新定案冲突已由用户明确否决，改终态停止；同run恢复和SUCCESS续跑不动。不实施已撤回的Alt+Q专用wire字段，不修改模板/坐标。拟写Client控制器、Cloud Wubei/TurnGameClient及提交前校验专用异常（明确区分未提交与网络不确定）。只隔离编译，不运行任何测试/输入/重启。
+
+- **2026-09-10 G179/G133用户来源定案（文档落盘，未实现）：** 仅UI启动或UI暂停后启动允许Alt+Q启动重同步；内部恢复/自动重启不得进入。记录于业务逻辑`BR-START-001`及两卡，G133入口规则重开。修改目标仍为Client工作树治理文档，不动保护基线/两端生产，不测试/编译/输入。需后续把真实UI来源传至共用门，不能用run首次或PAUSE_RESUME代替；不推导为关闭一切自动恢复。
+
+- **G179外层分支追加核实（只调查）：** `WindowTaskControlService:1038`以FAILED/SKIPPED粗分类恢复，未按fatal错误判可恢复；`:1300-1312`清FAILED现实缓存并直接调用`startOneRemote(...PAUSE_RESUME...)`。所以没有人工启动也会产生新run，G133按run只刷一次自然重新执行Alt+Q。origin/dev已有此机制，本卡错误触发它；用户质疑成立在“确定性内部错误不应当正常重启恢复”，而非NPC识别自行跳进初始化。拟议通用错误分类须另经批准，不擅自删除全部自动恢复。本轮未改生产/测试/编译/输入。
+
+## Codex - 2026-09-10 / G179 暂停前Alt+Q和重复绿链（P1只读调查）
+
+- 目标治理工作树`D:\mavenProject\DHXY-cr271`、Cloud代码`D:\mavenProject\dhxy-cloud-brain`，shell已确认；保护基线不动。沿用两仓dev及本卡已核推送基线Client2236357/Cloudc100781，已有dirty保留。本轮仅日志/代码/现存图片核实及治理文档更新，未改生产、编译、测试、重启或游戏输入。
+- 16:56:06.275及26.227，G179新调用`probeStartAtMs=0L`违反协议null或正数要求，Cloud命令构造阶段即失败，Client未安装入战执行；预存attempt令恢复撤销不存在的身份再fatal。06.637和26.488自动重启；14.566/16.577的Alt+Q是新run启动刷新，20.279在OPTION对话已存在时重点绿链。31.836用户暂停。根因是本卡注册接线回归，不是本地match miss。
+- 已查看16:56:15.966任务面板打开和17.567关闭两张既有match-evidence图，后者明确保留魁星归位NPC对话；这些分数仅对应任务面板锚点。无此次入战匹配分数，不能用旧capture证明模板可否匹配。完整证据及相关在途卡核对写回G179，状态改P1待批准返修，修复责任Codex。
+- 待批准方向：合法null时间参数；区分提交前确定失败与提交后响应不确定，不能产生伪所有权，不能削弱真实精确撤权或删除Alt+Q。尚未实施/验证，错误清单E1同族重复登记，看板同步。
+
+## Codex - 2026-09-10 / G179 五倍接入共用本地入战执行与有限重试（实施）
+
+- 实施已落盘：Client三文件、Cloud四文件（额外Cloud内部ready枚举），模板/洗字/ROI/偏移未改；普通/显形镜/黄袍走本地实际点击事实，共用4秒/最多3次机制，精确撤权后Cloud才可fallback。代码核对补齐黄袍点击后开窗、重复声明不重置预算、特殊耗尽不走普通导航、超时与切兴趣先撤权、真实进战胜出。修罗/鬼王/抓鬼原分支与参数保留。
+- 最终复编两端exit0：Client `dhxy-g179-client-final-b7721a23dafa441bb0652e319ff506cb` / Cloud `dhxy-g179-cloud-final-9ff0bea1cfef4847ad9ad0d75115faa9`，均在系统Temp，完整命令与路径写G179。diff whitespace通过；看板385行已刷新。trace不得新增不存在的状态枚举，已改回schema认可的APPROVED_IMPLEMENTATION，并另列实施未测试状态；规则门重跑见交付结果。
+- 隔离编译已过：Client `C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g179-client-c9b8eba4f87a4e14961a44638e9d8925`；Cloud `C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g179-cloud-c2f5c4c6633944919cd445ec63a1389a`（包含G178源码，后续最终复编目录见卡记录）。未测试/未fresh；不要把编译通过当行为验收。完整重启两端才激活，未替用户重启或操作游戏。
+- 用户已明确批准上述单一执行者方案，并强调修罗/鬼王/抓鬼稳定；本轮只接入五倍，共用4秒/最多3次机制不改既有任务判据。目标Client/治理 `D:\mavenProject\DHXY-cr271`、Cloud `D:\mavenProject\dhxy-cloud-brain`，shell已核对，两仓dev；ls-remote Client2236357413ffc64621626917ca4a66183895390d、Cloudc10078142bdc769717cf8980ffcf56e2e45da8aa。Client相关DialogService/Sampler/Runtime原无dirty；Cloud WubeiTask(594行diff)、DialogService(5行diff)、Observer(160行diff)已有在途改动，逐块保留；origin/dev仍为五倍prepare上报+Cloud点击。保护DHXY不动。
+- 已读五倍两业务MD、共用业务规则/错误账本及G171调用链；本轮先登记BR-WUBEI-007覆盖已向用户披露的旧003入战执行归属，然后规则门、实施。仅隔离javac，未获得本卡测试族授权，不建/跑测试，不重启/输入、不写运行target/classes。
+
+## Codex - 2026-09-10 / G171 五倍15:56清障点击后未入战、不再重试（只读复核）
+
+- 继续核实其他任务：修罗Cloud保留prepared点击和清障入战目录；鬼王/抓鬼/新手历练清障也可走Cloud raw入战匹配；天庭有raw业务目录。故不能把“主路径本地”讲成“全部本地”，也不能承诺现有旁路无双执行风险。已在G171登记单一入战执行者的统一方向与不能简单删目录导致fallback点离开的边界；未授权跨任务实施，无代码改动/测试。
+- 用户讨论小修重试或统一修罗，尚未批准。已核三入战模板本地齐备并受Git跟踪，Client/Cloud入战目录同路径/次序/offset，五倍本地洗字prepare已有可执行生产入口；不要混用修罗raw matcher。建议范围仅入战执行确认重试+Cloud清障归属协同，不扩到接任务/显形镜/黄袍/导航。仅读取模板/代码，未新跑匹配或测试，详见G171方案段。
+- 补充已分清两条匹配链：实际点击来自Cloud通用清障的业务模板优先分支；此前展示44.449黑白图来自Client五倍prepare，本地也洗字，不是fallback。修罗/鬼王等local-kanda有4秒确认、最多3次实际点击及耗尽上报；白名单不含五倍，五倍本地prepare只发候选。已写G171，不把图的本地分数当Cloud此次点击依据。未改代码/测试/输入。
+- 目标治理工作树 `D:\mavenProject\DHXY-cr271`、Cloud `D:\mavenProject\dhxy-cloud-brain`，shell均已核对；保护基线DHXY不动。两仓dev；ls-remote确认Client `2236357413ffc64621626917ca4a66183895390d`、Cloud `c10078142bdc769717cf8980ffcf56e2e45da8aa`。现存多卡dirty保留，只有调查文档/看板更新，无生产修改、测试、编译、重启或游戏输入。
+- 用户本轮问原因，未批准改业务。Cloud origin/dev的WAIT_BATTLE_FINISH已只等边沿；本地G171另加 `GREEN_STOP_ENTER_BATTLE_SOURCE` 下跳过prepared的门（diff已核），令清障点击后无入战时也无法再消费候选。重开G171为P1，方案需先明确修改BR-WUBEI-003的“等待期间不重复消费”边界，不能偷偷恢复无条件重按绿字。
+- 日志运行 `remote-turn-21779afb-53bd-45d3-a842-ed32321edce7:0:WUBEI`、hwnd-161A00FA、round3：15:55:42.695通用清障→43.590任务业务→44.058魁星模板命中→44.224物理光标实际(1654,431)→44.392输入COMPLETED→44.400进入只等战斗分支。44.631已发布新的prepared（采样44.449），但门跳过；到15:56:41.820停止，约57秒无进战、无第二次点击。不是清障未触发，不是线程死锁；180秒等待上限尚未到。
+- 现存点击后洗字图 `images/temp/match-evidence/dialog-wubei-enter-battle/20260910_155544_449_hwnd-161A00FA_PRESENT_score-1.000.png` 与魁星模板已查看；1.000为Client该帧分数，不冒充Cloud同步命中分数。对应未洗原帧未找到（raw池最后15:53:03），不能断言首次失败是偏点/游戏拒绝。修罗有LOCAL_ENTER_BATTLE_FAILED回调；天庭25秒入战确认到期释放门，五倍不等价。
+- 本次适用看板复核：G168无prepath日志已见；G170未出现入战可验事件、不宣称通过；G171反例重开；G178当前普通怪非双点显形镜，不作验收；G169/G172～G177其他在途项无本症状对应反例，不擅自关卡。详见G171卡新记录与错误清单E22重复x4。
+
+## Codex - 2026-09-10 / G178 五倍第二段被第一段停步事件提前放行（只读调查）
+
+- **本卡已实施交付：** Cloud仅`WubeiTask`与`CloudWholeTaskReadyEventState`。新ID任务保留，等待与镜像精确围栏，FIFO用新ID；旧API调用不变、其他唤醒保留，生命周期清理绑定。隔离javac两文件exit0，Temp `dhxy-g178-cloud-f3e34a9cc8704df3a9d2448224117cb1`，运行target/classes只读。未运行/创建自动测试，未重启/输入，Cloud待用户安排重启及实跑验收。详见G178卡最新交付项。
+
+- **用户已批准修复，实施目标已核对：** Cloud `D:\mavenProject\dhxy-cloud-brain`，治理 `D:\mavenProject\DHXY-cr271`；均dev，两仓ls-remote仍Client2236357413ffc64621626917ca4a66183895390d、Cloudc10078142bdc769717cf8980ffcf56e2e45da8aa。Wubei已有G168/169/170/171/176在途修改保留；本问题前缀门与推送基线同形，ReadyEventState当前无dirty。本卡只修新腿身份在等待/镜像/FIFO的贯通，保留战斗/准备动作/预算唤醒，不改模板、坐标、NoTarget/用镜次数/未知终态业务。用户本轮只批准修复，未批准新的测试族；仅隔离编译和代码审阅，禁止写运行target/classes/重启/输入。
+
+- 用户明确现场只见一次实际用镜。复核`used=true`只来自本地输入函数返回，无游戏效果验证，不得据此断言第二次实际使用。已把此证据边界写进G178卡；以旧停步放行新段解释移动中提前判失败，不用动作日志替代游戏事实。14:31新日志没有对应probe失败，现有证据仍明确标14:06/14:08。无生产改动。
+
+- 目标治理工作树 `D:\mavenProject\DHXY-cr271`，Cloud `D:\mavenProject\dhxy-cloud-brain`，shell已确认。用户问“为什么回来重接”“还在移动，第二张图怎么弹出来”；只读日志/代码/现存图，不实施、不测试、不捕获或输入。生产Cloud相关`isCurrentTrackerPathingSnapshot`与origin/dev一致，原有dirty保留；前序G177截框修改不是此路径。
+- 最新现存日志止于14:10:46停止；14:06:29、14:08:44两次相同失败。14:08:33.753第一段发布terminal seq54；34.501Client注册第二段4202051a；34.507任务afterSeq53吃旧seq54，34.520仍读第一点149,63的旧镜像就执行第二次用镜。36.546使用动作坐标1569,602，36.666光标实到；38.040第二段仍ACTIVE；41.419 STORY_MISS，44.004两点耗尽回接。完整记录G178卡。修复须用户另行批准；不是180s超时，不改ROI或加地图hint gate。
+
+## Codex - 2026-09-10 / G177 五倍医宝宝连续未匹配后取消对话（只调查）
+
+- **交付：** 用户要求别扩大工作，按已有图直接调整。两端医治框已改118×53，上沿360；repair仍原118×40、上沿373，Client共享截图后仅修装备子裁剪及中心补偏移。Client/Cloud隔离javac通过，输出分别 `dhxy-g177-client-7e4d569def7d44cd86943f5339dceae0` / `dhxy-g177-cloud-a435eced0f8d43f8927f74fd90dde829`，均在系统Temp。运行字节码未动，无重启/输入。
+- **可重放证据：** `scripts/G177DoctorFrameCompare.java` 隔离javac，`java -cp <scratch>;target/classes;<target/cp.txt> G177DoctorFrameCompare --verify images/template/dialog/maintenance/maintenance_heal_all_repair_raw.png images/test-cases/maintenance/g177/20260910_wubei_lossless.png`（Client工作树）。13:48无损五倍旧0.146162、新0.997632、中心319,376；输出 `20260910_wubei_lossless_roi_review.png` 已在聊天发出。另一布局用已有JPEG位置证明覆盖，没有新无损阈值验收；不声称双布局测试全过。未跑扩展合同，两个未运行草稿已移除。以G177卡最新实施项为准，下方调查/待批准是历史。
+
+- **本轮已获批准，先验证再实施：** 用户“可以啊，就是你确认你测试确认下来就改就可以”。目标工作树 Client `D:\mavenProject\DHXY-cr271`、Cloud `D:\mavenProject\dhxy-cloud-brain`，本轮 shell 已逐一确认；两仓 dev，ls-remote 最新推送分别为 `2236357413ffc64621626917ca4a66183895390d` / `c10078142bdc769717cf8980ffcf56e2e45da8aa`。拟改 `OpenCvLocalMaintenanceBroadcastHandler` / `DialogService` 相对 origin/dev 均无差异；保留其他所有 dirty（含五倍退战修复及并行公共帧邮箱）。授权限本卡医宝宝两布局匹配及修装备边界回放，隔离编译，不修改运行中 target/classes，不启动/重启/发送游戏输入。先补无损原帧，JPEG低分不算通过。
+
+- 用户问如何共同覆盖，两图依据拟将医宝宝框(260,373)-(378,413)仅上扩为(260,360)-(378,413)，118x53。方案未实施，360为建议余量非既定规则。Cloud与Client本地广播均有当前ROI，且与repair共用；后续须保护repair原边界，不能漏客户端或顺带改修装备判据。无新截图/测试/输入。
+
+- 13:34第二张已取，用户确认五倍多“全队恢复召唤兽忠诚”。同窗口原点/尺寸/版本/截图入口，超级巫医说明2行+6绿项，沙拉买提说明1行+7绿项，框同位置、医治第一项提前一行。完整JPEG与metadata已保存。授权两图只读ImageFinder比较脚本已跑：JPEG全图分数仅约0.49不可用生产0.85验收；最强位置385 vs368，相差17px，不混称历史9px。无生产修改/输入；修复待用户批准，生产无损PNG回放尚未做。
+
+- 09-10 13:31:40用户已授权现场截图对照，第一张超级巫医保存至`images/test-cases/maintenance/g177/20260910_133140_super-doctor_original.jpg`及metadata；工具原始JPEG直接留存，不是无损生产帧。精确hwnd-161A00FA、原点1212,126、1036x783、洛阳328,104、Revision2051530。computer-use仅list_windows/get_window_state，无焦点/输入/代码修改。等用户打开五倍NPC再取第二张，当前不跑模板回放、不猜框体原因。
+
+- 最新：用户要求9px位置差继续追到底。已核查三任务同一共享方法、相同固定ROI；两端原点一致、无缩放；洗图同坐标改色无重排。7月旧报告已有五倍切字，不能直接归咎9月WGC。原图缺口源头是每窗300000ms保存间隔/每burst2图/保留两天：本次13:02与13:07有原帧、13:04没有。查到的arrival21是点击前任务Story，鬼王temp是修装备，均不作医生菜单证据。G177状态已纠正为上游待原图取证，不能宣称全链根因已明。需要用户授权只读现场截图、手动打开两NPC菜单或提供原图；不擅自点击/修改运行。生产、测试、编译均未动。
+
+- 像素对账：现存PNG首字“全”白像素，修罗y66..79、五倍y57..70；固定维护裁框上沿相对大图y61，五倍首字4行被排除，修罗完整保留。实际FIFO点换算与Cloud截框均反推窗口原点1212,126；没有发现此帧两端原点不一致。只读System.Drawing.GetPixel、未运行匹配器/回放/截图，9px上移的更上游原因仍未定。详见G177追加，生产未动。
+
+- 补充找到两张同类对话：修罗09-02 23:09:00.304与五倍09-10 13:04:48.400同为529x208洗图，七项文字及顺序相同，五倍图中文字更靠上。修罗归档日志0.997926真实点击、BROADCAST_HANDLED；鬼王03:11也有1.0成功raw条带。已在G177追加路径与归档行号，纠正先前未找到其他任务成功实例的限制。不能从洗图断定游戏框移动还是截图坐标偏移；查到CR266单一维护ROI定稿与当前五倍expected验证冲突，未授权改动。
+
+- 目标工作树已Get-Location确认：治理`D:\mavenProject\DHXY-cr271`；Cloud `D:\mavenProject\dhxy-cloud-brain`只读，均dev。当前已知origin/dev：Client `2236357413ffc64621626917ca4a66183895390d`、Cloud `c10078142bdc769717cf8980ffcf56e2e45da8aa`。Cloud DialogService无dirty且origin/dev同样使用固定(260,373)-(378,413)；五倍既有G176等dirty保留。仅写调查文档，不改代码、不编译/测试/重启/输入。
+- 用户问13:04医宝宝为什么反复取消、与修罗鬼王区别。13:04:48.400 Client完整对话洗图命中heal_pet_option=1.000；48.465上报118x40、屏幕(1472,499)的小框；48.481 Cloud raw匹配0.146<0.85，五次均BUSINESS_OPTION_NOT_FOUND；55.851耗尽，57.636明确点最后绿项(1625,604)，57.935 FALLBACK_CLICKED。13:00、13:02/03同类五次失败，13:05:00累计失败3，非成功维护。
+- 共同链为三任务→TaskMaintenanceService→DialogService固定raw条带；五倍沙拉买提与修罗/鬼王超级巫医位置配置不同，不是另有一套修罗成功点击器。现存小框图第一行上部被裁，前置大图却完整可见。拟议共享框体内识别保留目标模板、阈值、原子输入与广播后置；待用户批准，不能先挪固定坐标或换NPC。取证细节/原图缺口见G177卡。
+
+## Codex - 2026-09-10 / G176 五倍12:23意外退战误回城与回放等待
+
+- **完成实施，未测试：** Cloud仅WubeiTask，分类/中断点保留→unexpected exit任务仲裁→现查香或延迟维护二选一→共享归队按同轮续接；回城未验证非死亡改FAILED并删除误arm分支。已按新帧更新Tracker而保留黄袍次数/镜子进度，probe重返使用现有标题起表；死亡仍走原仲裁与归队。隔离javac输出`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g176-cloud-4b5b4a2d181c4503947ece1f9a42ee42`，未写target/classes；治理门通过，合同只是规格、无测试授权未跑。保留其他全部dirty，未部署/重启/游戏输入；详见G176最新实施段。
+- **实施授权（最新）：** 用户明确要求五倍复刻修罗/鬼王“意外退战先查任务、任务仍在续接”的逻辑，并认可回城失败不能当战斗。目标工作树已再次Get-Location核对：治理`D:\mavenProject\DHXY-cr271`，生产`D:\mavenProject\dhxy-cloud-brain`，均dev；本轮ls-remote核对两仓推送仍为下述基线。已读任务业务MD、修罗参考代码/文档及错误清单；五倍diff含G168～G171在途修改，保留不覆盖，其余NPC/协议/记忆dirty不触碰。预期生产写集仅WubeiTask；按同一Runner边沿保留分类及被中断上下文，退战一次性查任务/香/归队后续接；回城未验证非死亡改FAILED。先登记BR-WUBEI-004和G176追踪并跑治理门；本轮没有测试授权，禁止新增或运行测试，只隔离javac、不写target/classes、不重启/输入。
+- **其他任务横查：** 当前Cloud六文件无dirty。修罗/鬼王/新手炼历的道具用后未到起点返回FAILED，有限phase重试后导航回起点；天庭两次道具后导航李靖；抓鬼任务消失直接导航钟馗；五环战后回SYNC_TASK_PANEL，不走该回程道具链。区分意外战斗后查title与回程失败重试两层，不宣称每次道具失败所有任务都查title。天庭导航返回只记录即finished为范围限制，本轮不据此背书完成语义。详情已补G176；仅源码核查及治理文档更新，无测试/编译/输入。
+- **继续只读核查：** 五倍`:4489`将USED_START_MAP_UNVERIFIED（非死亡）直接映射STILL_IN_COMBAT，跳过第二次尝试、title检查及现有failed→ROUTE_TO_MAIN_TASK恢复。修罗相同位置`:4155`返回FAILED，8月7日已明确“Runner退战后不得因回城失败再等退战”，origin/dev同文、无本地diff；8月26日增加死亡仲裁但未推翻该规则。本轮仅更新本shell已核对治理树的G176与E57，不改生产、不编译/测试/重启/输入。
+- 用户仅要求查原因并比较其他任务。本轮只读生产与现存日志，不实施、不编译、不测试、不重启、不输入。治理工作树`D:\mavenProject\DHXY-cr271`已Get-Location核对；Cloud `D:\mavenProject\dhxy-cloud-brain`只读，双仓全部dirty保留。dev推送基线再次ls-remote确认Client2236357413ffc64621626917ca4a66183895390d、Cloudc10078142bdc769717cf8980ffcf56e2e45da8aa。
+- 日志确认12:22:46.736五倍r6由RESOLVE_AFTER_PATHING进入WAIT_BATTLE_FINISH；12:23:27.682确有`client-combat-edge:unexpected:COMBAT_EXITED:combat-exit:unexpected:6`，27.686却消费CLIENT_RUNNER_EXIT并走POST_BATTLE_RECOVER，28.501使用normal-combat回城，30.491实际道具点击；32.669地图仍白骨山239,23，随后ARMED回放并一直等terminal，12:26:52.997仍同样等待。
+- Cloud五倍无combatSource分类/中断阶段恢复状态；G170新增handoff把任意进战交给旧普通战后回城链。修罗/鬼王/抓鬼均有INCIDENTAL续接，天庭有战后位置+归队+Tracker仲裁；共享AutoCombatService只执行维护策略，不决定目标战是否完成。第二缺口是回城未验证即arm，不证明发生了纠错进战；Client arm只改状态、执行只挂未来退战，本场退战已先到，Cloud无terminal就等待。详见G176与E57。
+- 未找到此次回城点击时的完整窗口或游戏拒绝文案；现存包裹/战斗证据多为局部探针，不能据此宣布道具损坏、角色死亡或回城失败的游戏机制。相关G170此段handoff/计时清理已运行但续接P1未闭合；G171无目标入战点击不具验收条件，其余卡不虚报通过。所有修复方向等待用户批准。
+
+## Codex - 2026-09-10 / G175 白龙马用镜后迟迟不点任务提示
+
+- **后续迁移盘点（本轮仅文档）：** 用户要求先列全云端识图适配位置、纯本地匹配排除，待白龙马稳定后再实施。治理目标`D:\mavenProject\DHXY-cr271`已Get-Location核对；Client/Cloud均dev，origin/dev仍为9月8日已登记基线。已定向核查observer所有图像消费、inbox调用方、DecisionEngine图像路由、remote图像端口和Client本地生产者；当前Inbox/Observer/NPC queue已有本地差异，按现树记录，不撤回、不扩写生产。清单写入`docs/rule-traceability/G175-migration-inventory.md`并纳入卡片；不测试、不编译、不截图/输入/部署。后续只需按清单复核期间diff，不得声称未来代码永远无需复核。
+- **本轮交付：公共帧邮箱及白龙马首适配已实现，未测试/未部署。** 目标Cloud `D:\mavenProject\dhxy-cloud-brain`、治理Client `D:\mavenProject\DHXY-cr271`，shell已核对，均dev。仅新增`DialogFrameMailbox`、修改`CloudWindowObservationInbox`/`CloudWholeTaskObserver`；同请求成对入库，一在途+一最新待处理，心跳不撤销，保留结果等槽、按发布返回actionId收只读消费回执，取消只收回自己的动作，终止/淘汰关闭邮箱。2秒配置和其他任务业务不变；路由OPTION仍走旧发布门。保留并行G176/G177及所有原有dirty。
+- **验证边界：** 用户明确“只改代码并隔离编译，暂不测试”；未新增/运行测试。JDK21 javac三文件exit=0，输出`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g175-compile-c222bd1b390c4a4fa6f0b4f91e23350e`；classpath只读Cloud `target/classes`+`target/cp.txt`，`-sourcepath/-d`均临时目录，Lombok处理器同依赖。未写运行类、未部署/重启/截图/输入。实际框ROI裁剪仍待单独视觉接线及用户授权验证，本次不宣称完成。卡、规则、trace、错误清单同步；看板随当前表格生成。
+- 用户追加公共复用要求：计划增加无任务业务的DialogFrameMailbox，Inbox生产成对帧，Observer首接白龙马；不将邮箱类/接口命名为Wubei专用。完成信号由适配层提供，点击类不能使用只读consume回执。已更新trace/权威MD/卡；仍无测试授权。
+- 实施开始：用户批准“一在途+一最新待处理、无图片去重”。目标Cloud D:\mavenProject\dhxy-cloud-brain、治理D:\mavenProject\DHXY-cr271均已shell核对，dev；pushed Client2236357413ffc64621626917ca4a66183895390d/Cloudc10078142bdc769717cf8980ffcf56e2e45da8aa；拟改Inbox/Observer相对origin/dev原为零差异，git status其他G168-G176 dirty原样保留。此次只接WUBEI_PROBE_STORY生命周期、保持2秒订阅与原NPC verifier，不改视觉ROI/模板/输入/任务phase。已补BR-WUBEI-005及trace；离线合同授权已异步询问，未收到答复前不测试。隔离编译不得写target/classes，未重启。
+- 用户纠正为Cloud queue、本地限频主动push，不是上一轮本地queue/Cloud逐张pull；已按原意写回G175并覆盖旧建议。建议一在途+一待处理最新帧、同交互串行、成功清队列。超时不能冒充失败：核对旧action执行状态，未知不得直接二次点击；明确终结后才处理动作后有效帧，STORY仍只读消费ACK。治理树已shell核对，仅记录讨论，保留所有并行dirty，未改生产/测试/输入。
+- queue/pull追问：已shell核对DHXY-cr271治理树，只追加方案。建议本地容量1未领取最新帧槽+Cloud同交互单在途；复用现有observation回包demand/HTTPS供图/收图ACK，不建反向端口。现存capture(demand)不自动满足Runner同帧复用，须接供图边界且检查共享demand槽用途；3处接线是有界改动，不承诺十几行。首次立即、后续按需限频，没领取不反复编码，本地观察不停。已补G175，未改状态行/生产/测试，保留G176并行实施内容。
+- 历史复核：用户明确先查历史再决定，暂停实施。已读7月21日TURN-40G原卡、7月23日动态dialog订阅修订、G094重复图上传/G099观察解耦/G103截图限频卡，git blame/log确认2秒和最新sample门7月28日已入库。原设计有节流/latest-wins/单在途/关键事件保留，不是没考虑过负载。现有prepared-frame已有一次交付+Cloud缓存，可作为按需复用候选；需区分收图ACK与业务完成。只慢发不能修无图心跳推进latest门；3秒不视为定案。结论已持久化G175，治理目标DHXY-cr271已Get-Location核对、dev；Cloud相关两文件相对origin/dev零差异，保留全部dirty/并行G176。仅文档追加，未改表格状态，不运行dashboard生成/生产编译/测试/输入。
+- 本轮频率核查/方案收敛：治理目标仍为已shell核对的D:\mavenProject\DHXY-cr271，dev，双文档原有dirty及G176保留。Cloud配置dialog ROI每2000ms；现场8张/约16.7秒，多数2.0–2.3秒，含0.789秒例外未定因。HTTP单在途不等于业务完成；Cloud latestRois为覆盖存储，未证明无限帧积压。建议改为业务单在途、回执前停该interest图片（本地观察不停）、未匹配才按需补新帧；失败重采最小3秒仅建议待批，首次立即发。保留同帧装配/关联身份，去掉追最新record相等门。已补G175；无代码/测试/输入，表格状态未改。
+- 本轮用户要求结合新代码设计双向交互/实际框/是否前后图比较。已核查本地FramePresence、同cycle图裁剪、同批bounds/ROI与Cloud原子snapshot、大理寺消费、现有点击前局部fingerprint门；建议用实际框、单在途+有界队列+精确回执清理，STORY只读结论不重复图像验证，真实点击保留一次本地目标局部precheck与点击后效果验证；不再Cloud整图追最新。NPC头顶tooltip在框外必须保留原识别范围。已写G175设计段，未改生产、未运行测试或输入；保留另一条线G176及所有dirty。
+- 本轮澄清“验证的图”：治理树已shell核对。sameCurrentDialogSample是整条采样record相等，不比较框像素/指纹；同画面新seq也失败。46.472上传ROI为(200,250,640,300)，框检测在其内(51,95)-(585,240)，不是紧裁框；46.980落盘为洗白输入，未找到同刻未洗原图。只补G175结论，未改生产。
+- 用户讨论“排队处理→本地执行验证→成功回报→清队列”。在既有治理树DHXY-cr271记录方案，未实施。已只读核对Cloud候选队列具备producer barrier及exact session终止清空；前置STORY仍是latest样本发布门，不是帧队列。方案边界：保护正在处理的同链证据，单动作待验证，成功精确结束同链；STORY只读确认不增加第二次截图验证，不把全窗/其他run队列一起清空，待明确修复授权。
+- 本轮用户仅要求排查12:13延迟，不授权修代码。治理目标DHXY-cr271、生产只读dhxy-cloud-brain已shell核对；不动保护树。Cloud observer相关方法与origin/dev相同，保留G168-G174及全部dirty，不编译/测试/重启/输入。
+- 已核实角色光牛的滑子°，平顶山目标(230,149)，不是G174火云洞角落点。道具12:13:40.616完成；出现STORY46.988/54.166均MATCHED score1.000，58.356才发布并当毫秒消费。NPC会话14:00.933开始，tooltip01.108出点520,241 score0.99953955，01.455点击1732,365；04.931进战选项完成。等待主要在出现事实交付，不在tooltip匹配。
+- 高可信机制：Sampler每批发interest，ROI按节流发送；Inbox分别保留latest，Observer入场强制seq/capturedAt一致，匹配后sameCurrentDialogSample再与最新整样本比较。普通新心跳即可使同业务兴趣的ROI失配/旧匹配结果无法发布。现场缺丢弃分支和序号日志，不能宣称逐次拒绝原因已直接取证；也不能把MATCHED必然等同Prepared构造成功。建议只修本轮story只读确认的同代交付，保留取消/换run/window/interest门，待用户授权。
+- 图片已看并展示：46.980洗白匹配证据及koukou模板；14:00.933前FIFO整窗arrival-08...1307602559317800.png展示干净任务tooltip。46秒那次未定位未洗原始整窗，不拿14:00帧冒充。G168-174相关在途卡核查范围与验收限制见G175卡。
+
+## Codex - 2026-09-10 / G174 白龙马角落场景目标坐标核实
+
+- **当前窗口截图讨论（仅观察）：** 用户明确授权截当前窗口、询问角落白龙马如何点。治理目标`D:\mavenProject\DHXY-cr271`已核对；用computer-use列窗后唯一绑定角色光牛的滑子°/387545229，get_window_state原图已在聊天展示（1036×783、外窗原点1353,47，截图screenshot-0）。画面中黄色白龙马文字与紫色人物名重叠，模型簇拥，未运行OCR/模板回放，不据此宣称算法必失败或某点必命中。建议待批准后小步移开人物、看NPC能否露出，再用原识别/验证；固定场景记忆只用于已校准同场景。未按键、激活、移动或点击游戏，未改生产/种子；外窗截图坐标不得混作原1024×768游戏客户区点。
+- **优先级修正已完成：** 指定点查询先于普通栈，FIFO既有栅栏保留。两文件隔离javac exit=0，输出 `%TEMP%/dhxy-g174-priority-0a3365ef9ca04336b740cce90bb7196b`。未测试、未写运行类/数据库、未部署重启或输入。
+- **本轮优先级纠正：** 用户明确指定点必须先于普通历史记忆和洗黄字尝试；原“普通记忆耗尽才角落点”被本裁定替代。生产树 dhxy-cloud-brain、治理树 DHXY-cr271 已shell核对；Cloud dev最新推送c10078142bdc769717cf8980ffcf56e2e45da8aa已ls-remote核对。当前 SmartClickRecognizer 相对推送含G172/G173/G174改动，全部保留，仅反转同一MEMORY入口的角落/普通查询次序；NpcClickMemoryStore只同步说明。指定点作为首候选，原producer barrier等待本地验证，失败后原普通LIFO/tooltip/黄字继续。无测试授权，隔离编译，不写target/classes/运行库、不重启/输入。
+- **本轮坐标换算授权：** 用户明确“全屏的！我让你换算点击的相对坐标”。按当次日志窗口原点(1212,126)，将桌面(1314,848)换算为窗口相对(102,722)，填入并启用白龙马 seed，不再停用等待重复确认。生产树 dhxy-cloud-brain、治理树 DHXY-cr271 本 shell 已核对；Cloud dev 最新推送 c10078142bdc769717cf8980ffcf56e2e45da8aa 已 ls-remote 核对，seed相对推送仅本卡新增记录，其它dirty保留。依据 logs/cloud-brain-console.log:875（11:13:31.613 abs=[1212,126,2236,894]）。只改本卡配置/文档，不改Java、不修改运行库、不重启/输入、无测试；原点来自当次日志，不伪称用户另行确认过原点或游戏验证通过。
+- 用户实施中追加“就是需要写死是白龙马！”：入口硬限制白龙马，其他 NPC 不能通过配置扩展启用；多点仍按地图/目标坐标独立区分。
+- **收口：** 两处 Cloud Java 与原 seed JSON 已写，G172/G173保留。隔离 javac exit=0，目录 `%TEMP%/dhxy-g174-cloud-2e426506b7e84989ba7bd6d14842b236`；元数据门通过。单次候选、无角落Ctrl种子、角落强验证不混入普通栈、run退休回收已源码核对；未创建/运行测试。首条 point=null/enabled=false/calibrationConfirmed=false，桌面原值仅来源。未写真实数据库/target/classes、未重启/输入；等待窗口坐标校准，不承诺已生效。
+- **实施授权与基线（覆盖以下早期讨论状态）：** 用户批准多点独立记录方案。生产目标 `D:\mavenProject\dhxy-cloud-brain`，治理目标 `D:\mavenProject\DHXY-cr271`，本轮均已 shell 核对，保护树 DHXY 不动。两仓 dev；Cloud 最新推送 c10078142bdc769717cf8980ffcf56e2e45da8aa 已 ls-remote 核对，Client origin/dev 为 2236357413ffc64621626917ca4a66183895390d。已读 origin/dev 对比：NpcClickMemoryStore 本地增加 G172 ROI 读写；SmartClickRecognizer 本地含 G172 黄字/ROI 与 G173 禁紫名，全部保留；seed 资源原无 diff。其余五倍、控制器、DTO、测试及治理 dirty 不动。
+- **实施范围：** 复用 Cloud canonical `vision_memory.json` 的独立角落规则集合；不放宽普通 exact 记忆。普通记忆耗尽后按地图/NPC/目标坐标选唯一角落记录；真实窗口尺寸与同地图人物距离、当前 CONFIRMED 事实匹配才进入既有 MEMORY 左键候选。单 run 单窗单规则至多提供一次，不转成 Ctrl 种子；强验证回报只更新角落证据，不伪装成普通永久成功栈。首条白龙马原始桌面点作为停用草稿随 seeds 入库，不写运行中的真实数据库。拟写两处 Cloud Java 和原 seed JSON；无测试授权，只有隔离编译，不写 target/classes、不重启/输入。
+
+- **用户最新裁定：** 经“30以内”澄清后用户回复“对”，确认白龙马角落特例允许人物与目标地图坐标距离不超过30，不再绑定单一人物站位；这不是目标坐标±30或像素半径。仅在本 shell 已核对的 DHXY-cr271 文档中更新方案，未修改生产或正式记忆。测点 `(1314,848)` 对应窗口基点仍待核对，不能无条件把历史换算 `(102,722)` 写为已验证点。
+- 后续只读方案核对：Cloud已有 `NpcClickMemoryStore -> data/vision_memory.json`，key含地图/目标名/目标坐标/人物坐标，MEMORY策略已有读取。建议复用而非另建数据库；用户提出±2区域，先记录为待验证扩展范围，首个经验证点击样本仍缺失。按已核对的同一治理工作树补充 G174 讨论；未改生产/创建记忆/运行测试或输入。
+- 目标文档树 `D:\mavenProject\DHXY-cr271` 已由 shell 核对，Cloud `D:\mavenProject\dhxy-cloud-brain` 只读源码。用户只要求确认是否知道坐标；未改生产、未建记忆、未测试/截图/重启/输入。保留并行 G173 及全部 dirty。
+- 11:12:38.574 从自动寻路提示解析火云洞 `(5,0)`，38.576 存入 currentTrackerDestinationHint；11:13:01.080 作为白龙马目标传入点击请求，后续玩家 `(8,2)` 时目标仍 `(5,0)`。坐标并非从名字框推算，也不是失败默认值。
+- 已查看并提供 NPC FIFO 原帧 `images/debug/npc-arrival-click/20260910_111314_522_hwnd-161A00FA_白龙马/frame.png` 及 metadata（target=5,0），但这不是当时自动寻路提示的原图。坐标识别数值由日志证实；未独立测量 NPC 实际出生点或认定失败唯一原因。详见 G174。
+
+## Codex - 2026-09-10 / G173 全任务禁用紫色玩家名点击
+
+- **实现交付：** 五处生产文件已改，Cloud三文件与Client两文件均用JDK21/Lombok隔离javac通过。输出分别在本机Temp的`dhxy-g173-cloud-d1ec186e09bd4b71ac73454518d94370`、`dhxy-g173-client-313cb337b7364d0f99653116297ea051`，未写运行中的target/classes。双仓DTO SHA256一致。源码复核紫名生成调用已摘除，遗留私有入口仅返回no-action/null/false；FIFO及prepared-plan执行前拦截。无新增/运行测试，无重启/输入；双端部署重启及运行验收仍待办，不宣称热生效。
+- 用户明确裁定“所有通过紫色名字点击的方法全部禁用”，覆盖五倍/修罗/天庭/五环及其它任务，不再等待逐任务批准。实施树Client `D:\mavenProject\DHXY-cr271`、Cloud `D:\mavenProject\dhxy-cloud-brain`已Get-Location核对；保护基线DHXY不动。
+- 新一轮ls-remote确认Client dev推送2236357413ffc64621626917ca4a66183895390d、Cloud dev推送c10078142bdc769717cf8980ffcf56e2e45da8aa。Cloud SmartClickRecognizer/NpcClickService已含G172在途修改，基线紫名调用与当前仍相同；只摘其点击分支，不还原黄字/ROI改动。Client NpcArrivalFrameFifoLocalExecutor和双仓NpcClickSmartQueueMessage本轮前无diff，其他dirty保留。
+- 范围：云端FIFO/单次识别与旧直接战斗pipeline不再产生紫名点或以该点播种Ctrl；退出Alt+A使用既有非紫名中心右击兜底。客户端拦旧PURPLE_FORMULA及策略别名，已准备plan也拦。枚举保留仅供兼容；已验证永久记忆及不产生点击的联合ROI证据检查保留。禁止任何运行时编译覆盖/重启/输入；本轮无新增测试授权，只有隔离编译与源码核查。
+
+## Codex - 2026-09-10 / G172 五倍 01:04 接任务 NPC 候选耗尽后偏位探测
+
+- **11:09启动延迟只读复核：** 用户只问原因，本轮不改生产、不测试/重启/输入。目标文档树已Get-Location核对；Cloud既有dirty保留。实际启动11:07:27.678，鼠标点击11:09:01.315（用户称11:09:20），验证03.614、接任务06.294。NPC FIFO 11:08:10.840打开，MEMORY 10.919 miss；11.048黄名要新帧，却先继续PURPLE_FORMULA，53.962才回无锚；42.914s主耗时在紫名分支。首帧原图本人名字重叠；换图56.431后09:00.886黄名点565,161、实际jitter565,160。窗口人物83,75，不是昨夜80,75，exact记忆首查无点，09:03.619已新增此键stackSize1。新黄字修复本次生效；剩余续帧延迟P2待批准，不把它伪称新黄字算法耗时43s。Client out日志本轮缓冲后才落盘，现已读到逐阶段时间，不再报日志缺失。详情、图证、建议及验收边界见G172新增复核段。
+
+- **本轮最终交付（下方旧阻断为历史）：** Cloud七处生产修改已隔离编译，真实OCR/FIFO及ROI连通性5/5、复跑5/5。事故名字框596,194,66,22、点击629,155；95,83与78,82两站位正确。完整/两字负例拒绝黄字点击；本人被遮挡不学习，一品侍卫同窗双锚测试验证后学得232,115,768,523并实际复用。图与真实OCR请求/结果位于Cloud `images/test-cases/g172/run-20260910-031322/`，复现`./scripts/g172-replay.ps1`；完整边界/模拟回执说明见卡。原图无改动，输出图已看、事故图已发送；不触碰真实记忆/target/classes/游戏输入/运行进程。待复审及部署后的运行验收，不自报终审通过。
+
+- **本轮继续实施：** 用户在差异说明后要求Agent负责识别出来。目标Cloud/DHXY-cr271已Get-Location核对，现有dirty保留；隔离试验已证“李靖色域+本NPC不扩暗边”的完整二值OCR正确识别降魔侍卫0.99498，局部精读0.98896。选定本NPC文本框提议→4倍精读方案，强名字/点击公式不变；失败的直接换profile/分块仅留诊断不投产。业务/卡/追踪同步后过门再写生产，禁止target/classes与真实输入。旧BLOCKED记录为历史，本轮继续批准范围见卡。
+- **本轮只读解释差异，治理目标仍为本shell核对的DHXY-cr271：** 已对齐G046（8月8日李靖黄字逐候选修复）与Cloud当前/origin源码。李靖已走逐候选4倍黑白OCR，降魔侍卫当时明确排除、仍是彩色候选整窗composite；两者颜色profile也不同。降魔侍卫去固定二框后近黄背景大量残留，分数/排名在OCR前丢目标，不是ROI学坏或3字语义门拒收。top12两者共用，不得误称五倍独有。原G046标记图缺失，仅原fixture存在，历史成功数值按原卡引用；本轮不新跑测试/不改生产，补充结论已写G172卡和E74。
+
+- **本轮收口为阻断，不是完成：** 原批准两处已写入Cloud七个生产文件（另含NpcClickService传roamingTarget），隔离javac通过；实际FIFO+RapidOCR回放0/2。去固定框后名字候选score118/rank22及score-24/rank53仍不进score>=5/top12，需用户决定是否扩展候选去噪/提取规则后才能继续。详见G172卡和`BLOCKED_USER_DECISION`追踪文件。真实计算框图`D:\mavenProject\dhxy-cloud-brain\images\test-cases\g172\output\failed-candidate-marked.png`；真实OCR输入/返回在同目录。原始ROI学习测试错误要求Story遮挡帧的紫名证据，未到该断言且待纠正，不报告学习链已通过。现WIP不得部署；未写target/classes、未动真实记忆、未重启/输入，临时OCR进程树已清理。
+
+- **实施授权（本轮）：** 用户明确要求修改并做识别测试、展示实际ROI/识别框/计算点击点。目标生产树`D:\mavenProject\dhxy-cloud-brain`，治理树`D:\mavenProject\DHXY-cr271`已用shell核对。Cloud dev最新推送`c10078142bdc769717cf8980ffcf56e2e45da8aa`（ls-remote确认）；ImageAlgorithms/SmartClickRecognizer/NpcClickMemoryStore/NpcClickSmartQueueStore/DecisionEngine/OcrRoiMemoryService相对origin/dev diff为空。Client dev基线`2236357413ffc64621626917ca4a66183895390d`。双仓现有五倍/显形镜/控制器和治理dirty全部保留。不改永久点击栈、FIFO策略顺序、颜色阈值、点击公式；移除降魔侍卫固定二框，恢复云端canonical ROI读写，无本地第二真源/额外网络查询。测试范围限本卡事故回放与ROI读写连通性，隔离javac/临时记忆库，不写运行中的target/classes、不重启、不输入。
+
+- **mask与数据澄清：** 上轮图只框source ROI造成误解，已补existing-ui-mask.png（按生产DEFAULT_OCR_MASKS的5个精确矩形做说明图，不跑识别）。SmartClickRecognizer全窗1024x768时先copyWithDefaultMasks，旧OcrWindowScanService同样5块，mask未删除。云端当前canonical文件lastWrite=09-10 01:03:21，降魔侍卫clickPolicies=66、roiPolicies=0，全库roiPolicies=1为无关妖王幻影；不能再说“没有记忆数据”。旧本地同站位有两条被v2明确弃用的ROI。普通新FIFO只学习点击点，原recordNpcTargetOcrObservation在旧pipeline才被调用；上一轮“成功后再学习”只是在解释旧合同，不是当前只接读取就会自动发生，明确撤回该含混交付。旧ROI具体哪次未进入当前canonical文件未查明，不声称被全删。当前不改生产。
+
+- **用户授权本次ROI框图：** 工作树仍为D:\mavenProject\DHXY-cr271，只生成这一张确定性坐标示意，不运行匹配/游戏/自动化测试、不改生产。读取保护基线config/vision_memory.json仅发现80,75的旧yellow-name=(355,0)-(902,407)与旧yellow-player-anchor=(355,0)-(900,408)，均非v2；当前云端canonical roiPolicies仅一条妖王幻影，与降魔侍卫无关。因此按当前可得数据接回v2推荐，实际只有全窗fallback=(0,0)-(1024,768)，不得把历史废弃框画成有效学习ROI。以原始replacement帧为只读背景创建SVG坐标层并渲染PNG，原图不覆盖。
+
+- **用户指出学习ROI后的链路核查：** 用户记忆属实。6月17日“NPC OCR ROI必须同时包含黄字目标和紫色玩家名”记录与当日同站位player:80,75成功点628,155均在本文件；ROI键yellow-player-anchor-v2含地图/NPC/目标坐标/人物坐标/窗口尺寸，联合黄字+紫名才学习，无命中全窗兜底。7月5日历史CR185明确停用本地ROI真源，后续决议为启动异步cloud ROI snapshot、点击时只读、未命中全窗，避免额外RTT。当前Cloud普通NPC入口clickNpcSmart→runSingleFrameNpcClickPlan→buildPreparedRecognitionContext固定scanRegions=全窗，不调用recommendNpcClickRegions；双仓源码未找到cloud_roi_snapshot/cache或RoiSnapshot实现。Cloud OcrRoiMemoryService类和旧pipeline仍在，直接战斗路径有调用，不能说整个类被删。普通五倍未接学习ROI，固定黄字mask又删全窗真目标，是两层问题；只接ROI也不能忽略固定mask。当前只调查、更新记录，不恢复本地写入/读取真源。
+
+- **用户追问原样本人物站位：** 已查7月4日原记录、历史CR180、6月17日同族replay清单及双仓/保护基线的已知原图路径，未找到hwnd-D7D0DEA样本对应人物地图坐标；原记录只有窗口ID、名字屏幕位置/点击点和阈值。不可把NPC目标(86,87)或今日人物(80,75)冒充旧站位。6月17日记录已列同名在不同样本中心(328,664)/(255,205)/(257,372)，本就存在屏幕位置变化。生产npcYellowTargetMask只按targetName选profile，两固定ROI不读取playerMapX/Y；虽然NPC记忆查询带人物坐标，但黄字白名单没有接这层条件。故未记录/恢复旧站位与生产不绑定站位是两项独立缺口。
+
+- **固定区域的引入原因已查实：** 本文件2026-07-04“CloudBrain 降魔侍卫黄字 two-name clean wash”及历史CR180原文记录：用户要求那张实验洗图只留下两条NPC名字、去掉UI/地面噪声；broad颜色方案总像素10270、目标542，被拒绝。实施者采用瘦黄字阈值并按那张replay图的两条已知名字位置写入固定allowed regions，测试断言区域外像素<=30。历史卡明确称“本张replay验收边界”，新站位需另加样本/动态文本行选择。7月10日Cloud初始提交已包含相同两框，此后未改。本次是样本局部限制长期作为生产全局规则，非游戏机制也非运行时学习出来。旧输入与输出在双仓记录的精确路径现均未找到；不伪称已查看旧图，不用今日图替代旧图。当前只写调查记录。
+
+- **黄字失败根因补齐：** 在 `images/temp/npc-arrival-frames/arrival-07-hwnd-161A00FA-frame1267395517571600-gen1267395517571600-replacement.png` 找到01:03:51第二次实际识别原帧（不是先前首帧）。降魔侍卫黄名约x600～660/y200。Cloud `ImageAlgorithms.JIANGMO_GUARD_YELLOW_NAME_REGIONS`只准(220,355,85,33)/(360,218,162,30)，`npcYellowTargetMask`在颜色筛选后和阴影扩展后两次清除区域外像素；调用方全窗scan，区域无偏移。真名因此在候选生成/OCR前被删除。01:03:52.350黄名无语义命中、01:04:18.487候选(506,225)进入Ctrl偏位悬停与该路径相符。源码相对origin/dev无差异；没有执行回放、测试、改代码或输入。精确OCR输出和最终洗图仍未落盘，但该排除真名的几何因果不依赖猜测OCR文字。前述Story/冷却与严格语义门不能作为本次首要根因，记忆耗尽只是触发进入坏的黄字fallback。
+
+- **用户要求历史核查（本轮只读代码/归档、仅写治理记录）：** 已查到9月7日天庭李靖记忆问题。9月1日19:34 exact(155,108)先有 `Popped ... remaining=0`，随后 VERIFIED/接任务/晋升均成功；9月6日16:48归档另有同键被G161距离过滤删除的明确证据。9月7日G166源码注释及9月8日提交又修正写入/查询含不含dialog字段的键不一致。对照8月30日→9月8日 NpcClickMemoryStore diff，未改 lookupNext/pollLast或成功后工作副本回填；git log -S 同样未发现近几天修过弹栈机制。结论：用户记得的近期天庭“曾成功却用不上”属实，但尚无历史证据证明“成功弹出已被修过又回归”；不能混淆三种失效原因。详情追加到G172卡。
+
+- **修罗横向复核更正：** 修罗 Boss 重接先关同帧 STORY、等5秒、直接回点击 phase；五倍不关 STORY，绕回导航/归队后 smart click。两者共享同一个逐次弹出的记忆栈，并没有修罗专属的重接坐标 replay；降魔侍卫额外使用严格黄名规则。撤回上一轮“仅记忆耗尽就是确定根因、应先改共享记忆”的处方：权威业务 MD 第4/5条本就定义逐次弹出，不能根据清单简述擅自改变。当前只确认差异及失败链，未取得修罗成功跳 Boss 的具体策略原始日志。本轮仅更新调查文档与看板。
+
+- 本轮目标工作树 `D:\mavenProject\DHXY-cr271`，已由 shell Get-Location 核对；仅记录调查。Cloud `D:\mavenProject\dhxy-cloud-brain` 只读，不编译、不测试、不重启、不发游戏输入。两仓现存 dirty 原样保留。
+- 基线：Cloud dev、origin/dev `c10078142bdc769717cf8980ffcf56e2e45da8aa`；NpcClickMemoryStore/SmartClickRecognizer 相对 origin/dev 无差异。WubeiTask 有 G168/G169/G170 在途改动，未覆盖。
+- 01:03:19.884 同场景成功记忆 `(628,155)` 被 pollLast，remaining=0；01:03:21.902 VERIFIED 写永久记忆，未补本 run 工作副本。01:03:26.553 暗雷重接；01:03:31.701 同场景新 smart intent MEMORY miss。01:03:52.350 黄名无语义证明；01:04:18.487 Ctrl 候选 `(506,225)`，01:04:19～21 围绕此点 Ctrl 悬停探测，未确认模板故未走点击分支。用户 01:04:21.560 暂停。
+- 主证据与待批准方向见 G172。G170 本次 generation=3 进战交接、脱战回城正常；G169 到宝象国后再点 NPC 的路径运行正常；G171 清障入战后重按绿字在 01:02:45～46 再次发生，仍未修复，不混为本次 NPC 停顿原因。
+
+## Codex - 2026-09-10 / G171 五倍清障点击入战后仍重按绿链
+
+- **实施收口：** Cloud 两处清障返回值已统一消费，已执行入战直接返回 WAIT_BATTLE_FINISH，停止旧绿字输入；无对话/普通清障完成才复按，失败/中断/矛盾结果不复按。清旧 interest/prepared/pathing，等待 source 拦住晚到候选，未把点击成功当作已见进战。单文件隔离 javac exit 0：`C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g171-compile-c699243d846c4d21a1b78a0a585019e9`；门禁与 diff 空白检查通过。未测试、未重启、未覆盖运行中 `target/classes`、未输入；现运行程序尚未生效。保留 G172 等并行调查。
+- **实施授权与基线（以此更新调查状态）：** 用户明确“赶紧修改”，批准前述五倍两个清障返回值消费点的最小方案。生产目标 `D:\mavenProject\dhxy-cloud-brain`，文档目标 `D:\mavenProject\DHXY-cr271`，均已用定向 shell 核对；Cloud `dev@c10078142bdc769717cf8980ffcf56e2e45da8aa`，本轮 `git ls-remote origin refs/heads/dev` 一致，`git show origin/dev` 两处均只打印清障结果后重按。Cloud 现有 G168/G169/G170/显形镜改动、Client 全部 dirty 与并行 G172 调查保留。单文件隔离编译，不写 `target/classes`，不新增或运行测试、不重启、不输入。
+- 目标工作树 `D:\mavenProject\DHXY-cr271` 仅写调查文档；Cloud `D:\mavenProject\dhxy-cloud-brain` 只读源码及 `origin/dev` 对照。本轮用户要求查原因并对比其他任务，未授权生产修改；未编译、未测试、未重启、未发送输入。两仓已有 dirty 保留。
+- 光牛的滑子°/387545229，01:01:27.814 实际点击入战 `(1369,573)`，01:01:28.097 返回 `GREEN_TEMPLATE_CLICKED / wubei.enterBattle`；01:01:28.518 又实际点击 tracker `(1189,444)`。`runResolveAfterPathingPhase` 的清障返回值只被打印，随后无条件 `triggerCombatTrackerPathing`。同类 `tickEnterBattle` 重试点也只打印 status；该缺陷在 `origin/dev` 已存在。
+- G170（五倍战斗阶段交接）本轮 01:01:29.243 已出现 handoff 到 WAIT_BATTLE_FINISH，证明该入口已运行，但不能阻止 0.7 秒前已提交的绿字点击；不据此宣称完整运行验收通过。
+- 源码横向：修罗正常 prepared 入战点击后返回 `waitForRunnerCombatEntry`；天庭正常本地 dialog answered 按 actionKey 建入战确认门。两任务各有清障后重按分支未正确消费业务动作结果，只能认定源码隐患，未宣称本轮它们发生同样事故。持久证据与待批准修复方向见 G171 卡。
+
+## Codex - 2026-09-10 / G170 五倍进战清理后仍等待寻路
+
+- **实施收口：** 生产只改 Cloud `WubeiTask.java`：exact 进战切 `WAIT_BATTLE_FINISH`，接收与清理 ACK 分离；收尾旧 timer/probe 预算；三类等待加战斗唤醒，水位前移到 phase 消费之前；初始化保留已见进战，恢复要求本次进战之后的 exact 脱战事实及清理确认。隔离 javac exit 0，输出 `C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g170-compile-227e0136f057418daaf11d9becabc48e`；规则登记门与 diff 空白检查通过。未测试、未重启、未写运行中 `target/classes`、未发送输入；当前进程仍是旧代码。G170 卡为持久记录。
+- **实施授权与基线：** 用户已批准前述修复方案：“修改”。本轮目标为 Cloud `D:\mavenProject\dhxy-cloud-brain` 的 `WubeiTask.java` 与 Client `D:\mavenProject\DHXY-cr271` 治理文档，已从对应 shell 路径核对。Cloud `dev@c10078142bdc769717cf8980ffcf56e2e45da8aa`，`git ls-remote origin refs/heads/dev` 确认一致；`git show origin/dev:src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java` 证明忽略进战清理返回值已在推送基线。Cloud 现有 G168/G169/显形镜等待改动、Client 控制器和显形镜改动以及其他 dirty 全部保留。只做隔离生产编译，不写运行中的 `target/classes`；按 no-test 规则不新增/运行测试，不重启、不发送输入。下方为调查时记录。
+- 目标工作树：`D:\mavenProject\DHXY-cr271`（调查记录），Cloud `D:\mavenProject\dhxy-cloud-brain`（只读源码核对）。本轮仅调查，未改生产、编译、重启或发送输入。
+- 队长光牛的滑子°/387545229：00:34:26.797 进战清理成功后仍在 RESOLVE_AFTER_PATHING 等待；00:35:04.710 本地确认脱战，Cloud 00:35:04.712 发布 COMBAT_STATE_CHANGED seq=7；等待集合不含该类型。00:38:57.535 PRE_BATTLE_TIMEOUT 才结束 270723ms 等待，随后错误重接。
+- 根因与修复方向登记 G170；同类错误计入 E4。修罗在消费进战时同步切 WAIT_COMBAT，五倍忽略清理返回值且缺少战斗唤醒。本轮不擅自改变业务。
+
+## Codex - 2026-09-10 / G169 五倍启动归队等待后绕过导航
+
+- **实施授权与基线：** 用户已明确批准上述三种续接和缓存位置门：“可以，按其他的统一”。本轮只改
+  `D:\mavenProject\dhxy-cloud-brain` 的五倍生产文件及 `D:\mavenProject\DHXY-cr271` 治理文档。
+  Cloud 为 `dev@c100781`，`git ls-remote origin refs/heads/dev` 确认推送基线相同；`git show origin/dev`
+  证明启动/回城/到达共用 source 的缺陷已在基线。已有 G168 预点击删除与队友显形镜等待改动完整保留。
+  编译只写独立临时目录，不覆盖运行中的 `target/classes`；遵守当前 no-test 规则，本轮不新增/运行测试。
+- **实施收口：** `hot-start -> HOT_START_DETECT`（完成续接不再次重开归队门），`before-accept ->
+  ROUTE_TO_MAIN_TASK`，`accept-npc-arrived -> ACCEPT_TASK`；重复 WAITING 保留 source。无到达凭证且
+  缓存地图/坐标不在降魔侍卫附近时拒点回导航。隔离 javac exit 0，输出
+  `C:\Users\Yunfeng Yue\AppData\Local\Temp\dhxy-g169-compile-608b02f3b1794501be46f114008ec881`。
+  规则登记门和 diff 空白检查通过；未运行测试、未重启。下方为事故调查时记录，现以本实施收口及 G169 卡为准。
+
+- **范围与约束：** 只读核查 Client/Cloud 日志、现场图和 Cloud 五倍状态机；未改生产、未编译、
+  未重启、未发送输入。目标治理树 `D:\mavenProject\DHXY-cr271`，Cloud
+  `D:\mavenProject\dhxy-cloud-brain`；两仓现有并行 dirty 全部保留。
+- **时间线：** `00:07:30.412` 位置同步=`火云戈壁 (34,110)`；`00:07:46.910`
+  `HOT_START_DETECT -> WAIT_TEAM_RETURN(source=before-accept)`；`00:07:49.924` HUD fresh ABSENT
+  后错误转 `ACCEPT_TASK`；`00:07:51.136` 启动 `降魔侍卫` SmartClick，`00:07:51.643` 点击
+  `(1452,453)` 并打开火云戈壁当地 NPC 的无关对话框。
+- **根因：** 五倍把启动前（未导航）与到达 NPC 后的归队等待共用
+  `TEAM_RETURN_BEFORE_ACCEPT_SOURCE`，而等待出口一律跳 `ACCEPT_TASK`；接任务 phase 本身没有
+  非宝象国 fail-closed 门。G132 fresh 因此重开，G168 尚未抵达、与本事故无关。
+- **同类任务对照：** 修罗、鬼王、抓鬼、新手历练的 before-accept 归队出口都先回接任务导航；修罗、
+  抓鬼、新手历练还在点击入口用缓存位置做 near-NPC fail-closed。天庭归队后虽回 `ACCEPT_TASK`，但该
+  phase 自身包含导航，结构与五倍不同。五倍是唯一“导航/点击已拆开却从启动归队直跳点击”的任务。
+- **待批准修复：** 启动归队等待使用独立 source，完成后回 `HOT_START_DETECT`；回城后、尚未到 NPC
+  的等待完成后回 `ROUTE_TO_MAIN_TASK`；已到 NPC 后的 source 才进入 `ACCEPT_TASK`。接任务入口若既无
+  exact 到达凭证，缓存地图/坐标又未知或不在降魔侍卫附近，则禁止 SmartClick 并退回导航。合同必须
+  复现火云戈壁 WAITING→READY，断言先导航且零 NPC 点击。
+
+## Codex - 2026-09-09 / G168 五倍取消接任务后出村预点击
+
+- **目标工作树：** Client/治理 `D:\mavenProject\DHXY-cr271`，Cloud 生产
+  `D:\mavenProject\dhxy-cloud-brain`；保护基线 `D:\mavenProject\DHXY` 不修改。
+- **开工基线：** Client `dev@22363574 == origin/dev`，已有本卡外
+  `WindowTaskControlService.java`、`G149StartStaggerContractTest.java` dirty；Cloud
+  `dev@c100781 == origin/dev` 且开工时 clean。最新推送业务基线同为上述 HEAD。
+- **基线证据：** `WubeiTask.afterAcceptTaskSucceeded(...)` 在后台 tracker future 武装后无条件调用
+  `startPostAcceptPrepath(...)`；该方法发送 `Alt+C` 并 `navigateInCurrentMap(...)` 到宝象国出口
+  `(88,157)`，补宠到期时改指向补宠 NPC。修罗旧实现由
+  `START_EXIT_PREPATH_ENABLED=false` 在入口旁路。
+- **用户裁定与写集：** 参考修罗当前运行语义，删除五倍这段预点击及其专属死代码；保留真正的
+  tracker、补宠、修装备、暗雷 reroll 和绿链业务。预计 Cloud 只改 `WubeiTask.java` 和一份 G168
+  合同；治理只改本记录/G168 卡/dashboard。
+- **实施结果：** `afterAcceptTaskSucceeded(...)` 只调度后台 tracker 读取并进入 `READ_TRACKER`；已删除
+  `startPostAcceptPrepath`、`Alt+C`、宝象国出口目标/坐标、补宠预走替换、startup-flying 消费、旧 source
+  清理和 `WubeiPrepathTarget`。实际补宠/修装备、暗雷 reroll 和 `clickTaskTrackerGreen` 保留。
+- **验证：** Cloud `mvn -q -DskipTests compile` PASS；G168 合同单独 javac + surefire **3/3**。
+  常规定向 Maven 测试被本卡外旧测试/API 漂移阻断。同期另一任务在同一 `WubeiTask` 修改显形镜故事等待
+  超时，diff 已识别为并行写集并完整保留；本卡未改客户端生产、未重启、未发送游戏输入。
+
 ## Codex - 2026-09-02 / G143「新任务重扫窗口后仍沿用旧角色缓存」
 
 - **目标与基线：** `D:\mavenProject\DHXY-cr271`，`dev@b19e20ce=origin/dev`；受保护基线
@@ -96166,3 +96690,17 @@ Cloud helper。`SummonSkillTailBoundaryScanner` 则不是局部 OCR/上云桥接
 
 - 工作树 `D:\mavenProject\DHXY-cr271`，分支 dev；本地 origin/dev 为“Checkpoint current client work through G143”。治理文件已有其它改动，本轮仅追加取证；Cloud `D:\mavenProject\dhxy-cloud-brain` 只读。
 - 结论与原图已写回 G155：空 Ctrl 候选被判安全拒绝，吞掉黄名续帧；15:30 记忆查询返回空，但同轮早先曾命中。未修改生产、未编译、未运行测试、未发送游戏输入。
+# 2026-09-09 G168 五倍取消接任务后出村预点击
+
+- **目标工作树：** Client/治理 `D:\mavenProject\DHXY-cr271`，Cloud 生产
+  `D:\mavenProject\dhxy-cloud-brain`；保护基线 `D:\mavenProject\DHXY` 不修改。
+- **开工基线：** Client `dev@22363574 == origin/dev`，已有本卡外
+  `WindowTaskControlService.java`、`G149StartStaggerContractTest.java` dirty；Cloud
+  `dev@c100781 == origin/dev` 且开工时 clean。最新推送业务基线同为上述 HEAD。
+- **基线证据：** `WubeiTask.afterAcceptTaskSucceeded(...)` 在后台 tracker future 武装后无条件调用
+  `startPostAcceptPrepath(...)`；该方法发送 `Alt+C` 并 `navigateInCurrentMap(...)` 到宝象国出口
+  `(88,157)`，补宠到期时改指向补宠 NPC。修罗旧实现由
+  `START_EXIT_PREPATH_ENABLED=false` 在入口旁路。
+- **用户裁定与写集：** 参考修罗当前运行语义，删除五倍这段预点击及其专属死代码；保留真正的
+  tracker、补宠、修装备、暗雷 reroll 和绿链业务。预计 Cloud 只改 `WubeiTask.java` 和一份 G168
+  合同；治理只改本记录/G168 卡/dashboard。

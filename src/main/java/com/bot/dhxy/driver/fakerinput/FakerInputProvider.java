@@ -59,6 +59,7 @@ public class FakerInputProvider implements InputProvider {
     private static final byte KEY_ESCAPE = 0x29;
 
     private final FakerInputDevice device;
+    private final com.bot.dhxy.auth.RuntimeAuthorizationState runtimeAuthorization;
     private final CoordinateHelper coordinateHelper;
     private final WindowAwareInputCoordinator inputCoordinator;
     private final Set<Byte> heldKeys = new LinkedHashSet<>();
@@ -68,6 +69,10 @@ public class FakerInputProvider implements InputProvider {
     /** Connect only when configuration explicitly selects this backend. */
     @PostConstruct
     public void start() {
+        if (runtimeAuthorization.isUpdateOnly()) {
+            log.info("Update-only UI: input device is not connected; game tasks remain disabled.");
+            return;
+        }
         FakerInputDeviceStatus status = device.connect();
         if (status.state() != FakerInputDeviceState.DRIVER_READY) {
             throw new IllegalStateException("FakerInput backend selected but unavailable: " + status);

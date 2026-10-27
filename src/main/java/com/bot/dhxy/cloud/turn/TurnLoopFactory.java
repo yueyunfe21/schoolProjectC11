@@ -14,6 +14,7 @@ public final class TurnLoopFactory {
     private final LocalTurnActionExecutor actionExecutor;
     private final WindowObservationRunnerFactory observationRunnerFactory;
     private final TaskQueueEventRecorder taskQueueEventRecorder;
+    private final com.bot.dhxy.auth.RuntimeAuthorizationState runtimeAuthorization;
 
     public TurnLoopFactory(TurnClient turnClient, LocalTurnActionExecutor actionExecutor) {
         this(turnClient, actionExecutor, null, TaskQueueEventRecorder.NO_OP);
@@ -36,10 +37,20 @@ public final class TurnLoopFactory {
                            LocalTurnActionExecutor actionExecutor,
                            WindowObservationRunnerFactory observationRunnerFactory,
                            TaskQueueEventRecorder taskQueueEventRecorder) {
+        this(turnClient, actionExecutor, observationRunnerFactory, taskQueueEventRecorder, null);
+    }
+
+    /** The Spring production factory passes the process authorization owner; legacy inert callers may omit it. */
+    public TurnLoopFactory(TurnClient turnClient,
+                           LocalTurnActionExecutor actionExecutor,
+                           WindowObservationRunnerFactory observationRunnerFactory,
+                           TaskQueueEventRecorder taskQueueEventRecorder,
+                           com.bot.dhxy.auth.RuntimeAuthorizationState runtimeAuthorization) {
         this.turnClient = Objects.requireNonNull(turnClient, "turnClient");
         this.actionExecutor = Objects.requireNonNull(actionExecutor, "actionExecutor");
         this.observationRunnerFactory = observationRunnerFactory;
         this.taskQueueEventRecorder = taskQueueEventRecorder == null ? TaskQueueEventRecorder.NO_OP : taskQueueEventRecorder;
+        this.runtimeAuthorization = runtimeAuthorization;
     }
 
     /**
@@ -66,6 +77,7 @@ public final class TurnLoopFactory {
                 turnClient,
                 Objects.requireNonNull(actionExecutor, "actionExecutor")::execute,
                 runnerFactory,
-                taskQueueEventRecorder);
+                taskQueueEventRecorder,
+                runtimeAuthorization);
     }
 }

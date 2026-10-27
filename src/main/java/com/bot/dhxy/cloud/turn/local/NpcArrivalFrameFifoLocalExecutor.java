@@ -358,6 +358,15 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                     continue;
                 }
                 quietSinceMs = System.currentTimeMillis();
+                // G173: reject before ordinary/MEMORY/Ctrl dispatch. Keep polling so an old
+                // producer can release its candidate barrier and offer a legal next strategy.
+                if (message.isDisabledPurpleClick()) {
+                    log.warn("NPC arrival FIFO purple-name click disabled: sessionId={} type={} strategy={}",
+                            message.getSessionId(), message.getType(), message.getStrategy());
+                    reportOutcomeAsync(arguments, spec, message, NpcClickSmartQueueOutcome.SKIPPED,
+                            "purple-name-click-disabled");
+                    continue;
+                }
                 log.info("NPC arrival FIFO message received: sessionId={} type={} decisionId={} strategy={} "
                                 + "point={} ctrlCandidates={} confidence={} reason={}",
                         message.getSessionId(), message.getType(), message.getDecisionId(),
@@ -382,7 +391,7 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                     /*
                      * G122 P1-2：显式续帧状态。这不是 miss——该阶段（strategy）明确说"给我一张新帧
                      * 或后续动作我才能出点"，证据（candidateBox/reason）原样保留在消息里。这里
-                     * 不烧候选槽、不推进 miss 计数，剩余候选级（紫名/CTRL）继续在当前帧上尝试；
+                     * 不烧候选槽、不推进 miss 计数，剩余非紫名候选级继续在当前帧上尝试；
                      * 若本会话最终 END，既有的 EXHAUSTED -> replaceWithFreshFrame -> attempt 2 就是
                      * 同族续帧闭环（同 intent、新帧、新 session、generation 随 demand.frameKey 前进）。
                      * 此前这类结果被云端归一化成 NO_ACTION/point=null 当普通 miss 烧掉（五开事故）。
@@ -574,11 +583,19 @@ public final class NpcArrivalFrameFifoLocalExecutor {
          * 依旧"点完即过"。变的只有 defer 的**终态语义**：它从"假 VERIFIED"降级成
          * DIALOG_OPEN_UNVERIFIED（非成功的待定态），因此不再留 retained point。
          */
-        return queueOutcomeForVerification(dialogService.verifyNpcArrivalExpectedDialog(
+        DialogService.NpcClickVerification verification = dialogService.verifyNpcArrivalExpectedDialog(
                 spec.expectedDialogTemplatePaths(),
                 spec.expectedDialogRawTemplatePath(),
                 spec.deferDialogVerificationToTask(),
-                verificationSource));
+                verificationSource);
+        // G180: a missing verification frame is not evidence that this remembered point failed.
+        // SKIPPED advances the existing FIFO just like VERIFICATION_FAILED, without charging it.
+        if ("fifoCandidate:MEMORY".equals(actionSource)
+                && (verification == null || "CAPTURE_FAILED".equals(verification.status()))) {
+            log.info("G180 memory verification unavailable; not counting failure: source={}", verificationSource);
+            return NpcClickSmartQueueOutcome.SKIPPED;
+        }
+        return queueOutcomeForVerification(verification);
     }
 
     /**
@@ -1031,7 +1048,7 @@ public final class NpcArrivalFrameFifoLocalExecutor {
          * confirmArrivalFrameClickMemory 的结算链不变）。天庭/鬼王打戳等待验证出的 VERIFIED
          * 本来就是本地真实证据（任务对话答复戳），不受本次正名影响。
          */
-        CompletableFuture.runAsync(() -> {
+        Runnable report = () -> {
             try {
                 turnClient.reportNpcArrivalFrameOutcome(
                         spec.tenantId(), spec.deviceId(), spec.windowId(), spec.hwnd(),
@@ -1045,7 +1062,16 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                         message == null ? null : message.getType(),
                         outcome, ignored.kind(), ignored.getMessage());
             }
-        });
+        };
+        // G180: settle this ordinary memory attempt before polling another candidate/session.
+        // Otherwise the common pool can deliver a later success before an earlier failure.
+        // This is outside the input-worker callback; no physical input lock is held here.
+        if (message != null && message.getType() == NpcClickSmartQueueMessage.Type.MEMORY
+                && message.getDecisionId() != null && message.getDecisionId().startsWith("memory-use-")) {
+            report.run();
+        } else {
+            CompletableFuture.runAsync(report);
+        }
     }
 
     private static NpcClickSmartQueueMessage terminalMessage(

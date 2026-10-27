@@ -38,6 +38,7 @@ public class InputActionWorker {
     private final InputProvider inputProvider;
     private final WindowAwareInputCoordinator inputCoordinator;
     private final WindowTaskContextHolder windowTaskContextHolder;
+    private final com.bot.dhxy.auth.RuntimeAuthorizationState runtimeAuthorization;
 
     /**
      * Create the input worker.
@@ -47,12 +48,15 @@ public class InputActionWorker {
      * @param inputProvider real physical input provider.
      * @param inputCoordinator window-aware focus/input transaction coordinator.
      * @param windowTaskContextHolder current-window binding holder.
+     * @param runtimeAuthorization binds queue generation and rejects old input before focus/report emission.
      */
     public InputActionWorker(InputActionQueue inputActionQueue,
                              InputActionDeadLetter deadLetter,
                              InputProvider inputProvider,
                              WindowAwareInputCoordinator inputCoordinator,
-                             WindowTaskContextHolder windowTaskContextHolder) {
+                             WindowTaskContextHolder windowTaskContextHolder,
+                             com.bot.dhxy.auth.RuntimeAuthorizationState runtimeAuthorization) {
+        this.runtimeAuthorization = runtimeAuthorization;
         this.inputActionQueue = inputActionQueue;
         this.deadLetter = deadLetter;
         this.inputProvider = inputProvider;
@@ -93,7 +97,8 @@ public class InputActionWorker {
     private void handle(InputActionRequest request) {
         long latencyStart = LatencyMetrics.start();
         boolean completed = false;
-        try {
+        try (var permission = runtimeAuthorization.bindInput(request.authorizationGeneration())) {
+            runtimeAuthorization.physicalReport(() -> { });
             if (!waitIfPaused(request, "before-focus")) {
                 request.complete(false, "worker-stopped-before-focus");
                 deadLetter.record(request, null);
@@ -495,6 +500,14 @@ public class InputActionWorker {
         } else if (type == InputActionType.PASTE_TEXT) {
             inputProvider.pasteText(action.getText());
         } else if (isAltShortcutAction(type)) {
+            if (type == InputActionType.PRESS_ALT_C) {
+                WindowRuntimeContext context = request.getWindowContext();
+                if (context != null && context.isLeader()) {
+                    // G194: any real leader Alt+C destroys the previous team-flight fact before input.
+                    // G181 writes the confirmed target back only after its own input/visual ACK chain succeeds.
+                    context.clearLeaderFlyingState("physical Alt+C:" + request.getDescription());
+                }
+            }
             executeForegroundAltShortcut(type);
         } else if (type == InputActionType.SCROLL_DOWN) {
             inputProvider.scrollDown(action.getClicks());

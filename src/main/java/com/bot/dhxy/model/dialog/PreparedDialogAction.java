@@ -16,6 +16,9 @@ import lombok.Value;
  * @param hwnd native window handle string when available.
  * @param intentId route/pathing intent id this action was prepared for; null for non-route actions
  *                 or legacy debug actions.
+ * @param dialogInterestId exact Dialog Interest generation that authorized this action; null for
+ *                         Tracker, route-only, mechanical, or legacy actions not owned by a Dialog
+ *                         Interest lifecycle.
  * @param dialogType detected dialog frame type.
  * @param operation business operation this prepared action answers, such as route transfer.
  * @param targetKeyword expected target keyword for operation matching; null for operation-only
@@ -45,6 +48,7 @@ public class PreparedDialogAction {
     String windowId;
     String hwnd;
     String intentId;
+    String dialogInterestId;
     DialogType dialogType;
     DialogOperation operation;
     String targetKeyword;

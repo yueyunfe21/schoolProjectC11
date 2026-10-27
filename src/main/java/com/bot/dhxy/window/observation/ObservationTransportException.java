@@ -33,6 +33,7 @@ public final class ObservationTransportException extends Exception {
     }
 
     public enum Kind {
+        AUTHORIZATION,
         REQUEST_CONTRACT,
         SERIALIZATION,
         NETWORK,

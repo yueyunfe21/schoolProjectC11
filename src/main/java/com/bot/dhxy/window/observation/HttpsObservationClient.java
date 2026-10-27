@@ -43,6 +43,8 @@ public final class HttpsObservationClient implements ObservationClient {
 
     private final URI observationUri;
     private final String authorizationHeader;
+    private final String clientId;
+    private final com.bot.dhxy.auth.RuntimeAuthorizationState runtimeSession;
     private final Duration connectTimeout;
     private final Duration requestTimeout;
     private final ObjectMapper objectMapper;
@@ -63,8 +65,40 @@ public final class HttpsObservationClient implements ObservationClient {
             Duration connectTimeout,
             Duration requestTimeout,
             ObjectMapper objectMapper) {
+        this(baseUri, bearerToken, connectTimeout, requestTimeout, objectMapper, null);
+    }
+
+    /**
+     * Same isolated observation transport, carrying the sibling turn client's binding.
+     * @param baseUri exact Cloud origin; non-loopback must be HTTPS.
+     * @param bearerToken provisioned secret without Bearer prefix; nonblank.
+     * @param connectTimeout positive TCP/TLS connection duration.
+     * @param requestTimeout positive complete request duration.
+     * @param objectMapper non-null mapper defensively copied for strict parsing.
+     * @param clientId exact configured device/client ID; null only for legacy construction.
+     */
+    public HttpsObservationClient(URI baseUri, String bearerToken, Duration connectTimeout,
+            Duration requestTimeout, ObjectMapper objectMapper, String clientId) {
+        this(baseUri, bearerToken, connectTimeout, requestTimeout, objectMapper, clientId, null);
+    }
+
+    /**
+     * @param baseUri exact HTTPS Cloud origin; local dev may use loopback HTTP.
+     * @param bearerToken dedicated binding secret, never logged.
+     * @param connectTimeout positive connection duration.
+     * @param requestTimeout positive full-request duration.
+     * @param objectMapper non-null mapper, defensively copied.
+     * @param clientId exact instance/device identity; nullable for old development construction.
+     * @param runtimeSession same permission/revocation owner as turn requests, nullable only for old construction.
+     */
+    public HttpsObservationClient(URI baseUri, String bearerToken, Duration connectTimeout,
+            Duration requestTimeout, ObjectMapper objectMapper, String clientId,
+            com.bot.dhxy.auth.RuntimeAuthorizationState runtimeSession) {
+        this.runtimeSession = runtimeSession;
+        this.clientId = clientId;
         this.observationUri = requireBaseUri(baseUri).resolve(OBSERVATION_PATH);
-        this.authorizationHeader = "Bearer " + requireToken(bearerToken);
+        this.authorizationHeader = runtimeSession != null && runtimeSession.isUpdateOnly()
+                ? "" : "Bearer " + requireToken(bearerToken);
         this.connectTimeout = requirePositive(connectTimeout, "connectTimeout");
         this.requestTimeout = requirePositive(requestTimeout, "requestTimeout");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper")
@@ -116,18 +150,27 @@ public final class HttpsObservationClient implements ObservationClient {
                     "observation request JSON exceeds " + MAX_JSON_BYTES + " bytes");
         }
 
-        HttpRequest httpRequest = HttpRequest.newBuilder(observationUri)
+        HttpRequest.Builder builder = HttpRequest.newBuilder(observationUri)
                 .timeout(requestTimeout)
                 .header("Authorization", authorizationHeader)
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofByteArray(requestJson))
-                .build();
+                .POST(HttpRequest.BodyPublishers.ofByteArray(requestJson));
+        if (clientId != null) builder.header("X-DHXY-Client-Id", clientId);
+        String session = runtimeSession == null ? null : runtimeSession.sessionToken();
+        if (runtimeSession != null && !runtimeSession.isCurrentSession(session)) {
+            throw new ObservationTransportException(ObservationTransportException.Kind.AUTHORIZATION, "运行授权已失效，停止观察上传。");
+        }
+        if (session != null && !session.isBlank()) builder.header("X-DHXY-Session", session);
+        HttpRequest httpRequest = builder.build();
 
         HttpResponse<byte[]> httpResponse = sendOnce(httpRequest, cancellation);
         byte[] responseBytes = requireBoundedBody(httpResponse, MAX_JSON_BYTES, "observation response");
         if (httpResponse.statusCode() != 200) {
-            throw httpStatusFailure(httpResponse.statusCode(), responseBytes);
+            throw httpStatusFailure(httpResponse, responseBytes);
+        }
+        if (runtimeSession != null && !runtimeSession.isCurrentSession(session)) {
+            throw new ObservationTransportException(ObservationTransportException.Kind.AUTHORIZATION, "旧会话的观察响应已作废。");
         }
         requireContentType(httpResponse.headers(), "application/json", "observation response");
 
@@ -286,7 +329,17 @@ public final class HttpsObservationClient implements ObservationClient {
         }
     }
 
-    private static ObservationTransportException httpStatusFailure(int status, byte[] body) {
+    private ObservationTransportException httpStatusFailure(HttpResponse<?> response, byte[] body) {
+        int status = response.statusCode();
+        if (status == 403 && runtimeSession != null) {
+            try {
+                var problem = objectMapper.readTree(body);
+                runtimeSession.reject(response.request().headers().firstValue("X-DHXY-Session").orElse(null),
+                        com.bot.dhxy.model.auth.RuntimeAuthorizationCode.fromWire(problem.path("code").asText()));
+            } catch (IOException invalidProblem) {
+                // Unknown/malformed HTTP errors do not authorize revoking another login.
+            }
+        }
         String detail = new String(body, 0, Math.min(body.length, 512), StandardCharsets.UTF_8)
                 .replace('\r', ' ')
                 .replace('\n', ' ')

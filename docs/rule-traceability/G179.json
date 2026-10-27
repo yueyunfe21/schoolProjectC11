@@ -1,0 +1,193 @@
+{
+  "schemaVersion": 1,
+  "card": "G179",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "implementationStatus": "STOP_FAILURE_2200MS_AND_CONDITIONAL_RESET_IMPLEMENTED_ISOLATED_COMPILE_PASSED_NOT_TESTED",
+  "runtimeFinding": "20:32 same run: stale map blocks local entry then null attempt authorizes cleanup. Approved repair removes Wubei map gate, arms ordinary local entry after green/setup and waits for local terminal facts before cleanup. Isolated javac passed; no tests or restart. Shared withTranslatedState stale-map overwrite remains diagnosed but unmodified. 17:43: Client emitted template missing at 995ms STABLE then moved; Cloud failure bypassed its 2200ms gate. Now typed failure and stationary identity survive both Wubei wait paths and conditional exact reset; invalidated ACK preserves route.",
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "2236357413ffc64621626917ca4a66183895390d",
+    "cloudCommit": "c10078142bdc769717cf8980ffcf56e2e45da8aa",
+    "pushedReference": "ls-remote reverified 2026-09-13; unrelated dirty preserved"
+  },
+  "rules": [
+    "BR-WUBEI-009",
+    "BR-WUBEI-008",
+    "BR-WUBEI-007",
+    "BR-START-001"
+  ],
+  "affectedPaths": [
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudTurnTaskRuntime.java"
+    },
+    {
+      "repo": "client",
+      "path": "src/main/java/com/bot/dhxy/cloud/turn/WindowTurnLoop.java"
+    },
+    {
+      "repo": "client",
+      "path": "src/main/java/com/bot/dhxy/cloud/turn/TurnModeGuard.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/client/TurnActionValidationException.java"
+    },
+    {
+      "repo": "client",
+      "path": "src/main/java/com/bot/dhxy/window/control/WindowTaskControlService.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/client/TurnGameClient.java"
+    },
+    {
+      "repo": "client",
+      "path": "src/main/java/com/bot/dhxy/service/DialogService.java"
+    },
+    {
+      "repo": "client",
+      "path": "src/main/java/com/bot/dhxy/window/observation/WindowObservationSampler.java"
+    },
+    {
+      "repo": "client",
+      "path": "src/main/java/com/bot/dhxy/window/runtime/WindowRuntimeContext.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/bot/dhxy/service/DialogService.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/bot/dhxy/window/model/WindowReadyEventType.java"
+    },
+    {
+      "repo": "client",
+      "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnLocalEntryFailure.java"
+    },
+    {
+      "repo": "client",
+      "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnWholeTaskRuntimeArguments.java"
+    },
+    {
+      "repo": "client",
+      "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnExactAttemptRecoveryResetAck.java"
+    },
+    {
+      "repo": "client",
+      "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/ObservationKeyEvent.java"
+    },
+    {
+      "repo": "client",
+      "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnProtocolValidator.java"
+    },
+    {
+      "repo": "client",
+      "path": "src/main/java/com/bot/dhxy/cloud/turn/local/WholeTaskRuntimeLocalOperationExecutor.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnLocalEntryFailure.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnWholeTaskRuntimeArguments.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnExactAttemptRecoveryResetAck.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/ObservationKeyEvent.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnProtocolValidator.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/observation/CloudXiuluoLocalClickState.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/client/CloudWholeTaskRuntimeLocalServiceClient.java"
+    }
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "Five-times Cloud candidate click and cleanup click differ from a single Client execution owner; disclosed before approval",
+    "userDecision": "原批准五倍共用本地入战；09-10批准普通失败原任务恢复、致命失败清理后重启同任务保留次数；20:32事故后批准去地图门；22:12停止追问后明确批准面板连续识别失败第三次就在识别处停止，计数独立且成功清零，不留到战斗阶段；09-13明确批准17:43停步缺模板失败2200ms门及移动后旧失败失效、后续停步可重新上报",
+    "decisionRecordedAt": "2026-09-13",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G179"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-WUBEI-009",
+      "producer": "WindowRuntimeContext sampled stationary gate and WindowObservationSampler typed failure",
+      "transport": "ObservationKeyEvent.localEntryFailure -> Cloud failure slot -> exact recovery arguments",
+      "consumer": "WubeiTask conditional revoke -> WholeTaskRuntimeLocalOperationExecutor -> locked WindowRuntimeContext reset",
+      "ordering": "sampled 2200ms before missing-template failure; coordinate change invalidates stop version; validate before reset mutations; rejected old failure keeps local schedule; later stop re-arms unique event",
+      "contracts": [
+        {
+          "repo": "client",
+          "path": "docs/rule-traceability/G179-contract.md",
+          "command": "NOT RUN: no test authorization",
+          "proves": [
+            "995ms no failure; 2200ms sampled stop eligible; movement invalidates in-transit failure without clearing pathing; later stop emits new event; click exhaustion unchanged"
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "BR-START-001",
+      "producer": "CloudTurnTaskRuntime fatal exception ends queue before next child; ordinary phase recovery unchanged",
+      "transport": "exact TASK_TERMINAL queue event exceptionType/index before TurnTaskTerminalResult callback",
+      "consumer": "WindowTurnLoop retains exact fatal child; controller restarts its suffix with retained progress",
+      "ordering": "fatal classification and lifecycle first; preserve progress; confirmed Cloud/local teardown before reset and startup; no success increment; UI cancellation wins",
+      "contracts": [
+        {
+          "repo": "client",
+          "path": "docs/rule-traceability/G179-contract.md",
+          "command": "NOT RUN: no test authorization",
+          "proves": [
+            "fatal only restarts exact failed child and preserves count; ordinary failures cannot hot-start; cleanup incomplete retries without startup; stale callbacks cannot replace UI run"
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "BR-WUBEI-007",
+      "producer": "WubeiTask exact scheduled interest -> WindowObservationSampler common local-kanda execution",
+      "transport": "WholeTask runtime schedule / retained ObservationKeyEvent ENTER_BATTLE_CLICKED and FAILED",
+      "consumer": "CloudWholeTaskObserver -> WubeiTask local entry consumption and failure recovery",
+      "ordering": "ordinary green acknowledged and existing setup completed then local schedule, no map-value gate; probe/chained boundaries unchanged; terminal pathing preserves local ownership and waits for execution result; exact failed owner revoked before Cloud cleanup; no resetting active retry on repeat registration",
+      "contracts": [
+        {
+          "repo": "client",
+          "path": "docs/rule-traceability/G179-contract.md",
+          "command": "NOT RUN: user has not authorized this test family",
+          "proves": [
+            "all three Wubei entry contexts reach common local execution",
+            "no Cloud entry click or fallback while local owns",
+            "failure and click events wake all waiters",
+            "late edge cannot affect replacement; established task adapters unchanged"
+          ]
+        }
+      ]
+    }
+  ],
+  "testStatus": "Production classes isolated javac passed; no target/classes writes or runtime input. No tests authorized, created or run; contract document is a specification only. Runtime/replay verification pending."
+}

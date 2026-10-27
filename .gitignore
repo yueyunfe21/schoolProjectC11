@@ -1,5 +1,7 @@
 # 编译后的文件
 target/
+# Isolated release staging; never package a developer workspace wholesale.
+.release-build/
 *.class
 javac.*.args
 

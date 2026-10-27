@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "card": "G169",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "repositories": {"cloud": "../dhxy-cloud-brain"},
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "22363574",
+    "cloudCommit": "c10078142bdc769717cf8980ffcf56e2e45da8aa",
+    "pushedReference": "Cloud origin/dev verified with git ls-remote on 2026-09-10"
+  },
+  "rules": ["BR-WUBEI-001"],
+  "affectedPaths": [{"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java"}],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "Current Wubei wait source conflates startup, return landing and NPC arrival; click phase lacks sibling tasks' position check.",
+    "userDecision": "可以，按其他的统一（批准前一回复明确列出的三种续接和缓存位置检查）",
+    "decisionRecordedAt": "2026-09-10",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G169"
+  },
+  "connectivity": [],
+  "scopeNote": "Only Cloud Wubei phase continuation and existing cached-position consumer change. Existing coordinator, observation transport and local input protocol are unchanged.",
+  "verification": [
+    {"name": "isolated production compilation", "result": "PASS", "evidence": "javac --release 21 with Lombok; exit 0; output Temp/dhxy-g169-compile-608b02f3b1794501be46f114008ec881"},
+    {"name": "source continuation review", "result": "PASS", "evidence": "All three wait producers/consumers and repeated-wait source preservation checked; hot-start ready continuation bypasses completed HUD gate exactly once; click guard precedes both smart-click attempts."}
+  ],
+  "testStatus": "Not created or run under current no-test override; isolated production compilation and source inspection only."
+}

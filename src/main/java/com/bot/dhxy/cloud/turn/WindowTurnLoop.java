@@ -48,6 +48,8 @@ public final class WindowTurnLoop {
     private final TurnClient turnClient;
     private final TurnActionRunner actionExecutor;
     private final TaskQueueEventRecorder taskQueueEventRecorder;
+    private final com.bot.dhxy.auth.RuntimeAuthorizationState runtimeAuthorization;
+    private final long authorizationGeneration;
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
     private final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -94,6 +96,9 @@ public final class WindowTurnLoop {
     // this process has no observation plane and the loop behaves exactly as before.
     private final WindowObservationRunnerFactory observationRunnerFactory;
     private volatile WindowObservationRunner observationRunner;
+    /** Retain a timed-out teardown so fatal recovery cannot mistake loop exit for sampler/maintenance exit. */
+    private volatile WindowObservationRunner retiringObservationRunner;
+    private volatile TurnTaskQueueEvent fatalTaskFailure;
     /** Exact queue child currently announced by Cloud; never a comma-joined queue identity. */
     private volatile String activeObservationTaskCode;
     /** Highest exact queue child entered by this run; fallback checkpoint if a terminal snapshot is incomplete. */
@@ -141,6 +146,21 @@ public final class WindowTurnLoop {
                    TurnActionRunner actionExecutor,
                    WindowObservationRunnerFactory observationRunnerFactory,
                    TaskQueueEventRecorder taskQueueEventRecorder) {
+        this(deviceId, windowId, waitTimeoutMs, windowMetadataSupplier, turnClient, actionExecutor,
+                observationRunnerFactory, taskQueueEventRecorder, null);
+    }
+
+    WindowTurnLoop(String deviceId,
+                   String windowId,
+                   long waitTimeoutMs,
+                   Supplier<TurnWindowMetadata> windowMetadataSupplier,
+                   TurnClient turnClient,
+                   TurnActionRunner actionExecutor,
+                   WindowObservationRunnerFactory observationRunnerFactory,
+                   TaskQueueEventRecorder taskQueueEventRecorder,
+                   com.bot.dhxy.auth.RuntimeAuthorizationState runtimeAuthorization) {
+        this.runtimeAuthorization = runtimeAuthorization;
+        this.authorizationGeneration = runtimeAuthorization == null ? -1L : runtimeAuthorization.executionGeneration();
         this.deviceId = requireIdentity(deviceId, "deviceId");
         this.windowId = requireIdentity(windowId, "windowId");
         if (waitTimeoutMs <= 0L) {
@@ -215,6 +235,28 @@ public final class WindowTurnLoop {
                 thread.interrupt();
             }
         }
+    }
+
+    /**
+     * Hard permission withdrawal, including pending UI request completion; no fabricated task terminal.
+     * @param code non-secret permission reason shared across every loop in this client process.
+     */
+    public void revokeRuntimeAuthorization(com.bot.dhxy.model.auth.RuntimeAuthorizationCode code) {
+        TurnTransportException failure = new TurnTransportException(TurnTransportException.Kind.AUTHORIZATION,
+                "运行许可已失效，请重新授权或更新客户端。", null, code.name(), null);
+        CompletableFuture<TurnMapSurveyResult> survey;
+        synchronized (lifecycleMonitor) {
+            lastFailure = failure;
+            stopRequested.set(true);
+            if (!startAckAccepted) startExplicitlyRejected = true;
+            survey = pendingMapSurveyResult;
+            Thread thread = workerThread;
+            if (thread != null) thread.interrupt();
+            lifecycleMonitor.notifyAll();
+        }
+        // Completion may execute user callbacks; keep them outside the loop lifecycle lock.
+        startAcknowledgement.completeExceptionally(failure);
+        if (survey != null) survey.completeExceptionally(failure);
     }
 
     /**
@@ -437,7 +479,11 @@ public final class WindowTurnLoop {
 
     private void runLoop() {
         log.info("Turn loop started: deviceId={} windowId={}", deviceId, windowId);
-        try {
+        try (var authorization = runtimeAuthorization == null ? null : runtimeAuthorization.bindInput(authorizationGeneration)) {
+            if (runtimeAuthorization != null && !runtimeAuthorization.isAllowed()) {
+                revokeRuntimeAuthorization(com.bot.dhxy.model.auth.RuntimeAuthorizationCode.CLIENT_SESSION_INVALID);
+                return;
+            }
             int recoveryAttempt = 0;
             while (!stopRequested.get() && !stopCheckpoint.get()) {
                 try {
@@ -557,11 +603,14 @@ public final class WindowTurnLoop {
             return;
         }
         observationRunner = null;
+        retiringObservationRunner = runner;
         runner.requestStop();
         boolean interrupted = Thread.interrupted();
         try {
             if (!runner.awaitStopped(Duration.ofSeconds(3))) {
                 log.warn("Observation runner did not stop within bound: windowId={}", windowId);
+            } else {
+                retiringObservationRunner = null;
             }
         } catch (InterruptedException interruptedAgain) {
             interrupted = true;
@@ -575,6 +624,32 @@ public final class WindowTurnLoop {
     /** TURN-40G: current per-window observation runner, or {@code null}; package-visible for contract tests. */
     WindowObservationRunner observationRunner() {
         return observationRunner;
+    }
+
+    /**
+     * Confirm local observation, transport and maintenance teardown before a fatal replacement.
+     * Call only after this turn loop has stopped; a timeout means retry cleanup, never start anyway.
+     * @param timeout positive maximum wait duration
+     * @return whether no old observation/maintenance execution remains
+     */
+    public boolean awaitObservationTeardown(Duration timeout) throws InterruptedException {
+        if (isRunning()) {
+            return false;
+        }
+        WindowObservationRunner retiring = retiringObservationRunner;
+        if (retiring == null) {
+            return true;
+        }
+        if (!retiring.awaitStopped(timeout)) {
+            return false;
+        }
+        retiringObservationRunner = null;
+        return true;
+    }
+
+    /** Exact acknowledged-run fatal child, not inferred from a generic FAILED or reason text. */
+    public TurnTaskQueueEvent fatalTaskFailure() {
+        return fatalTaskFailure;
     }
 
     /**
@@ -634,6 +709,21 @@ public final class WindowTurnLoop {
                 consecutiveFailures = 0;
             } catch (TurnTransportException transportFailure) {
                 if (stopRequested.get()) {
+                    return;
+                }
+                if (transportFailure.isRuntimeAuthorizationDenied()) {
+                    // No final business turn or automatic task recovery after an explicit authorization denial.
+                    // The control/UI projection consumes lastFailure and aborts this exact runner/input token.
+                    synchronized (lifecycleMonitor) {
+                        lastFailure = transportFailure;
+                        stopRequested.set(true);
+                        if (!startAckAccepted) startExplicitlyRejected = true;
+                        lifecycleMonitor.notifyAll();
+                    }
+                    startAcknowledgement.completeExceptionally(transportFailure);
+                    if (pendingMapSurveyResult != null) pendingMapSurveyResult.completeExceptionally(transportFailure);
+                    log.error("Runtime authorization denied; turn loop stopped without retry: deviceId={} windowId={} code={}",
+                            deviceId, windowId, transportFailure.cloudErrorCode());
                     return;
                 }
                 if (pauseCheckpoint.get()
@@ -971,8 +1061,8 @@ public final class WindowTurnLoop {
         if (!taskTerminalResult.complete(terminal)) {
             return;
         }
-        // FAILED/SKIPPED are recoverable task outcomes.  The control service replaces this terminal Cloud run
-        // with a fresh hot-resume run; they must not poison the local loop as an unrecoverable process failure.
+        // The control layer decides whether an exact fatal child may restart. Generic FAILED/SKIPPED
+        // alone never authorizes hot startup; all terminals still stop this old transport loop.
         stopRequested.set(true);
         log.info("Cloud task terminal accepted: deviceId={} windowId={} startRequestId={} status={} reason={}",
                 deviceId, windowId, terminal.startRequestId(), terminal.status(), terminal.reason());
@@ -1022,6 +1112,13 @@ public final class WindowTurnLoop {
                 && ("FAILED".equalsIgnoreCase(event.result())
                 || "SKIPPED".equalsIgnoreCase(event.result()))) {
             recoverableQueueIndex = event.queueIndex();
+            if ("FAILED".equals(event.result())
+                    && "com.bot.dhxy.runner.exception.TaskFatalException".equals(event.exceptionType())
+                    && event.queueIndex() >= 0 && event.queueIndex() < startRequest.taskCodes().size()
+                    && (startRequest.startRequestId() + ":" + event.queueIndex() + ":"
+                        + startRequest.taskCodes().get(event.queueIndex()).name()).equals(event.taskRunId())) {
+                fatalTaskFailure = event;
+            }
         }
     }
 

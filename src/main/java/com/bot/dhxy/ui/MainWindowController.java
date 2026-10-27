@@ -8,11 +8,16 @@ import lombok.experimental.Accessors;
 
 import com.bot.dhxy.auth.LicenseAuthResult;
 import com.bot.dhxy.auth.LicenseAuthService;
+import com.bot.dhxy.model.auth.RuntimeAuthorizationRevoked;
+import org.springframework.context.event.EventListener;
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.metrics.AutomationMetricsService;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.update.AppVersionService;
+import com.bot.dhxy.update.ClientUpdateService;
+import org.springframework.context.ConfigurableApplicationContext;
+import com.bot.dhxy.model.update.ClientUpdateNotice;
 import com.bot.dhxy.window.control.WindowRegistrationBatchBuilder;
 import com.bot.dhxy.window.control.WindowSystemSnapshot;
 import com.bot.dhxy.window.control.WindowTaskCommandDetail;
@@ -44,6 +49,7 @@ import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
@@ -115,8 +121,13 @@ public class MainWindowController {
     private final GameUiSettingsStore gameUiSettingsStore;
     private final CoordinateHelper coordinateHelper;
     private final AppVersionService appVersionService;
+    private final ClientUpdateService clientUpdateService;
+    private final ConfigurableApplicationContext applicationContext;
     private final WindowSelectionMemory windowSelectionMemory = new WindowSelectionMemory();
     private final UiRefreshExecutor uiRefreshExecutor = new UiRefreshExecutor();
+    // Accessed only on the JavaFX thread; one bounded background update check at a time.
+    private boolean updateCheckInProgress;
+    private String lastNotifiedRelease = "";
 
     private TableView<WindowTaskSnapshot> windowTable;
     private TextField windowIdField;
@@ -294,6 +305,9 @@ public class MainWindowController {
     public void onStageShown() {
         if (stageShownAtNanos == 0L) {
             stageShownAtNanos = System.nanoTime();
+            // Updating does not require a Brain session or a successful game license login.
+            // Only packaged installations check on first show; source-worktree startup stays unchanged.
+            if (clientUpdateService.installationAvailable()) checkForClientUpdate(false);
         }
         log.info("[UI_RESPONSIVENESS] stage shown viewBuildElapsedMs={}",
                 elapsedMillis(viewBuiltAtNanos, stageShownAtNanos));
@@ -1351,7 +1365,12 @@ public class MainWindowController {
         verifyButton.setOnAction(event -> runLicenseAction(
                 "验证授权",
                 () -> licenseAuthService.verify(licenseCodeField.getText()),
-                renderResult,
+                result -> {
+                    renderResult.accept(result);
+                    if (com.bot.dhxy.model.auth.RuntimeAuthorizationCode.fromWire(result.code()).requiresUpdate()) {
+                        checkForClientUpdate(true);
+                    } else if (result.success()) checkForClientUpdate(false);
+                },
                 verifyButton,
                 refreshButton,
                 renewButton
@@ -1542,6 +1561,9 @@ public class MainWindowController {
     }
 
     private Parent buildAboutPanel() {
+        Button checkUpdates = new Button("检查更新");
+        addStyleClass(checkUpdates, "secondary-button");
+        checkUpdates.setOnAction(event -> checkForClientUpdate(true));
         VBox wrapper = new VBox(8,
                 buildSection("说明",
                         new Label("主控：日常窗口选择、任务启动、任务队列和窗口详情。"),
@@ -1550,9 +1572,122 @@ public class MainWindowController {
                         new Label("调试：坐标调试、日志路径、截图/OCR 等诊断入口。"),
                         new Label("日志：窗口命令执行摘要和 UI 操作日志。"),
                         new Label("窗口详情从表格右侧浮出；主页面不再用整页滑动承载所有控件。"),
-                        new Label("当前版本：" + appVersionService.currentVersion())));
+                        new Label("当前版本：" + appVersionService.currentVersion()),
+                        checkUpdates,
+                        new Label("正式安装包可下载更新，确认退出后安装并重开；开发环境仅打开下载页。")));
         wrapper.getStyleClass().add("tab-content");
         return wrapper;
+    }
+
+    /** Show policy revocation on FX without owning the stop boundary or performing any game input. */
+    @EventListener
+    public void onRuntimeAuthorizationRevoked(RuntimeAuthorizationRevoked event) {
+        runLaterUnlessShutdown(() -> {
+            addWindowLog(event.getCode().requiresUpdate()
+                    ? "当前版本已停用，所有任务已禁止继续执行。请更新客户端。"
+                    : "运行许可已失效，所有任务已禁止继续执行。请重新授权。" );
+            renderLogList();
+            if (event.getCode().requiresUpdate()) checkForClientUpdate(true);
+        });
+    }
+
+    /** Manual About action or successful authorization callback; network work never blocks FX/input. */
+    private void checkForClientUpdate(boolean manual) {
+        if (updateCheckInProgress) return;
+        updateCheckInProgress = true;
+        Thread worker = new Thread(() -> {
+            ClientUpdateNotice notice = appVersionService.checkForUpdate();
+            javafx.application.Platform.runLater(() -> {
+                updateCheckInProgress = false;
+                addWindowLog("更新：" + notice.getMessage());
+                renderLogList();
+                boolean required = notice.getStatus() == ClientUpdateNotice.Status.UPDATE_REQUIRED;
+                if (!manual && !required && (!notice.hasInstallableRelease() ||
+                        notice.getLatestVersion().equals(lastNotifiedRelease))) return;
+                if (notice.hasInstallableRelease()) lastNotifiedRelease = notice.getLatestVersion();
+                Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                alert.setTitle("客户端更新");
+                alert.setHeaderText(null);
+                alert.setContentText(notice.getMessage());
+                boolean canInstall = notice.hasInstallableRelease() && clientUpdateService.installationAvailable();
+                ButtonType download = new ButtonType(canInstall ? "下载更新" : "打开下载页");
+                ButtonType later = new ButtonType(required ? "暂不更新（不能运行）" : "稍后");
+                alert.getButtonTypes().setAll(notice.getReleasePage() == null ? List.of(ButtonType.OK) : List.of(download, later));
+                alert.setOnHidden(event -> {
+                    if (alert.getResult() == download) {
+                        if (canInstall) {
+                            downloadClientUpdate(notice);
+                            return;
+                        }
+                        CompletableFuture.runAsync(() -> {
+                            try { Desktop.getDesktop().browse(notice.getReleasePage()); }
+                            catch (Exception failure) {
+                                javafx.application.Platform.runLater(() -> {
+                                    addWindowLog("无法打开浏览器，下载页：" + notice.getReleasePage());
+                                    renderLogList();
+                                });
+                            }
+                        });
+                    }
+                });
+                alert.show();
+            });
+        }, "dhxy-client-update-check");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /** Download off FX/input threads. Installation requires a second explicit exit confirmation. */
+    private void downloadClientUpdate(ClientUpdateNotice notice) {
+        addWindowLog(notice.getStatus() == ClientUpdateNotice.Status.UPDATE_REQUIRED
+                ? "正在下载并校验要求的版本；下载本身不恢复运行权限。"
+                : "正在下载并校验更新；当前任务不会因此自动停止。");
+        renderLogList();
+        Thread worker = new Thread(() -> {
+            try {
+                java.nio.file.Path pending = clientUpdateService.download(notice);
+                javafx.application.Platform.runLater(() -> {
+                    if (uiShutdown) return;
+                    Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+                    confirm.setTitle("更新已下载");
+                    confirm.setHeaderText("已验证发布者签名和文件完整性");
+                    confirm.setContentText("确认后停止当前任务、退出客户端，安装 " + notice.getLatestVersion() +
+                            " 并重新打开。旧版和配置保留，重开后不会自动启动任务。");
+                    ButtonType install = new ButtonType("停止任务并更新");
+                    confirm.getButtonTypes().setAll(install, new ButtonType("暂不安装"));
+                    confirm.setOnHidden(event -> {
+                        if (confirm.getResult() != install || uiShutdown) return;
+                        try {
+                            clientUpdateService.startInstaller(pending);
+                            shutdownUi();
+                            // Close Spring as well as JavaFX. Platform.exit alone leaves background
+                            // beans alive and the external installer correctly refuses to overwrite.
+                            Thread shutdown = new Thread(() -> {
+                                applicationContext.close();
+                                javafx.application.Platform.exit();
+                                System.exit(0);
+                            }, "dhxy-update-shutdown");
+                            shutdown.setDaemon(false);
+                            shutdown.start();
+                        } catch (Exception failure) {
+                            addWindowLog("无法开始安装，旧版未替换：" + failure.getMessage());
+                            renderLogList();
+                        }
+                    });
+                    confirm.show();
+                });
+            } catch (Exception failure) {
+                javafx.application.Platform.runLater(() -> {
+                    if (uiShutdown) return;
+                    addWindowLog("更新下载/校验失败，未安装：" + failure.getMessage());
+                    renderLogList();
+                    Alert error = new Alert(Alert.AlertType.ERROR, "更新失败，当前版本未改变。\n" + failure.getMessage(), ButtonType.OK);
+                    error.show();
+                });
+            }
+        }, "dhxy-client-update-download");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     private Parent buildSelectedWindowDetailPanel() {

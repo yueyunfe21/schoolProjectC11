@@ -86,7 +86,12 @@ public class DialogService {
             int matchLeft,
             int matchTop,
             int matchRight,
-            int matchBottom) {
+            int matchBottom,
+            double score) {
+        public LocalPreparedDialogMatch(PreparedDialogAction action, int matchLeft, int matchTop,
+                                        int matchRight, int matchBottom) {
+            this(action, matchLeft, matchTop, matchRight, matchBottom, Double.NaN);
+        }
     }
 
     /**
@@ -304,7 +309,7 @@ public class DialogService {
                                 DIALOG_LEFT + centerX - template.getWidth() / 2,
                                 DIALOG_TOP + centerY - template.getHeight() / 2,
                                 DIALOG_LEFT + centerX - template.getWidth() / 2 + template.getWidth(),
-                                DIALOG_TOP + centerY - template.getHeight() / 2 + template.getHeight()));
+                                DIALOG_TOP + centerY - template.getHeight() / 2 + template.getHeight(), result[2]));
                     } finally {
                         validation.flush();
                     }
@@ -359,6 +364,25 @@ public class DialogService {
             String phase,
             BufferedImage fullWindowFrame,
             int[] fullWindowRect) {
+        // G179: preserve Wubei's washed matcher while sharing the execution/retry owner.
+        if (taskType == TaskType.WUBEI) {
+            int[] rect = coordinateHelper.getScaledRect(DIALOG_LEFT, DIALOG_TOP, DIALOG_WIDTH, DIALOG_HEIGHT);
+            BufferedImage roi = cropBoundWindowFrame(fullWindowFrame, fullWindowRect, rect);
+            if (roi == null) {
+                roi = tracker.captureToMemory("wubei-local-entry:" + safeDebugName(source),
+                        rect[0], rect[1], rect[2], rect[3]);
+            }
+            if (roi == null) {
+                return Optional.empty();
+            }
+            try {
+                return prepareWubeiEnterBattleFromFrame(roi, rect, source).map(match ->
+                        new LocalDialogTemplateMatch(rect, match.action().getAbsoluteX(),
+                                match.action().getAbsoluteY(), match.score()));
+            } finally {
+                roi.flush();
+            }
+        }
         if (taskType != TaskType.XIULUO_V2 && taskType != TaskType.XINSHOU_TRAINING
                 && taskType != TaskType.CATCH_GHOST && taskType != TaskType.GHOST_KING) {
             return Optional.empty();

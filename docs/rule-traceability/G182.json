@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "card": "G182",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "repositories": {"cloud":"../dhxy-cloud-brain"},
+  "baseline": {
+    "clientBranch":"dev",
+    "clientCommit":"2236357413ffc64621626917ca4a66183895390d",
+    "cloudCommit":"c10078142bdc769717cf8980ffcf56e2e45da8aa",
+    "pushedReference":"2026-09-13 ls-remote verified; Xiuluo G088 false gate in pushed code, Wubei prescan ungated; existing multi-card dirty preserved"
+  },
+  "rules":["BR-WUBEI-011"],
+  "affectedPaths":[{"repo":"cloud","path":"src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java"}],
+  "businessDifference": {
+    "kind":"USER_APPROVED",
+    "conflictSummary":"User explicitly replaces existing ordinary Wubei return-item prescan with Xiuluo-style temporary disable; probe/summon ambiguity excluded from implementation scope",
+    "userDecision":"取消19:27这项提前开包，按照修罗先禁用；仅明确普通回程预扫，召唤指代待澄清，不扩写",
+    "decisionRecordedAt":"2026-09-13",
+    "cardReference":"docs/PACKAGE_ARCHITECTURE.md#G182"
+  },
+  "connectivity":[{
+    "rule":"BR-WUBEI-011",
+    "producer":"WubeiTask green/pathing/combat ordinary prescan gates",
+    "transport":"ReturnItemPrescanService -> CloudBagLocalServiceClient -> BAG_RETURN_ITEM",
+    "consumer":"Client BagService prescan vs formal find-use; service unchanged",
+    "ordering":"BR-WUBEI-011; ordinary prescan disabled before dispatch; probe required and formal return unchanged",
+    "contracts":[{"repo":"client","path":"docs/PACKAGE_ARCHITECTURE.md","command":"NOT RUN: no test authorization; G182 section contains acceptance specification","proves":["all three ordinary prescan gates false; required mirror slot path unchanged; formal find-use and verification preserved"]}]
+  }],
+  "implementationStatus":"Ordinary prescan three gates disabled; mirror required slot path and formal return unchanged. Ambiguous summon request still pending clarification.",
+  "compilation":"Cloud WubeiTask current sources isolated javac exit0, temp dhxy-g182-cloud-4857ba8a203c4e348a0f24b27eeb9adc; no target/classes write/restart/input",
+  "testStatus":"NOT RUN: no test authorization; isolated compile only"
+}

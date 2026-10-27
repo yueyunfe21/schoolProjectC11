@@ -41,15 +41,19 @@ public class InputActionQueue {
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final WindowNativeBindingRefreshService bindingRefreshService;
     private final TaskExecutionContextHolder taskExecutionContextHolder;
+    private final com.bot.dhxy.auth.RuntimeAuthorizationState runtimeAuthorization;
 
     /**
      * @param windowTaskContextHolder thread-local holder used to capture the submitting window.
      * @param bindingRefreshService live HWND/title/geometry refresher used before input is queued.
      * @param taskExecutionContextHolder thread-local holder used to capture the submitting pause token.
+     * @param runtimeAuthorization process permission/generation owner; no network calls during admission.
      */
     public InputActionQueue(WindowTaskContextHolder windowTaskContextHolder,
                             WindowNativeBindingRefreshService bindingRefreshService,
-                            TaskExecutionContextHolder taskExecutionContextHolder) {
+                            TaskExecutionContextHolder taskExecutionContextHolder,
+                            com.bot.dhxy.auth.RuntimeAuthorizationState runtimeAuthorization) {
+        this.runtimeAuthorization = runtimeAuthorization;
         this.windowTaskContextHolder = windowTaskContextHolder;
         this.bindingRefreshService = bindingRefreshService;
         this.taskExecutionContextHolder = taskExecutionContextHolder;
@@ -288,9 +292,8 @@ public class InputActionQueue {
             return false;
         }
         CapturedTaskTokens taskTokens = captureTaskTokens();
-        queue.offer(new InputActionRequest(context, description, actions,
+        return enqueue(new InputActionRequest(context, description, actions,
                 taskTokens.pauseToken(), taskTokens.stopToken()));
-        return true;
     }
 
     /**
@@ -318,7 +321,7 @@ public class InputActionQueue {
         CapturedTaskTokens taskTokens = captureTaskTokens();
         InputActionRequest request = new InputActionRequest(
                 context, description, actions, taskTokens.pauseToken(), taskTokens.stopToken());
-        queue.offer(request);
+        enqueue(request);
         return request.getResult().thenApply(InputActionExecutionResult::isCompleted);
     }
 
@@ -624,7 +627,7 @@ public class InputActionQueue {
                     request.getSessionAdmitted().join());
         }
         request.retainTerminalPublicationForWorker();
-        if (!queue.offer(request)) {
+        if (!enqueue(request)) {
             request.cancel("retained-session-queue-rejected");
             request.releaseRetainedTerminalPublication();
             request.ensureRetainedSessionAdmission();
@@ -930,11 +933,36 @@ public class InputActionQueue {
         return true;
     }
 
+    private boolean enqueue(InputActionRequest request) {
+        boolean admitted = runtimeAuthorization.admitInput(generation -> {
+            request.bindAuthorizationGeneration(generation);
+            queue.offer(request);
+        });
+        if (!admitted) {
+            request.cancel("runtime-authorization-required");
+            request.ensureRetainedSessionAdmission();
+        }
+        return admitted;
+    }
+
+    /** Permission was cleared before this event, so no new input can race into the old queue. */
+    @org.springframework.context.event.EventListener
+    @org.springframework.core.annotation.Order(org.springframework.core.Ordered.HIGHEST_PRECEDENCE)
+    public void onRuntimeAuthorizationRevoked(com.bot.dhxy.model.auth.RuntimeAuthorizationRevoked event) {
+        for (InputActionRequest request : queue) {
+            if (queue.remove(request)) {
+                request.cancel("runtime-authorization-revoked:" + event.getCode());
+                request.releaseRetainedTerminalPublication();
+                request.ensureRetainedSessionAdmission();
+            }
+        }
+    }
+
     private AwaitOutcome await(InputActionRequest request) {
         if (request.hasDeadline() && !request.checkDetailedSafety("before-enqueue")) {
             return new AwaitOutcome(request.getResult().join(), false);
         }
-        queue.offer(request);
+        enqueue(request);
         long remainingWaitMs = TimeUnit.SECONDS.toMillis(120);
         long lastCheckMs = System.currentTimeMillis();
         boolean detailedCancellationPending = false;

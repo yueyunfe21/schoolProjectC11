@@ -25,6 +25,15 @@ import java.util.function.Supplier;
 public class InputActionRequest {
 
     private final String requestId = UUID.randomUUID().toString();
+    private long authorizationGeneration = -1L;
+
+    /** Queue-owned stamp; never supplied by Cloud or inferred again when the worker starts. */
+    void bindAuthorizationGeneration(long generation) {
+        if (authorizationGeneration != -1L) throw new IllegalStateException("Input authorization already bound");
+        authorizationGeneration = generation;
+    }
+
+    long authorizationGeneration() { return authorizationGeneration; }
     private final WindowRuntimeContext windowContext;
     private final String windowId;
     private final WindowNativeBinding nativeBinding;

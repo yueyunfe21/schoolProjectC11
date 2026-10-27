@@ -43,15 +43,22 @@ public class FakerInputDevice {
 
     private final int requiredApiVersion;
     private final NativeConnectionFactory connectionFactory;
+    private final com.bot.dhxy.auth.RuntimeAuthorizationState runtimeAuthorization;
     private NativeConnection connection;
     private FakerInputDeviceStatus connectedStatus;
 
     @Autowired
-    public FakerInputDevice(InputBackendProperties properties) {
-        this(properties.getFakerInputRequiredApiVersion(), new JnaNativeConnectionFactory());
+    public FakerInputDevice(InputBackendProperties properties, com.bot.dhxy.auth.RuntimeAuthorizationState runtimeAuthorization) {
+        this(properties.getFakerInputRequiredApiVersion(), new JnaNativeConnectionFactory(), runtimeAuthorization);
     }
 
     FakerInputDevice(int requiredApiVersion, NativeConnectionFactory connectionFactory) {
+        this(requiredApiVersion, connectionFactory, null);
+    }
+
+    private FakerInputDevice(int requiredApiVersion, NativeConnectionFactory connectionFactory,
+                             com.bot.dhxy.auth.RuntimeAuthorizationState runtimeAuthorization) {
+        this.runtimeAuthorization = runtimeAuthorization;
         if (requiredApiVersion <= 0) {
             throw new IllegalArgumentException("requiredApiVersion must be positive");
         }
@@ -122,7 +129,12 @@ public class FakerInputDevice {
      * @param keyUsages zero to six USB HID keyboard usage codes
      */
     public synchronized void updateKeyboard(int modifierFlags, byte... keyUsages) {
-        requireConnected().writeControlReport(encodeKeyboardReport(modifierFlags, keyUsages));
+        byte[] report = encodeKeyboardReport(modifierFlags, keyUsages);
+        boolean neutral = modifierFlags == 0;
+        if (keyUsages != null) for (byte key : keyUsages) neutral &= key == 0;
+        // Neutral release must remain possible after revoke; it cannot press a new key.
+        if (runtimeAuthorization == null || neutral) requireConnected().writeControlReport(report);
+        else runtimeAuthorization.physicalReport(() -> requireConnected().writeControlReport(report));
     }
 
     /**
@@ -140,8 +152,10 @@ public class FakerInputDevice {
             int deltaY,
             int wheel,
             int horizontalWheel) {
-        requireConnected().writeControlReport(
-                encodeRelativeMouseReport(buttonFlags, deltaX, deltaY, wheel, horizontalWheel));
+        byte[] report = encodeRelativeMouseReport(buttonFlags, deltaX, deltaY, wheel, horizontalWheel);
+        boolean neutral = buttonFlags == 0 && deltaX == 0 && deltaY == 0 && wheel == 0 && horizontalWheel == 0;
+        if (runtimeAuthorization == null || neutral) requireConnected().writeControlReport(report);
+        else runtimeAuthorization.physicalReport(() -> requireConnected().writeControlReport(report));
     }
 
     /**
@@ -153,8 +167,9 @@ public class FakerInputDevice {
      * @param wheel vertical wheel delta in signed 8-bit HID units
      */
     public synchronized void updateAbsoluteMouse(int buttonFlags, int absoluteX, int absoluteY, int wheel) {
-        requireConnected().writeControlReport(
-                encodeAbsoluteMouseReport(buttonFlags, absoluteX, absoluteY, wheel));
+        byte[] report = encodeAbsoluteMouseReport(buttonFlags, absoluteX, absoluteY, wheel);
+        if (runtimeAuthorization == null) requireConnected().writeControlReport(report);
+        else runtimeAuthorization.physicalReport(() -> requireConnected().writeControlReport(report));
     }
 
     /** Release all keyboard modifiers/keys and mouse buttons before disconnecting or aborting input. */

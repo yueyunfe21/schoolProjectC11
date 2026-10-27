@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "card": "G189",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "repositories": {"cloud":"../dhxy-cloud-brain"},
+  "baseline": {
+    "clientBranch":"dev",
+    "clientCommit":"2236357413ffc64621626917ca4a66183895390d",
+    "cloudCommit":"c10078142bdc769717cf8980ffcf56e2e45da8aa",
+    "pushedReference":"2026-10-25 origin/dev verified; pushed Wubei prescan differs from current multi-card dirty, so G189 changes only the existing G182 prescan gate and probe exception"
+  },
+  "rules":["BR-WUBEI-013"],
+  "affectedPaths":[{"repo":"cloud","path":"src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java"}],
+  "businessDifference": {
+    "kind":"USER_APPROVED",
+    "conflictSummary":"G182 kept required probe-item slot learning; user now explicitly closes that final Wubei early-prescan exception as well",
+    "userDecision":"预扫先全部关掉；检查代码里除显形镜绿链后之外的其它预扫入口",
+    "decisionRecordedAt":"2026-10-25",
+    "cardReference":"docs/PACKAGE_ARCHITECTURE.md#G189"
+  },
+  "connectivity":[{
+    "rule":"BR-WUBEI-013",
+    "producer":"WubeiTask tracker-green/pathing/combat prescan gates",
+    "transport":"ReturnItemPrescanService -> CloudBagLocalServiceClient -> BAG_RETURN_ITEM",
+    "consumer":"Client BagService prescan operations; formal find-and-use operations remain available",
+    "ordering":"all Wubei early prescan dispatches are blocked before service invocation; required probe use and formal return occur only at their original use phases",
+    "contracts":[{"repo":"client","path":"docs/PACKAGE_ARCHITECTURE.md","command":"Static source audit plus isolated Cloud compile; no runtime test or game input","proves":["all four Wubei prescan entry points share the false gate; probe and return formal find-use paths remain"]}]
+  }],
+  "implementationStatus":"Wubei has one ITEM_PRESCAN_ENABLED=false gate covering ordinary and probe required prescans; formal use paths retained.",
+  "compilation":"First compile used ineffective project.build.directory and refreshed active target/classes while Cloud PID 374000 was running; second compile used dhxy.build.directory=.release-build/g189-all-prescan-off-r2 and exited 0. javap found zero prescan dispatch calls and retained formal find/use calls. Full Cloud restart required before runtime use.",
+  "testStatus":"NOT RUN: no runtime or game-input test authorization; fresh Cloud restart required"
+}

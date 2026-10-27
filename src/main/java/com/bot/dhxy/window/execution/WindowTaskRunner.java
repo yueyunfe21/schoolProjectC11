@@ -1,6 +1,7 @@
 package com.bot.dhxy.window.execution;
 
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.metrics.ClientMemoryMetricsService;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
@@ -22,6 +23,7 @@ public final class WindowTaskRunner {
 
     private final WindowRuntimeContext windowContext;
     private final InputSequences inputSequences;
+    private final ClientMemoryMetricsService memoryMetrics;
     private volatile boolean remoteRunning;
     private volatile boolean remotePaused;
     private volatile WindowTaskQueue remoteQueue = WindowTaskQueue.empty();
@@ -30,8 +32,22 @@ public final class WindowTaskRunner {
     private volatile boolean shutdown;
 
     public WindowTaskRunner(WindowRuntimeContext windowContext, InputSequences inputSequences) {
+        this(windowContext, inputSequences, null);
+    }
+
+    /**
+     * Creates the exact-window runtime handle with optional fail-safe process diagnostics.
+     *
+     * @param windowContext exact registered window state; never null.
+     * @param inputSequences process-wide serialized physical-input gateway; never null.
+     * @param memoryMetrics read-only lifecycle logger, or null for non-Spring compatibility callers.
+     */
+    public WindowTaskRunner(WindowRuntimeContext windowContext,
+                            InputSequences inputSequences,
+                            ClientMemoryMetricsService memoryMetrics) {
         this.windowContext = Objects.requireNonNull(windowContext, "windowContext");
         this.inputSequences = Objects.requireNonNull(inputSequences, "inputSequences");
+        this.memoryMetrics = memoryMetrics;
     }
 
     public WindowRuntimeContext getWindowContext() {
@@ -66,6 +82,7 @@ public final class WindowTaskRunner {
      * @param reason lifecycle diagnostic explaining why a fresh screen boundary is being created.
      */
     public synchronized void prepareRemoteFreshStart(String reason) {
+        boolean wasRemoteRunning = remoteRunning;
         RemoteTaskHandle staleHandle = remoteTaskHandle;
         if (staleHandle != null) {
             staleHandle.requestStop(reason);
@@ -77,6 +94,9 @@ public final class WindowTaskRunner {
         remoteStartedAt = null;
         remoteTaskHandle = null;
         windowContext.clearTaskExecutionState("remote fresh start: " + reason);
+        if (wasRemoteRunning && memoryMetrics != null) {
+            memoryMetrics.logSnapshot("task-stop-replaced", windowContext.getWindowId());
+        }
     }
 
     public void markRemoteStarted(WindowTaskQueue queue, WindowTaskRunProgress initialProgress) {
@@ -91,6 +111,9 @@ public final class WindowTaskRunner {
         remoteStartedAt = LocalDateTime.now();
         remoteTaskHandle = new RemoteTaskHandle();
         windowContext.markStarted(safeQueue.firstTaskType(), initialProgress);
+        if (memoryMetrics != null) {
+            memoryMetrics.logSnapshot("task-start", windowContext.getWindowId());
+        }
     }
 
     public void markRemotePaused() {
@@ -132,6 +155,7 @@ public final class WindowTaskRunner {
      *                       while terminal values finish the run; null is only for internal replacement cleanup.
      */
     public synchronized void abortRemoteRun(String message, WindowRuntimeStatus terminalStatus) {
+        boolean wasRemoteRunning = remoteRunning;
         RemoteTaskHandle handle = remoteTaskHandle;
         if (handle != null) {
             handle.requestStop(message);
@@ -157,6 +181,9 @@ public final class WindowTaskRunner {
             // Pause discards the old run exactly like stop, but remains a user-resumable screen boundary.
             // Do not use markFinished(PAUSED): that would fabricate a terminal result/timestamp.
             windowContext.markPauseRequested(message);
+        }
+        if (wasRemoteRunning && memoryMetrics != null) {
+            memoryMetrics.logSnapshot(pauseBoundary ? "task-pause" : "task-stop", windowContext.getWindowId());
         }
     }
 
@@ -218,6 +245,7 @@ public final class WindowTaskRunner {
     }
 
     public void shutdownNow() {
+        boolean wasRemoteRunning = remoteRunning;
         shutdown = true;
         remoteRunning = false;
         remotePaused = false;
@@ -228,5 +256,8 @@ public final class WindowTaskRunner {
             handle.requestStop("window unregistered");
         }
         remoteTaskHandle = null;
+        if (wasRemoteRunning && memoryMetrics != null) {
+            memoryMetrics.logSnapshot("task-stop-unregister", windowContext.getWindowId());
+        }
     }
 }

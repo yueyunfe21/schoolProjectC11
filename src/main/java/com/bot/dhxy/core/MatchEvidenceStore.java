@@ -143,6 +143,70 @@ public final class MatchEvidenceStore {
         write(site, windowId, frame == null ? null : () -> frame, null, null, present, false, false);
     }
 
+    /**
+     * Preserve an exact numeric-vision sample without manufacturing a template match or a verdict.
+     * Copies pixels before returning; PNG/metadata IO uses the existing bounded background writer.
+     * Failures are diagnostic only and must never change the caller's sample or input decision.
+     * @param site nonblank evidence category; sanitized to a single directory component
+     * @param windowId bound window identity, null uses the existing thread identity fallback
+     * @param sampleId unique stage/sequence/capture identity, nonblank; sanitized for Windows paths
+     * @param frame unmodified shared source frame, nonnull; remains owned by caller
+     * @param roi exact pixels used by the classifier, nonnull; remains owned by caller
+     * @param metadata sampling identity, geometry (with coordinate space), and raw numeric result
+     */
+    public static void saveSample(String site, String windowId, String sampleId,
+                                  BufferedImage frame, BufferedImage roi, String metadata) {
+        BufferedImage[] copies = new BufferedImage[2];
+        try {
+            if (site == null || site.isBlank() || sampleId == null || sampleId.isBlank()
+                    || frame == null || roi == null) {
+                throw new IllegalArgumentException("Missing sample evidence identity or pixels");
+            }
+            Path dir = Path.of("images", "temp", "match-evidence",
+                    site.replaceAll("[^A-Za-z0-9_-]", "_"),
+                    resolveWindowKey(windowId).replaceAll("[^A-Za-z0-9_-]", "_"),
+                    sampleId.replaceAll("[^A-Za-z0-9_-]", "_"));
+            BufferedImage[] sources = {frame, roi};
+            for (int i = 0; i < sources.length; i++) {
+                copies[i] = new BufferedImage(sources[i].getWidth(), sources[i].getHeight(),
+                        BufferedImage.TYPE_INT_RGB);
+                Graphics2D graphics = copies[i].createGraphics();
+                try {
+                    graphics.drawImage(sources[i], 0, 0, null);
+                } finally {
+                    graphics.dispose();
+                }
+            }
+            WRITER.execute(() -> {
+                try {
+                    Files.createDirectories(dir);
+                    if (!ImageIO.write(copies[0], "png", dir.resolve("frame.png").toFile())
+                            || !ImageIO.write(copies[1], "png", dir.resolve("roi.png").toFile())) {
+                        throw new java.io.IOException("PNG writer unavailable");
+                    }
+                    Files.writeString(dir.resolve("sample.txt"), metadata == null ? "" : metadata);
+                    log.info("[sample-evidence] saved: site={} windowId={} sample={} directory={}",
+                            site, windowId, sampleId, dir.toAbsolutePath());
+                } catch (Exception failure) {
+                    log.warn("[sample-evidence] write failed: directory={} reason={}", dir, failure.toString());
+                } finally {
+                    for (BufferedImage copy : copies) {
+                        copy.flush();
+                    }
+                }
+            });
+        } catch (Exception failure) {
+            for (BufferedImage copy : copies) {
+                if (copy != null) {
+                    copy.flush();
+                }
+            }
+            // Includes queue-full: report the exact lost sample, never claim it was saved.
+            log.warn("[sample-evidence] not queued: site={} windowId={} sample={} reason={}",
+                    site, windowId, sampleId, failure.toString());
+        }
+    }
+
     private static void write(String site,
                               String windowId,
                               Supplier<BufferedImage> frameSupplier,

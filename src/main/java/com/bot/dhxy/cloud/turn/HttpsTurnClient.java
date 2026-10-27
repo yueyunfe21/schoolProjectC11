@@ -55,6 +55,8 @@ public final class HttpsTurnClient implements TurnClient {
     private final URI turnUri;
     private final String bearerToken;
     private final String authorizationHeader;
+    private final String clientId;
+    private final com.bot.dhxy.auth.RuntimeAuthorizationState runtimeSession;
     private final Duration connectTimeout;
     private final Duration requestTimeout;
     private final ObjectMapper objectMapper;
@@ -75,9 +77,42 @@ public final class HttpsTurnClient implements TurnClient {
             Duration connectTimeout,
             Duration requestTimeout,
             ObjectMapper objectMapper) {
+        this(baseUri, bearerToken, connectTimeout, requestTimeout, objectMapper, null);
+    }
+
+    /**
+     * @param baseUri exact Cloud origin; non-loopback must be HTTPS.
+     * @param bearerToken provisioned secret without Bearer prefix; nonblank.
+     * @param connectTimeout positive TCP/TLS connection duration.
+     * @param requestTimeout positive complete request duration.
+     * @param objectMapper non-null mapper defensively copied into strict protocol parsing.
+     * @param clientId configured cloud.turn.device-id for the dedicated binding header; null only
+     *                 for legacy construction. Other parameters retain the transport constructor contract.
+     */
+    public HttpsTurnClient(URI baseUri, String bearerToken, Duration connectTimeout,
+            Duration requestTimeout, ObjectMapper objectMapper, String clientId) {
+        this(baseUri, bearerToken, connectTimeout, requestTimeout, objectMapper, clientId, null);
+    }
+
+    /**
+     * @param baseUri exact HTTPS Cloud origin (loopback HTTP allowed only for local development).
+     * @param bearerToken provisioned binding secret; not a runtime license.
+     * @param connectTimeout positive connection timeout.
+     * @param requestTimeout positive full-request timeout.
+     * @param objectMapper non-null protocol mapper, copied defensively.
+     * @param clientId configured instance/device identity; null for old development construction.
+     * @param runtimeSession current permission owner and revoked-event producer; nullable for old development construction.
+     */
+    public HttpsTurnClient(URI baseUri, String bearerToken, Duration connectTimeout,
+            Duration requestTimeout, ObjectMapper objectMapper, String clientId,
+            com.bot.dhxy.auth.RuntimeAuthorizationState runtimeSession) {
+        this.runtimeSession = runtimeSession;
+        this.clientId = clientId;
         this.baseUri = requireBaseUri(baseUri);
         this.turnUri = this.baseUri.resolve(TURN_PATH);
-        this.bearerToken = requireToken(bearerToken);
+        // A disconnected packaged update UI owns no binding secret. Requests remain forbidden
+        // by RuntimeAuthorizationState; ordinary task/development construction stays strict.
+        this.bearerToken = runtimeSession != null && runtimeSession.isUpdateOnly() ? "" : requireToken(bearerToken);
         this.authorizationHeader = "Bearer " + this.bearerToken;
         this.requestTimeout = requirePositive(requestTimeout, "requestTimeout");
         this.connectTimeout = requirePositive(connectTimeout, "connectTimeout");
@@ -100,7 +135,7 @@ public final class HttpsTurnClient implements TurnClient {
      */
     public com.bot.dhxy.window.observation.HttpsObservationClient newObservationClient() {
         return new com.bot.dhxy.window.observation.HttpsObservationClient(
-                baseUri, bearerToken, connectTimeout, requestTimeout, objectMapper);
+                baseUri, bearerToken, connectTimeout, requestTimeout, objectMapper, clientId, runtimeSession);
     }
 
     @Override
@@ -254,7 +289,7 @@ public final class HttpsTurnClient implements TurnClient {
         HttpResponse<InputStream> response = sendOnce(httpRequest);
         byte[] responseBytes = readBounded(response, MAX_JSON_BYTES, "NPC arrival-frame response");
         if (response.statusCode() != 200) {
-            throw httpStatusFailure(response.statusCode(), responseBytes);
+            throw httpStatusFailure(response, responseBytes);
         }
         requireContentType(response.headers(), "application/json", "NPC arrival-frame response");
         return responseBytes;
@@ -300,7 +335,7 @@ public final class HttpsTurnClient implements TurnClient {
         HttpResponse<InputStream> httpResponse = sendOnce(builder.build());
         byte[] responseBytes = readBounded(httpResponse, MAX_JSON_BYTES, "turn response");
         if (httpResponse.statusCode() != 200) {
-            throw httpStatusFailure(httpResponse.statusCode(), responseBytes);
+            throw httpStatusFailure(httpResponse, responseBytes);
         }
         requireContentType(httpResponse.headers(), "application/json", "turn response");
 
@@ -341,7 +376,7 @@ public final class HttpsTurnClient implements TurnClient {
         int status = httpResponse.statusCode();
         byte[] body = readBounded(httpResponse, MAX_PNG_BYTES, "template response");
         if (status != 200 && status != 304) {
-            throw httpStatusFailure(status, body);
+            throw httpStatusFailure(httpResponse, body);
         }
 
         String etag = httpResponse.headers().firstValue("ETag")
@@ -449,12 +484,19 @@ public final class HttpsTurnClient implements TurnClient {
     }
 
     private HttpRequest.Builder requestBuilder(URI uri) {
-        return HttpRequest.newBuilder(uri)
+        HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
                 .timeout(requestTimeout)
                 .header("Authorization", authorizationHeader);
+        if (clientId != null) builder.header("X-DHXY-Client-Id", clientId);
+        String session = runtimeSession == null ? null : runtimeSession.sessionToken();
+        if (session != null && !session.isBlank()) builder.header("X-DHXY-Session", session);
+        return builder;
     }
 
     private HttpResponse<InputStream> sendOnce(HttpRequest request) throws TurnTransportException {
+        if (runtimeSession != null && !runtimeSession.isCurrentSession(request.headers().firstValue("X-DHXY-Session").orElse(null))) {
+            throw new TurnTransportException(TurnTransportException.Kind.AUTHORIZATION, "运行许可已失效，请重新授权或更新。");
+        }
         HttpClient client = httpClient;
         if (client == null) {
             synchronized (this) {
@@ -485,7 +527,7 @@ public final class HttpsTurnClient implements TurnClient {
         }
     }
 
-    private static byte[] readBounded(
+    private byte[] readBounded(
             HttpResponse<InputStream> response,
             int maxBytes,
             String label) throws TurnTransportException {
@@ -525,6 +567,10 @@ public final class HttpsTurnClient implements TurnClient {
                 }
                 output.write(buffer, 0, read);
             }
+            if ((response.statusCode() == 200 || response.statusCode() == 304) && runtimeSession != null &&
+                    !runtimeSession.isCurrentSession(response.request().headers().firstValue("X-DHXY-Session").orElse(null))) {
+                throw new TurnTransportException(TurnTransportException.Kind.AUTHORIZATION, "旧运行会话的响应已作废。");
+            }
             return output.toByteArray();
         } catch (TurnTransportException e) {
             throw e;
@@ -547,7 +593,8 @@ public final class HttpsTurnClient implements TurnClient {
         }
     }
 
-    private TurnTransportException httpStatusFailure(int status, byte[] body) {
+    private TurnTransportException httpStatusFailure(HttpResponse<?> response, byte[] body) {
+        int status = response.statusCode();
         String detail = new String(body, 0, Math.min(body.length, 512), StandardCharsets.UTF_8)
                 .replace('\r', ' ')
                 .replace('\n', ' ')
@@ -570,6 +617,10 @@ public final class HttpsTurnClient implements TurnClient {
             } catch (IOException invalidProblemJson) {
                 message += ": " + detail;
             }
+        }
+        if (status == 403 && runtimeSession != null) {
+            runtimeSession.reject(response.request().headers().firstValue("X-DHXY-Session").orElse(null),
+                    com.bot.dhxy.model.auth.RuntimeAuthorizationCode.fromWire(cloudErrorCode));
         }
         return new TurnTransportException(
                 TurnTransportException.Kind.HTTP_STATUS,

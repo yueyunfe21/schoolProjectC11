@@ -4,6 +4,27 @@ This document records the current state of the DHXY project so a new Codex/Deskt
 
 Last updated from the web ChatGPT debugging session after multi-window input queue and NPC click debugging.
 
+## 2026-10-25 G192 generic Dialog Interest prepared-action lifecycle
+
+- 五倍显形镜故事事故只是公共竞态的首个暴露点：旧 Dialog frame 可在 Interest 撤销后完成识别并发布，旧动作随后占住单一 prepared-action 槽，阻塞下一阶段动作。
+- Client/Cloud `PreparedDialogAction` 现保留可空 `dialogInterestId`。所有由公共 Dialog Interest 产生的发布入口写入准确代次；observer 每轮用最新明确 active/inactive fact 对账，并按 exact actionId CAS 退休撤销或换代的旧动作。
+- 缺失 fact 不是撤销；没有 lineage 的 tracker 绿链、route、title-rearm 和机械动作不参与这条清理。G190 的五倍 phase 检查继续保留为末端保险，不再是主生命周期方案。
+- Cloud 692 与 Client 340 个主源码隔离编译通过；G192/G190/G118 合同合计8/8通过。未重启；fresh 实跑应看到 `dialog-interest action retired` 后新 interest 正常接管，且非 Dialog 动作不得被该路径清理。
+
+## 2026-10-20 G187 desktop-client memory policy
+
+- 本地启动和jpackage成品现共用 `config/client-jvm.options`：`-Xms512m -Xmx6g -XX:G1HeapRegionSize=16m -XX:G1PeriodicGCInterval=300000`。不要在单个脚本重新写一份参数，也不要在业务代码调用 `System.gc()`。
+- `ClientMemoryMetricsService` 在应用就绪、任务开始/暂停/停止及每5分钟记录 `[client-memory]`，字段覆盖heap/non-heap、direct/mapped buffer、线程、注册/运行窗口和输入队列；它不截图、不扫文件、不请求输入。
+- 340主源码已在 `.release-build/g187-memory-policy-20261020-3` 隔离编译通过；没有写活动 `target/classes`，没有运行测试或重启客户端。内存日志入口会吞掉自身异常，不影响任务生命周期。当前旧JVM仍用旧参数；必须在用户正常重启后才有fresh数据。
+- 6GiB是基于历史约5.3GiB峰值工作集的过渡安全上限，不代表live heap确实需要6GiB。用fresh `heapUsed/heapCommitted` 峰值确认后再评估4GiB，不能拿private bytes/工作集直接等同live heap。
+
+## 2026-10-12 G186 leader box before inter-round rest
+
+- 修罗和五倍的队长盒子在回城验证后仍由公共 `CommonBoxService` 检测并创建30秒pending，但成功轮的消费点已提前到归队门完成之后、`progress.recordRoundCompleted()`和G185轮间随机休息之前。
+- 顺序固定为：`round SUCCESS -> consumePendingBoxIfAllowed -> recordRoundCompleted -> if next round, G185 rest`。因此长随机等待不再吃掉盒子TTL，最后一轮也会尝试消费盒子但不会休息。
+- 这项调整只改变队长盒子的业务时机；模板、ROI、坐标、30秒TTL、公共点击端口、输入队列和队员`AutoCombatService`安全回合消费均不变。
+- Fresh运行应在同一窗口/轮看到`[common-box] COMMON_BOX_CLICKED`的`round-success-box-before-rest`来源先于`[inter-round-rest] G185`；无pending时允许直接进入进度/休息。
+
 ## 2026-07-15 CR271 HTTPS turn plan and test gate
 
 - 2026-07-16 03:29 EDT 掉线接续：原 TURN-28P、TURN-33 与 TURN-35/36/37、TURN-34C readiness 六个子

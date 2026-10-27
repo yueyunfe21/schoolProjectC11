@@ -1,0 +1,6 @@
+# G187: shared desktop-client JVM policy for local launch and jpackage.
+# Keep one whitespace-free JVM argument per line.
+-Xms512m
+-Xmx6g
+-XX:G1HeapRegionSize=16m
+-XX:G1PeriodicGCInterval=300000

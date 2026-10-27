@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "card": "G180",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "repositories": {"client":".","cloud":"../dhxy-cloud-brain"},
+  "baseline": {"clientBranch":"dev","clientCommit":"2236357413ffc64621626917ca4a66183895390d","cloudCommit":"c10078142bdc769717cf8980ffcf56e2e45da8aa","pushedReference":"2026-09-13 ls-remote confirmed; existing dirty preserved"},
+  "rules": ["BR-NPC-001","BR-NPC-003"],
+  "affectedPaths": [
+    {"repo":"cloud","path":"src/main/java/com/yueyunfe/dhxy/cloudbrain/NpcClickMemoryStore.java"},
+    {"repo":"cloud","path":"src/main/java/com/yueyunfe/dhxy/cloudbrain/SmartClickRecognizer.java"},
+    {"repo":"client","path":"src/main/java/com/bot/dhxy/cloud/turn/local/NpcArrivalFrameFifoLocalExecutor.java"}
+  ],
+  "businessDifference": {"kind":"USER_APPROVED","conflictSummary":"旧文档及推送代码取出即删除并按run复制；用户明确改为启动副本持续复用和逐点连续失败停用。","userDecision":"成功的点就是可以一直用下去；只有连续失败三次才能从临时记忆里面取掉；那你去做这个修改一下。","decisionRecordedAt":"2026-09-13","cardReference":"docs/PACKAGE_ARCHITECTURE.md#G180"},
+  "connectivity": [
+    {"rule":"BR-NPC-001","producer":"SmartClickRecognizer ordinary MEMORY FIFO loop","transport":"existing candidate queue and continuation barrier","consumer":"NpcArrivalFrameFifoLocalExecutor existing point verifier","ordering":"LIFO candidate traversal within one session, then unchanged permitted fallback; no repeated same-session point","contracts":[{"repo":"client","path":"docs/rule-traceability/G180-contract.md","command":"NOT RUN: specification only; no test authorization","proves":["candidate consumption is not startup snapshot deletion","existing input and fallback order preserved"]}]},
+    {"rule":"BR-NPC-003","producer":"SmartClickRecognizer MEMORY loop and NpcArrivalFrameFifoLocalExecutor actual click verifier","transport":"existing exact NPC FIFO candidate and reportNpcArrivalFrameOutcome; memory report before next poll","consumer":"NpcClickMemoryStore issued-candidate outcome and existing deferred verification settlement","ordering":"program load before snapshot; issue before feedback; matching deduplicated actual outcome before changing temporary failure count; no run/reload reset","contracts":[{"repo":"client","path":"docs/rule-traceability/G180-contract.md","command":"NOT RUN: specification only; no test authorization","proves":["success is reusable without a use limit","only three consecutive actual failures remove one temporary point","duplicates and non-click outcomes cannot evict","FIFO can progress and program snapshot survives round/run/reload"]}]}
+  ],
+  "testStatus":"No tests authorized or run; specification only. Client and Cloud isolated JDK21 javac exit 0; output paths and source hashes recorded in G180 card. No shared target/classes writes, runtime DB writes, restart, input, independent review or fresh acceptance."
+}

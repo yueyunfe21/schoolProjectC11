@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "card": "G176",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "repositories": {"cloud": "../dhxy-cloud-brain"},
+  "baseline": {"clientBranch": "dev", "clientCommit": "2236357413ffc64621626917ca4a66183895390d", "cloudCommit": "c10078142bdc769717cf8980ffcf56e2e45da8aa", "pushedReference": "Both origin/dev verified by ls-remote 2026-09-10; Wubei G168-G171 dirty hunks preserved; Xiuluo/GhostKing references match pushed files"},
+  "rules": ["BR-WUBEI-004"],
+  "affectedPaths": [{"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java"}],
+  "businessDifference": {"kind": "USER_APPROVED", "conflictSummary": "Wubei discarded unexpected classification and mapped unverified return item to still-in-combat; user approves matching existing Xiuluo/GhostKing recovery", "userDecision": "修罗鬼王，他们都会看任务还是否存在；五倍复刻他们的逻辑", "decisionRecordedAt": "2026-09-10", "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G176"},
+  "connectivity": [{"rule": "BR-WUBEI-004", "producer": "Client WindowObservationSampler physical combat edge and expected claim metadata", "transport": "ObservationKeyEvent -> CloudFastExpectedCombatExitCoordinator source -> WindowReadyEvent exact run/window/HWND slot", "consumer": "WubeiTask.consumePendingCombatEntryCleanup / tickWaitBattleFinish / runPostBattleRecoverPhase / runWaitTeamReturnPhase / useReturnItemAndVerifyStartMap", "ordering": "Latch classification and interrupted phase once; cleanup ACK before exact exit; incidental task arbitration before normal return; pending team return preserves resume state; USED unverified never creates combat truth", "contracts": [{"repo": "client", "path": "docs/rule-traceability/G176-contract.md", "command": "NOT RUN: specification only; tests not authorized", "proves": ["unexpected metadata reaches actual task recovery", "task presence resumes same round through team gate", "return-item failure cannot wait for nonexistent exit", "expected/chained/death/probe lifecycle preserved"]}]}],
+  "testStatus": "Untested; no specific authorization. WubeiTask isolated javac --release 21 passed using existing target/classes and target/cp.txt as read-only dependencies, scratch dhxy-g176-cloud-4b5b4a2d181c4503947ece1f9a42ee42. Contract remains a specification, not executable evidence. No deployment/restart/game input; review and runtime verification pending."
+}

@@ -124,7 +124,8 @@ public class BagService {
 
     public static final BagLayout MAIN_BAG = new BagLayout(
             MAIN_BAG_ANCHOR_TEMPLATE, true,
-            -176, 41, 312, 208, 152, 57, 35
+            // 312px ends inside the sixth slot; 328px includes the complete slot and right grid border.
+            -176, 41, 328, 208, 152, 57, 35
     );
 
     public static final BagLayout GIVE_BAG = new BagLayout(

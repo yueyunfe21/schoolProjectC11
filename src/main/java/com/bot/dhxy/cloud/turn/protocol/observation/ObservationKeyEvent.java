@@ -29,7 +29,25 @@ public record ObservationKeyEvent(
         @JsonInclude(JsonInclude.Include.NON_NULL) String expectedWaitId,
         @JsonInclude(JsonInclude.Include.NON_NULL) Long combatGeneration,
         @JsonInclude(JsonInclude.Include.NON_NULL) String taskCode,
+        @JsonInclude(JsonInclude.Include.NON_NULL) String businessTaskRunId,
+        @JsonInclude(JsonInclude.Include.NON_NULL) com.bot.dhxy.cloud.turn.protocol.TurnLocalEntryFailure localEntryFailure) {
+
+    /** Source compatibility for callers without conditional stationary recovery. */
+    public ObservationKeyEvent(
+        String eventId,
+        ObservationKeyEventType eventType,
+        long occurredAtMs,
+        @JsonInclude(JsonInclude.Include.NON_NULL) String intentId,
+        @JsonInclude(JsonInclude.Include.NON_NULL) String attemptId,
+        @JsonInclude(JsonInclude.Include.NON_NULL) Integer round,
+        @JsonInclude(JsonInclude.Include.NON_NULL) String source,
+        @JsonInclude(JsonInclude.Include.NON_NULL) String detail,
+        @JsonInclude(JsonInclude.Include.NON_NULL) String expectedWaitId,
+        @JsonInclude(JsonInclude.Include.NON_NULL) Long combatGeneration,
+        @JsonInclude(JsonInclude.Include.NON_NULL) String taskCode,
         @JsonInclude(JsonInclude.Include.NON_NULL) String businessTaskRunId) {
+        this(eventId, eventType, occurredAtMs, intentId, attemptId, round, source, detail, expectedWaitId, combatGeneration, taskCode, businessTaskRunId, null);
+    }
 
     /** Backward-compatible constructor for existing observation edges. */
     public ObservationKeyEvent(String eventId, ObservationKeyEventType eventType, long occurredAtMs,

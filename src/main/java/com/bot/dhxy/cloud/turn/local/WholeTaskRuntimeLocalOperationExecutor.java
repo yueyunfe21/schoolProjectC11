@@ -279,14 +279,14 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
                     yield completedBoolean("WHOLE_TASK_RECOVERY_RESET", true);
                 }
                 WindowRuntimeContext.ExactAttemptAbandonResult reset = runtime.abandonExactXiuluoAttempt(
-                        a.recoveryTaskRunId(), a.recoveryRound(), a.recoveryAttemptId(), a.source());
+                        a.recoveryTaskRunId(), a.recoveryRound(), a.recoveryAttemptId(), a.source(), a.localEntryFailure());
                 TurnExactAttemptRecoveryResetAck ack = new TurnExactAttemptRecoveryResetAck(
                         reset.taskRunId(), reset.round(), reset.attemptId(), reset.exactAttemptMatched(),
                         reset.pathingCleared(), reset.observationLineageCleared(), reset.scheduleCleared(),
                         reset.clickClaimCleared(), reset.clickProgressCleared(),
                         reset.expectedCombatClaimCleared(), reset.pendingCombatTicketCleared(),
                         reset.preparedDialogActionCleared(), reset.preparedActionJobCleared(),
-                        reset.combatAlreadyConfirmed());
+                        reset.combatAlreadyConfirmed(), reset.localEntryFailureInvalidated());
                 yield completed("WHOLE_TASK_RECOVERY_RESET",
                         new TurnWholeTaskRuntimeResult(
                                 null, null, null, null, null, null, null, null, null, null, ack));
@@ -383,6 +383,14 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
                 runtime.markTaskQueueStartupFlyingState(
                         WindowFlyingState.valueOf(a.startupFlyingState()), a.source());
                 yield completedBoolean("WHOLE_TASK_STARTUP_FLYING_STATE_UPDATED", true);
+            }
+            case WHOLE_TASK_LEADER_FLYING_STATE_READ -> completedEnum(
+                    "WHOLE_TASK_LEADER_FLYING_STATE_READ",
+                    runtime.readLeaderFlyingState(a.source()).name());
+            case WHOLE_TASK_LEADER_FLYING_STATE_UPDATE -> {
+                boolean updated = runtime.updateLeaderFlyingState(
+                        WindowFlyingState.valueOf(a.startupFlyingState()), a.source());
+                yield completedBoolean("WHOLE_TASK_LEADER_FLYING_STATE_UPDATED", updated);
             }
             case WHOLE_TASK_DIALOG_RUNTIME_READ -> {
                 // Read-only fact copy of the two baseline dialog signals; the Cloud caller keeps every
@@ -529,11 +537,19 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
             operations.add(DialogOperation.valueOf(name));
         }
         com.bot.dhxy.cloud.turn.protocol.TurnDialogFollowUpClick followUp = a.dialogFollowUpClick();
+        // The wire request may carry a timestamp sampled just before this local operation was
+        // executed. Clamp it to the same local creation instant so the observation contract cannot
+        // reject the whole batch merely because transport/executor latency was a few milliseconds.
+        long createdAtMs = System.currentTimeMillis();
+        long requestedAbsentAllowedAtMs = a.absentAllowedAtMs() == null ? 0L : a.absentAllowedAtMs();
+        long absentAllowedAtMs = requestedAbsentAllowedAtMs <= 0L
+                ? 0L : Math.max(requestedAbsentAllowedAtMs, createdAtMs);
         return WindowDialogInterest.builder()
                 .taskType(taskType(a.taskCode()))
                 .operations(operations)
                 .source(a.source())
-                .absentAllowedAtMs(a.absentAllowedAtMs() == null ? 0L : a.absentAllowedAtMs())
+                .createdAtMs(createdAtMs)
+                .absentAllowedAtMs(absentAllowedAtMs)
                 .localTemplateProbeOnly(a.probeOnly() != null && a.probeOnly())
                 .probeStartAtMs(a.probeStartAtMs() == null ? 0L : a.probeStartAtMs())
                 .followUpAbsoluteX(followUp == null ? null : followUp.absoluteX())

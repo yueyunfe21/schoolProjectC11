@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "card": "G172",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "repositories": {"cloud": "../dhxy-cloud-brain"},
+  "baseline": {"clientBranch": "dev", "clientCommit": "2236357413ffc64621626917ca4a66183895390d", "cloudCommit": "c10078142bdc769717cf8980ffcf56e2e45da8aa", "pushedReference": "Cloud origin/dev confirmed by ls-remote 2026-09-10; touched production files have zero diff"},
+  "rules": ["BR-NPC-001"],
+  "affectedPaths": [
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/NpcClickService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/ImageAlgorithms.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/SmartClickRecognizer.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/NpcClickMemoryStore.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/NpcClickSmartQueueStore.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/DecisionEngine.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/vision/OcrRoiMemoryService.java"}
+  ],
+  "businessDifference": {"kind": "USER_APPROVED", "conflictSummary": "After the failed replay and explicit Lijing/guard branch comparison, user delegates the NPC recognition repair to the agent. Only guard mask/candidate extraction changes; existing strict name validation, click formula and other NPC rules remain.", "userDecision": "我就希望我不知道得怎么，反正要把它识别出来。 Agent will own the disclosed recognition-policy repair and actual-frame tests, not ask the user to choose technical thresholds.", "decisionRecordedAt": "2026-09-10", "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G172"},
+  "connectivity": [{"rule": "BR-NPC-001", "producer": "SmartClickRecognizer yellow stage on exact pre-click frame generates joint yellow/player evidence", "transport": "Result server-only evidence retained at delivered FIFO candidate; exact verified Client outcome", "consumer": "NpcClickMemoryStore canonical writer and next FIFO ROI lookup", "ordering": "same-frame joint recognition -> candidate barrier -> verified outcome -> canonical ROI write -> learned first/full masked fallback; no extra capture or network lookup", "contracts": [{"repo": "cloud", "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/G172NpcRoiReplayTest.java", "command": "isolated javac + JUnit Console select-class G172NpcRoiReplayTest", "proves": ["incident raw produces actual name and click boxes", "exact verified outcome learns canonical ROI; next frame consumes it", "different position and unverified outcome cannot reuse or learn"]}]}],
+  "testStatus": "Isolated production javac PASS; real RapidOCR/FIFO and canonical ROI contracts 5/5, repeated 5/5. Incident box 596,194,66,22 click 629,155; two other positions match. Missing/two-character negatives do not yield yellow click. Occluded own name does not learn; separate real Yipin/player frame learns and reuses ROI only after simulated verified outcome, including deferred confirmation. Wrong run/window/decision/click cannot attach proof. Output cloud/images/test-cases/g172/run-20260910-031322. No runtime classes, real memory, restart or game input touched; runtime acceptance pending."
+}

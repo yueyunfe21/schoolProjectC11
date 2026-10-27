@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "card": "G186",
+  "changeType": "business",
+  "status": "IMPLEMENTED_CONTRACT_PASSED_FRESH_RUNTIME_PENDING",
+  "repositories": {
+    "clientDocs": ".",
+    "cloud": "../DHXY-cloud-brain"
+  },
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "2236357413ffc64621626917ca4a66183895390d",
+    "cloudCommit": "c10078142bdc769717cf8980ffcf56e2e45da8aa",
+    "pushedReference": "Cloud pushed Xiuluo records success before its private rest and pushed Wubei records success without rest. Current dirty G185 adds shared rest to both. CommonBoxService remains identical to pushed baseline with a 30000ms pending TTL."
+  },
+  "rules": [
+    "BR-COMMON-BOX-001",
+    "BR-WUBEI-012"
+  ],
+  "affectedPaths": [
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/test/java/com/bot/dhxy/task/G186LeaderCommonBoxBeforeRestContractTest.java"
+    }
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "Leader box pending lasts 30 seconds, while G185 may sleep for up to 180 seconds before the old next-round consume point; final rounds have no next-round consume point.",
+    "userDecision": "After a successful round and completed team-return gate, consume the leader box first and only then enter the random inter-round wait.",
+    "decisionRecordedAt": "2026-10-12",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G186"
+  },
+  "implementationStatus": "Xiuluo and Wubei call the existing CommonBoxService consumer after SUCCESS and before progress.recordRoundCompleted. The call is unconditional on a next round, while G185 rest remains conditional.",
+  "testStatus": "Cloud Maven compile passed for 692 main sources. G186 focused contract passed 2/2; combined G185 and G186 focused run passed 6/6. Fresh restarted Cloud runtime verification is pending."
+}

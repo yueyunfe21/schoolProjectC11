@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "card": "G187",
+  "changeType": "business",
+  "status": "REVIEW_PASSED",
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "2236357413ffc64621626917ca4a66183895390d",
+    "pushedReference": "origin/dev matches HEAD. The pushed local launcher hard-codes -Xms2g and 16m G1 regions without an explicit maximum; the untracked G184 release builder duplicates the same values. Preserve all unrelated dirty work."
+  },
+  "rules": [
+    "BR-RELEASE-005"
+  ],
+  "affectedPaths": [
+    "config/client-jvm.options",
+    "scripts/restart-local-dhxy-stack.ps1",
+    "scripts/release/build-client.ps1",
+    "scripts/check-business-rule-gate.js",
+    "src/main/java/com/bot/dhxy/metrics/ClientMemoryMetricsService.java",
+    "src/main/java/com/bot/dhxy/window/execution/MultiWindowTaskManager.java",
+    "src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java",
+    "src/main/java/com/bot/dhxy/metrics",
+    "docs/CLIENT_RELEASE_PIPELINE.md"
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "Existing release notes preserve a 2GiB initial heap and both launch paths duplicate that value; the long-lived desktop client remains heavily committed while idle and has no heap/direct-memory telemetry.",
+    "userDecision": "Use the proposed desktop JVM policy: one shared option source with 512MiB initial heap, 6GiB maximum, 16MiB G1 regions and five-minute periodic G1; add lightweight startup, task lifecycle and periodic memory diagnostics.",
+    "decisionRecordedAt": "2026-10-20",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G187"
+  },
+  "implementationStatus": "One shared option file feeds local launch and jpackage. A read-only ClientMemoryMetricsService logs application-ready, five-minute and committed task lifecycle snapshots. Window task behavior, capture, matching, input and Cloud semantics are unchanged. The registry gate now accepts already-established multi-segment domain ids.",
+  "testStatus": "No tests were run, per repository prohibition. G187 rule gate, both PowerShell syntax parses and JSON parses passed. Final Maven compile built 340 main sources into .release-build/g187-memory-policy-20261020-3 without touching target/classes. Fresh restarted runtime verification is pending.",
+  "verification": [
+    {
+      "name": "G187 business-rule gate",
+      "result": "PASS",
+      "evidence": "node scripts/check-business-rule-gate.js --card G187"
+    },
+    {
+      "name": "PowerShell and JSON static validation",
+      "result": "PASS",
+      "evidence": "PowerShell parser accepted local restart and release build scripts; both JSON files parsed successfully"
+    },
+    {
+      "name": "Isolated main-source compile",
+      "result": "PASS",
+      "evidence": "340 sources, Maven BUILD SUCCESS in .release-build/g187-memory-policy-20261020-3 (19.212s); tests skipped and active target/classes untouched"
+    }
+  ]
+}

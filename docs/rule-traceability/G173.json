@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "card": "G173",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "repositories": {"cloud": "../dhxy-cloud-brain"},
+  "baseline": {"clientBranch": "dev", "clientCommit": "2236357413ffc64621626917ca4a66183895390d", "cloudCommit": "c10078142bdc769717cf8980ffcf56e2e45da8aa", "pushedReference": "Both origin/dev verified by ls-remote 2026-09-10; G172 changes preserved"},
+  "rules": ["BR-NPC-001"],
+  "affectedPaths": [
+    {"repo":"cloud","path":"src/main/java/com/yueyunfe/dhxy/cloudbrain/SmartClickRecognizer.java"},
+    {"repo":"cloud","path":"src/main/java/com/bot/dhxy/service/NpcClickService.java"},
+    {"repo":"cloud","path":"src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartQueueMessage.java"},
+    {"repo":"client","path":"src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartQueueMessage.java"},
+    {"repo":"client","path":"src/main/java/com/bot/dhxy/cloud/turn/local/NpcArrivalFrameFifoLocalExecutor.java"}
+  ],
+  "businessDifference": {"kind":"USER_APPROVED","conflictSummary":"Existing FIFO and direct combat use purple player-anchor clicks; user explicitly bans them for all tasks.","userDecision":"所有的通过紫色名字的点击的方法，现在全都不用了，全都禁了。所有的任务。","decisionRecordedAt":"2026-09-10","cardReference":"docs/PACKAGE_ARCHITECTURE.md#G173"},
+  "connectivity": [{"rule":"BR-NPC-001","producer":"SmartClickRecognizer FIFO/single and NpcClickService direct pipeline","transport":"NPC FIFO and prepared plan messages; legacy purple enums retained for decoding","consumer":"NpcArrivalFrameFifoLocalExecutor plus prepared-plan consumer","ordering":"No purple producer or derived Ctrl seed; reject legacy purple messages before any click and continue legal candidates","contracts":[{"repo":"client","path":"docs/rule-traceability/G173-contract.md","command":"NOT RUN: specification only; no new test authorization","proves":["zero purple-generated clicks across all entry paths","late legacy purple messages cannot execute","non-purple paths remain available"]}]}],
+  "testStatus":"No tests authorized or run. Isolated javac passed for all five affected files (Cloud three, Client two), without writing target/classes. Both DTO files have identical SHA256 CC466E063272A5305F6A635A0566B3FE9FFE7A3F89A46F6C11A3CCC958996D56. Source audit complete; contract file remains a specification, not executable evidence. Runtime verification and both-side restart pending."
+}

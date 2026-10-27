@@ -3,6 +3,7 @@ package com.bot.dhxy.auth;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.bot.dhxy.core.http.BoundedHttpBodyHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,6 +18,9 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -28,11 +32,17 @@ public class LicenseAuthService {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss '北京时间'").withZone(BEIJING_ZONE);
 
     private final DeviceFingerprintService deviceFingerprintService;
+    private final RuntimeAuthorizationState runtimeAuthorization;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(8))
             .build();
     private final AtomicReference<String> latestVerifiedLicenseCode = new AtomicReference<>("");
+
+    @Value("${cloud.turn.device-id:dhxy-client}")
+    private String runtimeClientId;
+    @Value("${cloud.turn.bearer-token:}")
+    private String runtimeClientToken;
 
     @Value("${license.worker.base-url:https://dhxy-license-worker.yueyunfe.workers.dev}")
     private String baseUrl;
@@ -43,14 +53,72 @@ public class LicenseAuthService {
     @Value("${license.worker.app-version:0.0.1}")
     private String appVersion;
 
-    public LicenseAuthResult verify(String licenseCode) {
+    /**
+     * Verify on explicit UI action, then open a dedicated runtime session in formal mode.
+     * @param licenseCode user-entered license code; null/blank is rejected without network access.
+     * @return UI result; a formal success requires matching-device verification AND session OPEN.
+     */
+    public synchronized LicenseAuthResult verify(String licenseCode) {
+        long loginGeneration;
+        try { loginGeneration = runtimeAuthorization.requiresSession() ? runtimeAuthorization.beginLogin() : -1L; }
+        catch (IllegalStateException cleanupPending) {
+            return LicenseAuthResult.failure("CLIENT_SESSION_INVALID", cleanupPending.getMessage());
+        }
         if (licenseCode == null || licenseCode.isBlank()) {
             return LicenseAuthResult.failure("LICENSE_CODE_REQUIRED", "请输入授权码。");
         }
 
         ObjectNode payload = basePayload(licenseCode);
-        payload.put("appVersion", appVersion);
-        return post("/api/license/verify", payload);
+        LicenseAuthResult verified = post("/api/license/verify", payload);
+        if (!verified.success() || !runtimeAuthorization.requiresSession()) return verified;
+        if (!Boolean.TRUE.equals(verified.currentDeviceMatched())) {
+            return LicenseAuthResult.failure("DEVICE_MISMATCH", "授权电脑未明确匹配，不能建立运行会话。");
+        }
+        try {
+            UUID id = UUID.fromString(runtimeClientId);
+            if (!id.toString().equals(runtimeClientId) || !runtimeClientToken.matches("[A-Za-z0-9_-]{43,128}")) {
+                return LicenseAuthResult.failure("CLIENT_BINDING_REQUIRED", "请先配置维护者分配的专属大脑连接。");
+            }
+            ObjectNode session = objectMapper.createObjectNode();
+            session.put("operation", "OPEN");
+            session.put("clientId", runtimeClientId);
+            session.put("clientToken", runtimeClientToken);
+            session.put("licenseCode", licenseCode.trim());
+            session.put("deviceFingerprint", deviceFingerprintService.getDeviceFingerprint());
+            session.put("appVersion", appVersion);
+            // The runtime trust authority is pinned, not taken from an arbitrary connection URL.
+            HttpRequest request = HttpRequest.newBuilder(URI.create(
+                            "https://dhxy-license-worker.yueyunfe.workers.dev/api/client/session"))
+                    .timeout(Duration.ofSeconds(12)).header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(objectMapper.writeValueAsBytes(session))).build();
+            CompletableFuture<HttpResponse<byte[]>> pending = httpClient.sendAsync(request, new BoundedHttpBodyHandler(256 * 1024));
+            HttpResponse<byte[]> response;
+            try { response = pending.get(12, TimeUnit.SECONDS); }
+            finally { if (!pending.isDone()) pending.cancel(true); }
+            JsonNode root = objectMapper.readTree(response.body());
+            JsonNode data = root.path("data");
+            if (response.statusCode() != 200 || !root.path("ok").asBoolean(false)) {
+                return LicenseAuthResult.failure(root.path("code").asText("CLIENT_SESSION_DENIED"),
+                        root.path("message").asText("无法获得运行许可，请重新验证授权或更新客户端。"));
+            }
+            String token = data.path("sessionToken").asText("");
+            if (!"CLIENT_SESSION_ALLOWED".equals(root.path("code").asText()) ||
+                    !runtimeClientId.equals(data.path("clientId").asText()) ||
+                    !"dhxy".equals(data.path("appId").asText()) || !appVersion.equals(data.path("appVersion").asText()) ||
+                    !token.matches("[A-Za-z0-9_-]{43,128}")) {
+                return LicenseAuthResult.failure("CLIENT_SESSION_INVALID", "授权服务返回的运行会话身份不匹配。");
+            }
+            if (!runtimeAuthorization.activate(loginGeneration, token)) {
+                return LicenseAuthResult.failure("CLIENT_SESSION_INVALID", "登录结果已失效，请重新验证授权。");
+            }
+            return verified;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return LicenseAuthResult.failure("INTERRUPTED", "运行授权请求已中断。");
+        } catch (Exception unavailable) {
+            // No request/response or exception details: they may contain a bearer or license value.
+            return LicenseAuthResult.failure("AUTHORIZATION_UNAVAILABLE", "运行授权暂时不可用；未获得任务许可。");
+        }
     }
 
     public LicenseAuthResult refreshStatus(String licenseCode) {
@@ -86,6 +154,8 @@ public class LicenseAuthService {
     private ObjectNode basePayload(String licenseCode) {
         ObjectNode payload = objectMapper.createObjectNode();
         payload.put("appId", appId);
+        // Version admission must see the same build on verify AND later status refreshes.
+        payload.put("appVersion", appVersion);
         payload.put("licenseCode", licenseCode.trim());
         payload.put("deviceFingerprint", deviceFingerprintService.getDeviceFingerprint());
         return payload;

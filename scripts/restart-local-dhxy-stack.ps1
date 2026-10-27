@@ -284,9 +284,22 @@ if ([string]::IsNullOrWhiteSpace($dependencyClasspath)) {
 $clientClasspath = (Join-Path $projectRoot "target\classes") + ";" + $dependencyClasspath
 # 整窗 BufferedImage 约 3MB；G1 默认 region 4MB 会把它们全判为 humongous 直进老年代，
 # 引发并发 GC 连轴转（实测 2 次 YGC/秒、1830 个并发周期/20 分钟）。region 提到 16MB 让
-# 帧对象走正常年轻代，-Xms 预热避免堆反复伸缩。
-$clientJvmOptions = "-Xms2g -XX:G1HeapRegionSize=16m"
-$clientArguments = @("-Xms2g", "-XX:G1HeapRegionSize=16m", "-cp", $clientClasspath, "com.bot.dhxy.AutoBot")
+# 帧对象走正常年轻代。G187 将桌面客户端改为小初始堆、受控上限和空闲周期回收；
+# 本地启动与 jpackage 必须读取同一个真源，禁止再复制一份参数。
+$clientJvmOptionsFile = Join-Path $projectRoot "config\client-jvm.options"
+if (-not (Test-Path -LiteralPath $clientJvmOptionsFile -PathType Leaf)) {
+    throw "缺少客户端 JVM 参数文件：$clientJvmOptionsFile"
+}
+$clientJvmOptionList = @(Get-Content -LiteralPath $clientJvmOptionsFile -Encoding UTF8 |
+    ForEach-Object { $_.Trim() } |
+    Where-Object { $_ -and -not $_.StartsWith("#") })
+if ($clientJvmOptionList.Count -eq 0) {
+    throw "客户端 JVM 参数文件为空：$clientJvmOptionsFile"
+}
+if ($clientJvmOptionList | Where-Object { $_ -notmatch '^-[^\s]+$' }) {
+    throw "客户端 JVM 参数必须每行一个且不能包含空白：$clientJvmOptionsFile"
+}
+$clientJvmOptions = $clientJvmOptionList -join " "
 $clientArgumentLine = "$clientJvmOptions -cp $(Quote-ProcessArgument $clientClasspath) com.bot.dhxy.AutoBot"
 
 # G151：WGC 采集 sidecar——PrintWindow 是全系统唯一会向游戏窗口投递重绘请求的采集路径，

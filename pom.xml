@@ -18,9 +18,12 @@
         <ikonli.version>12.3.1</ikonli.version>
         <junit.jupiter.version>5.10.2</junit.jupiter.version>
         <lombok.version>1.18.46</lombok.version>
+        <!-- Release builds must never replace classes used by the running desktop instance. -->
+        <dhxy.build.directory>${project.basedir}/target</dhxy.build.directory>
     </properties>
 
     <build>
+        <directory>${dhxy.build.directory}</directory>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -45,6 +48,36 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>client-release</id>
+            <build>
+                <finalName>dhxy-client</finalName>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-jar-plugin</artifactId>
+                        <version>3.4.2</version>
+                        <configuration>
+                            <archive>
+                                <manifest>
+                                    <mainClass>com.bot.dhxy.AutoBot</mainClass>
+                                    <addClasspath>true</addClasspath>
+                                    <classpathPrefix>lib/</classpathPrefix>
+                                </manifest>
+                            </archive>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-dependency-plugin</artifactId>
+                        <version>3.8.1</version>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 
     <dependencies>
         <dependency>

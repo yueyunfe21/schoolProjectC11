@@ -10,6 +10,9 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "cloud.turn")
 public class TurnClientProperties {
 
+    @org.springframework.beans.factory.annotation.Value("${dhxy.update-only:false}")
+    private boolean updateOnly;
+
     private URI baseUri = URI.create("http://127.0.0.1:18080");
     private String bearerToken = "local-dev-token";
     private String deviceId = "dhxy-client";
@@ -86,7 +89,7 @@ public class TurnClientProperties {
         if (baseUri == null) {
             throw new IllegalArgumentException("cloud.turn.base-uri must be configured");
         }
-        if (bearerToken == null || bearerToken.isBlank() || !bearerToken.equals(bearerToken.trim())) {
+        if (bearerToken == null || (!updateOnly && bearerToken.isBlank()) || !bearerToken.equals(bearerToken.trim())) {
             throw new IllegalArgumentException("cloud.turn.bearer-token must be nonblank without surrounding whitespace");
         }
         if (deviceId == null || deviceId.isBlank() || !deviceId.equals(deviceId.trim())) {

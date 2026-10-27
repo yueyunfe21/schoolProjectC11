@@ -599,6 +599,8 @@ public final class TurnProtocolValidator {
                  WHOLE_TASK_PROGRESS_UPDATE,
                  WHOLE_TASK_STARTUP_FLYING_STATE_CONSUME,
                  WHOLE_TASK_STARTUP_FLYING_STATE_UPDATE,
+                 WHOLE_TASK_LEADER_FLYING_STATE_READ,
+                 WHOLE_TASK_LEADER_FLYING_STATE_UPDATE,
                  WHOLE_TASK_DIALOG_RUNTIME_READ,
                  WHOLE_TASK_COMBAT_ENTRY_CLEANUP,
                  WHOLE_TASK_PENDING_TRANSFER_CHOICE_UPDATE,
@@ -991,16 +993,17 @@ public final class TurnProtocolValidator {
                 spec.expectedDialogTemplatePaths().forEach(path ->
                         requireText(path, "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME expected template"));
             }
-            case WHOLE_TASK_STARTUP_FLYING_STATE_UPDATE ->
+            case WHOLE_TASK_STARTUP_FLYING_STATE_UPDATE,
+                 WHOLE_TASK_LEADER_FLYING_STATE_UPDATE ->
                     require(a.startupFlyingState() != null
                                     && ("FLYING".equals(a.startupFlyingState())
                                     || "NOT_FLYING".equals(a.startupFlyingState())
                                     || "UNKNOWN".equals(a.startupFlyingState())),
-                            "WHOLE_TASK_STARTUP_FLYING_STATE_UPDATE requires a valid startupFlyingState");
+                            operation + " requires a valid flying state");
             case WHOLE_TASK_RECOVERY_RESET -> {
                 boolean anyExactIdentity = a.recoveryTaskRunId() != null
                         || a.recoveryRound() != null
-                        || a.recoveryAttemptId() != null;
+                        || a.recoveryAttemptId() != null || a.localEntryFailure() != null;
                 if (anyExactIdentity) {
                     requireText(a.recoveryTaskRunId(), "WHOLE_TASK_RECOVERY_RESET.taskRunId");
                     require(a.recoveryRound() != null && a.recoveryRound() > 0,
@@ -1018,6 +1021,7 @@ public final class TurnProtocolValidator {
                  WHOLE_TASK_PRE_BATTLE_TIMER_CLEAR,
                  WHOLE_TASK_DIALOG_INTEREST_CLEAR,
                  WHOLE_TASK_STARTUP_FLYING_STATE_CONSUME,
+                 WHOLE_TASK_LEADER_FLYING_STATE_READ,
                  XIULUO_ACCEPT_DIALOG_TEMPLATE,
                  JIANGHU_LILIAN_ACCEPT_DIALOG_TEMPLATE,
                  CATCH_GHOST_ACCEPT_DIALOG_TEMPLATE,
@@ -1051,7 +1055,7 @@ public final class TurnProtocolValidator {
         SCHEDULE_OBSERVATION_RUN,
         REPLAY_OBSERVATION_RUN, REPLAY_BUSINESS_TASK_RUN, EXPECTED_CLAIM_ID,
         EXPECTED_OBSERVATION_RUN, EXPECTED_BUSINESS_TASK_RUN, EXPECTED_ATTEMPT_ID,
-        RECOVERY_TASK_RUN, RECOVERY_ROUND, RECOVERY_ATTEMPT, TEAM_RETURN_TASK_RUN,
+        RECOVERY_TASK_RUN, RECOVERY_ROUND, RECOVERY_ATTEMPT, LOCAL_ENTRY_FAILURE, TEAM_RETURN_TASK_RUN,
         NPC_ARRIVAL_FIFO, DIALOG_FOLLOW_UP_CLICK
     }
 
@@ -1097,6 +1101,7 @@ public final class TurnProtocolValidator {
         if (a.recoveryTaskRunId() != null) present.add(WtField.RECOVERY_TASK_RUN);
         if (a.recoveryRound() != null) present.add(WtField.RECOVERY_ROUND);
         if (a.recoveryAttemptId() != null) present.add(WtField.RECOVERY_ATTEMPT);
+        if (a.localEntryFailure() != null) present.add(WtField.LOCAL_ENTRY_FAILURE);
         if (a.npcArrivalFifo() != null) present.add(WtField.NPC_ARRIVAL_FIFO);
         if (a.dialogFollowUpClick() != null) present.add(WtField.DIALOG_FOLLOW_UP_CLICK);
         if (a.teamReturnTaskRunId() != null) present.add(WtField.TEAM_RETURN_TASK_RUN);
@@ -1122,7 +1127,8 @@ public final class TurnProtocolValidator {
                      WtField.SCHEDULE_OPENED_AT, WtField.SCHEDULE_OBSERVATION_RUN,
                      WtField.DIALOG_FOLLOW_UP_CLICK);
             case WHOLE_TASK_PROGRESS_UPDATE -> EnumSet.of(WtField.COMPLETED_RUNS, WtField.TOTAL_RUNS);
-            case WHOLE_TASK_STARTUP_FLYING_STATE_UPDATE -> EnumSet.of(WtField.STARTUP_FLYING_STATE);
+            case WHOLE_TASK_STARTUP_FLYING_STATE_UPDATE,
+                 WHOLE_TASK_LEADER_FLYING_STATE_UPDATE -> EnumSet.of(WtField.STARTUP_FLYING_STATE);
             case WHOLE_TASK_DIALOG_RUNTIME_READ -> EnumSet.of(WtField.DIALOG_MAX_AGE);
             case WHOLE_TASK_PENDING_TRANSFER_CHOICE_UPDATE -> EnumSet.of(WtField.TRANSFER_CHOICE);
             case WHOLE_TASK_PENDING_TRANSFER_CHOICE_CONSUME,
@@ -1140,13 +1146,15 @@ public final class TurnProtocolValidator {
                     EnumSet.of(WtField.INTENT_ID, WtField.TASK_CODE, WtField.TARGET_KEYWORD,
                             WtField.NPC_ARRIVAL_FIFO);
             case WHOLE_TASK_RECOVERY_RESET -> EnumSet.of(
-                    WtField.RECOVERY_TASK_RUN, WtField.RECOVERY_ROUND, WtField.RECOVERY_ATTEMPT);
+                    WtField.RECOVERY_TASK_RUN, WtField.RECOVERY_ROUND, WtField.RECOVERY_ATTEMPT, WtField.LOCAL_ENTRY_FAILURE);
             case WHOLE_TASK_PATHING_READ, WHOLE_TASK_PATHING_CLEAR, WHOLE_TASK_PENDING_ROUTE_OUTCOME_READ,
                  WHOLE_TASK_PRE_BATTLE_TIMER_READ,
                  WHOLE_TASK_PRE_BATTLE_FACT_READ,
                  WHOLE_TASK_PRE_BATTLE_TIMEOUT_MARK, WHOLE_TASK_TARGET_MAP_GATE_OPEN,
                  WHOLE_TASK_PRE_BATTLE_TIMER_CLEAR, WHOLE_TASK_DIALOG_INTEREST_CLEAR,
-                 WHOLE_TASK_STARTUP_FLYING_STATE_CONSUME, XIULUO_ACCEPT_DIALOG_TEMPLATE,
+                 WHOLE_TASK_STARTUP_FLYING_STATE_CONSUME,
+                 WHOLE_TASK_LEADER_FLYING_STATE_READ,
+                 XIULUO_ACCEPT_DIALOG_TEMPLATE,
                  JIANGHU_LILIAN_ACCEPT_DIALOG_TEMPLATE,
                  CATCH_GHOST_ACCEPT_DIALOG_TEMPLATE,
                   CATCH_GHOST_CANCEL_DIALOG_TEMPLATE,

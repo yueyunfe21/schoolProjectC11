@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "card": "G185",
+  "changeType": "business",
+  "status": "IMPLEMENTED_PENDING_FRESH_RUNTIME",
+  "repositories": {
+    "clientDocs": ".",
+    "cloud": "../DHXY-cloud-brain"
+  },
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "2236357413ffc64621626917ca4a66183895390d",
+    "cloudCommit": "c10078142bdc769717cf8980ffcf56e2e45da8aa",
+    "pushedReference": "Cloud pushed baseline contains Xiuluo G150 private three-band rest; current dirty G183 adds the copied Wubei form. G185 replaces only that distribution and ownership boundary."
+  },
+  "rules": [
+    "BR-WUBEI-012"
+  ],
+  "affectedPaths": [
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/bot/dhxy/task/HumanizedInterRoundRest.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/test/java/com/bot/dhxy/task/G185HumanizedInterRoundRestContractTest.java"
+    }
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "The old 80/17/3 policy made 20-60 second waits occur 17 percent of the time and 90-180 second waits occur 3 percent of the time; Xiuluo and Wubei also owned duplicate implementations.",
+    "userDecision": "Use one shared seven-band policy: 70 percent 2-6s, 20 percent 6-12s, 7 percent 12-25s, 2 percent 25-45s, 0.7 percent 45-75s, 0.25 percent 75-140s, and 0.05 percent 140-180s.",
+    "decisionRecordedAt": "2026-10-12",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G185"
+  },
+  "implementationStatus": "Both tasks call HumanizedInterRoundRest only after a successful completed round when progress.shouldStartNextRound() is true. The shared policy samples the approved inclusive millisecond ranges and sleeps in stop-aware slices of at most 1000ms without physical input.",
+  "testStatus": "Cloud main Maven compile passed for 692 sources. Isolated G185 JUnit contract passed 4 of 4. Full repository Maven testCompile remains blocked by unrelated pre-existing stale tests with constructor and protocol signature drift; fresh Cloud runtime verification remains pending."
+}

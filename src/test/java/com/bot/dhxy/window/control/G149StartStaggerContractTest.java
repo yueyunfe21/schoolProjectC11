@@ -14,7 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * G149（G145 P3，用户拍板 2026-09-04：窗间错峰上限 20 秒）：
+ * G149（G145 P3，2026-09-04 首版错峰 5~20s；2026-09-08 用户拍板收窄为 1~3s——体验优先，
+ * 保留"非同秒+随机滞后+洗牌"三要素）：
  * 批量启动禁止"同秒连发+恒定顺序+恒定滞后"；战斗中 UI 清理禁止精确 40s 节拍器。
  */
 class G149StartStaggerContractTest {
@@ -32,8 +33,8 @@ class G149StartStaggerContractTest {
         long max = Long.MIN_VALUE;
         for (int i = 0; i < 300; i++) {
             long value = (long) next.invoke(null);
-            assertTrue(value >= 5_000L && value <= 20_000L,
-                    "窗间错峰必须落在用户拍板的 5~20 秒内: " + value);
+            assertTrue(value >= 1_000L && value <= 3_000L,
+                    "窗间错峰必须落在用户拍板的 1~3 秒内(2026-09-08 由 5~20s 收窄): " + value);
             min = Math.min(min, value);
             max = Math.max(max, value);
         }

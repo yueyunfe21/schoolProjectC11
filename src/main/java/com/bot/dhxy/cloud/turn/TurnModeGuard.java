@@ -222,11 +222,21 @@ public final class TurnModeGuard {
      * @return true when the requested loop stopped and was removed; false when no loop is currently registered
      */
     public boolean awaitAndRemoveStoppedRemote(String windowId) {
+        return awaitAndRemoveStoppedRemote(windowId, null);
+    }
+
+    /**
+     * Exact replacement variant: a delayed recovery must never join/remove a newer UI run.
+     * @param windowId exact nonblank window identity
+     * @param expectedLoop old loop to remove; null retains the ordinary lifecycle API behavior
+     * @return true only when the matching stopped loop was removed
+     */
+    public boolean awaitAndRemoveStoppedRemote(String windowId, WindowTurnLoop expectedLoop) {
         String exactWindowId = requireExactIdentity(windowId, "windowId");
         WindowTurnLoop loop;
         synchronized (modeMonitor) {
             loop = loopRegistry.find(exactWindowId).orElse(null);
-            if (loop == null) {
+            if (loop == null || (expectedLoop != null && loop != expectedLoop)) {
                 return false;
             }
         }

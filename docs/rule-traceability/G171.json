@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "card": "G171",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "repositories": {"cloud": "../dhxy-cloud-brain"},
+  "baseline": {
+    "clientBranch": "dev",
+    "clientCommit": "22363574",
+    "cloudCommit": "c10078142bdc769717cf8980ffcf56e2e45da8aa",
+    "pushedReference": "Cloud origin/dev verified with git ls-remote on 2026-09-10"
+  },
+  "rules": ["BR-WUBEI-003"],
+  "affectedPaths": [{"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java"}],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "Both pushed Wubei cleanup callers ignore a successful enter-battle click and unconditionally re-press tracker green.",
+    "userDecision": "赶紧修改（批准此前列出的两处消费入战成功即等待、普通清障延续、失败中断禁止继续点击）",
+    "decisionRecordedAt": "2026-09-10",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G171"
+  },
+  "connectivity": [],
+  "scopeNote": "Cloud-only DialogResult consumer and existing phase/wait lifecycle. No Client, matcher, physical click implementation, protocol or expected-combat classification changes.",
+  "verification": [
+    {"name": "isolated production compilation", "result": "PASS", "evidence": "javac --release 21 with Lombok; exit 0; output Temp/dhxy-g171-compile-c699243d846c4d21a1b78a0a585019e9"},
+    {"name": "source wiring inspection", "result": "COMPLETE_NOT_TESTED", "evidence": "Both callers return before tracker input on entry/failure/interruption; entry-click wait blocks late prepared consumption without asserting IN_COMBAT; input/template code untouched."}
+  ],
+  "testStatus": "Not created or run under current no-test override. Isolated production compilation and source review only; runtime verification pending."
+}

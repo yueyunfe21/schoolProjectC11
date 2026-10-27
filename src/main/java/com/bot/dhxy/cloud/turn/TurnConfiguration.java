@@ -21,14 +21,17 @@ public class TurnConfiguration {
     }
 
     @Bean
-    TurnClient turnClient(TurnClientProperties properties, ObjectMapper objectMapper) {
+    TurnClient turnClient(TurnClientProperties properties, ObjectMapper objectMapper,
+                          com.bot.dhxy.auth.RuntimeAuthorizationState runtimeAuthorization) {
         properties.requireValid();
         return new HttpsTurnClient(
                 properties.getBaseUri(),
                 properties.getBearerToken(),
                 properties.connectTimeout(),
                 properties.requestTimeout(),
-                objectMapper);
+                objectMapper,
+                properties.getDeviceId(),
+                runtimeAuthorization);
     }
 
     @Bean
@@ -46,7 +49,8 @@ public class TurnConfiguration {
     @Bean
     TurnLoopFactory turnLoopFactory(TurnClient turnClient,
                                     LocalTurnActionExecutor actionExecutor,
-                                    AutomationMetricsService metricsService) {
+                                    AutomationMetricsService metricsService,
+                                    com.bot.dhxy.auth.RuntimeAuthorizationState runtimeAuthorization) {
         return new TurnLoopFactory(turnClient, actionExecutor, null, (windowId, event) -> {
             // UI"当前"列跟随云端队列推进（2026-08-23）：TASK_STARTED 宣布当前执行到哪个元素。
             if (event.type() == com.bot.dhxy.cloud.turn.protocol.TurnTaskQueueEvent.Type.TASK_STARTED) {
@@ -70,7 +74,7 @@ public class TurnConfiguration {
                                 "queueIndex", Integer.toString(event.queueIndex()),
                                 "type", event.type().name()))
                         .build());
-        });
+        }, runtimeAuthorization);
     }
 
     private static AutomationMetricStatus toMetricStatus(String result) {

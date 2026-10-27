@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "card": "G174",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "repositories": {"cloud": "../dhxy-cloud-brain"},
+  "baseline": {"clientBranch":"dev","clientCommit":"2236357413ffc64621626917ca4a66183895390d","cloudCommit":"c10078142bdc769717cf8980ffcf56e2e45da8aa","pushedReference":"Cloud ls-remote verified 2026-09-10; G172/G173 dirty preserved"},
+  "rules": ["BR-NPC-001", "BR-NPC-002"],
+  "affectedPaths": [
+    {"repo":"cloud","path":"src/main/java/com/yueyunfe/dhxy/cloudbrain/NpcClickMemoryStore.java"},
+    {"repo":"cloud","path":"src/main/java/com/yueyunfe/dhxy/cloudbrain/SmartClickRecognizer.java"},
+    {"repo":"cloud","path":"src/main/resources/config/npc_click_memory_seeds.json"}
+  ],
+  "businessDifference": {"kind":"USER_APPROVED","conflictSummary":"Existing ordinary memory requires exact player position; user requests a separately scoped corner memory with a distance condition, not a global relaxation.","userDecision":"人物站位可以接受，离那个坐标30以后距离都行；澄清30以内后回复对；多点按地图/NPC/目标对应方案后回复可以。","decisionRecordedAt":"2026-09-10","cardReference":"docs/PACKAGE_ARCHITECTURE.md#G174"},
+  "connectivity": [
+    {"rule":"BR-NPC-002","producer":"NpcClickMemoryStore seeds and lookupCorner + SmartClickRecognizer MEMORY stage","transport":"existing NPC FIFO candidate session/window/run/decision and verifier outcome","consumer":"NpcArrivalFrameFifoLocalExecutor existing left-click and verifier; NpcClickMemoryStore corner outcome; retireWorkingMemory","ordering":"corner candidate BEFORE ordinary memory and yellow OCR, unique scene before candidate, existing producer barrier before next strategy, matching strong verification before corner evidence persistence","contracts":[{"repo":"client","path":"docs/rule-traceability/G174-contract.md","command":"NOT RUN: specification only; no test authorization","proves":["corner is first even when ordinary memory is nonempty","per-run attempts and verifier feedback stay connected","corner results cannot bypass constraints through ordinary memory"]}]},
+    {"rule":"BR-NPC-001","producer":"existing exact lookupNext","transport":"existing MEMORY FIFO","consumer":"existing client verifier and permanent stack","ordering":"unchanged ordinary LIFO and producer barrier","contracts":[{"repo":"client","path":"docs/rule-traceability/G174-contract.md","command":"NOT RUN: specification only; no test authorization","proves":["ordinary memory unchanged"]}]}
+  ],
+  "scopeDecision":"用户实施中明确：就是需要写死是白龙马！Both producer and lookup hard-restrict 白龙马; configuration cannot enable other NPCs.",
+  "calibrationDecision":"用户明确全屏坐标并要求代为换算，按当次日志窗口原点计算窗口相对点，seed启用；不再停用等待重复确认。",
+  "priorityDecision":"用户明确：我要的是直接就是用这个点，这个点必须要在洗黄字这些之前直接点击。适用角落点先于普通历史记忆，失败才继续原策略。",
+  "testStatus":"No tests authorized or run. Priority correction in SmartClickRecognizer plus store comment compiled together with isolated JDK21 javac exit 0, temp dhxy-g174-priority-0a3365ef9ca04336b740cce90bb7196b. First seed enabled; corner lookup now precedes ordinary memory. No target/classes write, runtime database mutation, restart, input or runtime acceptance."
+}

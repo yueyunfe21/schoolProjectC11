@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "card": "G175",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "implementationStatus": "Implemented; isolated compilation passed; user declined tests; awaiting review/deployment",
+  "migrationInventory": {"path": "docs/rule-traceability/G175-migration-inventory.md", "status": "SOURCE_INVENTORY_ONLY", "decision": "用户要求先盘点Cloud识图适配位置，纯本地匹配排除；待首适配稳定后再实施。没有新增批量迁移授权。", "scope": "Observer/inbox image consumers, DecisionEngine image routes, Cloud image ports and direct service/task readers, paired Client producers/local exclusions; existing queues and synchronous calls classified separately"},
+  "repositories": {"cloud": "../dhxy-cloud-brain"},
+  "baseline": {"clientBranch": "dev", "clientCommit": "2236357413ffc64621626917ca4a66183895390d", "cloudCommit": "c10078142bdc769717cf8980ffcf56e2e45da8aa", "pushedReference": "Both origin/dev; touched Cloud inbox/observer match pushed files before changes; preserve G168-G176 unrelated dirty"},
+  "rules": ["BR-WUBEI-005"],
+  "affectedPaths": [
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/observation/DialogFrameMailbox.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/observation/CloudWindowObservationInbox.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java"}
+  ],
+  "businessDifference": {"kind": "USER_APPROVED", "conflictSummary": "Replace latest-whole-sample publishing gate for WUBEI_PROBE_STORY with stable in-flight evidence plus one latest pending frame; no image deduplication", "userDecision": "可以，那就按照你说的。（一张正在处理加一张待处理最新图；失败可重试同内容；成功清同交互；不影响可靠事件）", "decisionRecordedAt": "2026-09-10", "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G175"},
+  "connectivity": [{"rule": "BR-WUBEI-005", "producer": "WindowObservationSampler.sampleCurrentDialogInterestFact/sampleRoi existing 2000ms subscription", "transport": "ObservationRequest same-envelope interest/ROI -> CloudWindowObservationInbox paired latest pending sample", "consumer": "CloudWholeTaskObserver.probeAttention/probeQueuedDialogAttention -> retained Wubei story result -> CloudDialogPreparedActionState exact receipt -> WubeiTask.tryConsumePreparedWubeiDialog", "ordering": "Pair before heartbeat overwrite; one in-flight; newer uploads replace pending only; preserve result across busy slot; exact consume or cancellation before retirement", "contracts": [{"repo": "client", "path": "docs/rule-traceability/G175-contract.md", "command": "NOT RUN: user explicitly requested code changes and isolated compilation only, no test creation/execution", "proves": ["SPECIFICATION ONLY, NOT VERIFIED: same-envelope sample survives heartbeats", "SPECIFICATION ONLY: single in-flight and latest pending", "SPECIFICATION ONLY: receipt/cancellation/replacement lifecycle", "SPECIFICATION ONLY: same-content new-frame retries"]}]}],
+  "plannedNewPaths": ["cloud:src/main/java/com/yueyunfe/dhxy/cloudbrain/observation/DialogFrameMailbox.java"],
+  "scopeDecision": "用户追加：这是可复用机制，只是目前白龙马先用；公共邮箱无任务名，首适配只读WUBEI_PROBE_STORY。意外路由OPTION保留原顺序及旧采样门，不用其消费回执冒充点击成功。其他任务、2秒上传配置、视觉ROI及NPC verifier不动。",
+  "testStatus": "User explicitly declined tests; none created or run. Three Cloud production sources compiled with JDK21 javac exit 0 into C:/Users/Yunfeng Yue/AppData/Local/Temp/dhxy-g175-compile-c222bd1b390c4a4fa6f0b4f91e23350e. No target/classes writes, restart, deployment, screenshots or game input. Dynamic frame cropping and runtime acceptance remain pending."
+}

@@ -26,9 +26,11 @@ public class OpenCvLocalMaintenanceBroadcastHandler implements LocalMaintenanceB
     private static final Logger log = LoggerFactory.getLogger(OpenCvLocalMaintenanceBroadcastHandler.class);
 
     static final int ROI_LEFT = 260;
-    static final int ROI_TOP = 373;
+    static final int ROI_TOP = 360;
     static final int ROI_WIDTH = 118;
-    static final int ROI_HEIGHT = 40;
+    static final int ROI_HEIGHT = 53;
+    private static final int REPAIR_ROI_TOP = 373;
+    private static final int REPAIR_ROI_HEIGHT = 40;
     static final int SMALL_DIALOG_ROI_LEFT = 250;
     static final int SMALL_DIALOG_ROI_TOP = 312;
     static final int SMALL_DIALOG_ROI_WIDTH = 529;
@@ -143,12 +145,16 @@ public class OpenCvLocalMaintenanceBroadcastHandler implements LocalMaintenanceB
             return null;
         }
         for (LoadedTemplate template : templates) {
-            double[] match = ImageFinder.find(roi, template.image(), MATCH_THRESHOLD);
+            // 同一张截图覆盖两种医治排版；修装备仍只看原区域，不扩大其点击判据。
+            int topInset = "repair-confirm".equals(template.actionKey()) ? REPAIR_ROI_TOP - ROI_TOP : 0;
+            BufferedImage search = topInset == 0 ? roi
+                    : roi.getSubimage(0, topInset, ROI_WIDTH, REPAIR_ROI_HEIGHT);
+            double[] match = ImageFinder.find(search, template.image(), MATCH_THRESHOLD);
             // 用户铁律（2026-08-18 全量清扫）：模板匹配点落盘判定原图。
             MatchEvidenceStore.saveOnChange(
-                    "maintenance-broadcast-" + template.actionKey(), null, roi, template.image(), match);
+                    "maintenance-broadcast-" + template.actionKey(), null, search, template.image(), match);
             if (match != null && match.length >= 3) {
-                return new LocalMatch(template.actionKey(), match[0], match[1], match[2]);
+                return new LocalMatch(template.actionKey(), match[0], match[1] + topInset, match[2]);
             }
         }
         return null;
