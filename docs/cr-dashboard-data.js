@@ -113,11 +113,11 @@ window.CR_DASHBOARD_DATA = [
     "id": "G184",
     "number": 184,
     "owner": "Codex",
-    "status": "**fresh启动预验包已生成 / 双机升级未验**",
+    "status": "**真实 B 已发布 / A 已发现更新 / 待安装重启验收**",
     "kind": "open",
     "domain": "通用",
-    "files": "双机发布更新、专属大脑与运行中禁版",
-    "summary": "已解除无大脑不能打开UI的限制，并补齐安装器Java运行时；277MB本地预验包已打出，未运行/发布。正式双机升级待候选发布和验收。",
+    "files": "软件内自动更新、专属大脑与运行中禁版",
+    "summary": "干净 A/B 均由 master Gamma 生成；B 已签名公开并公告，A 已真实弹出更新提示。待点击后核下载、安装、指针切换与自动重启。",
     "verification": "需复核"
   },
   {

@@ -86,6 +86,7 @@
 
 ## G184 软件更新、可选升级与服务端禁用旧版（2026-09-18）
 
+- **2026-10-26 真实 A→B 发布测试：** 当前客户端原样快照形成干净 A `0.1.0-b40441320327.1`；B 只把版本改为 `0.1.1-b40441363711.1`，两次 master Gamma 均成功且下载后 SHA256 与候选清单一致。B 已作为 public optional GitHub Release 发布，ZIP、candidate、distribution、RSA 签名 update-manifest 四资产均核 GitHub uploaded/digest；Worker 公告 CAS 到 revision 1，`enforced=false`，不禁任何旧版。A 已在独立目录以 update-only 启动并真实弹出 B 更新提示，尚待用户点击后验收后台下载、签名校验、外部安装、原子版本指针和自动重启；在 `installer-status.json=COMPLETE` 前不得关闭本卡。
 - **2026-09-21 fresh 启动包实际交付（不是跨电脑升级已通过）：** 已修 `Start-DHXY.ps1` 的无 Cloud 配置直接退出；缺少正式 UUID/地址/token 时显式 update-only，保留更新界面、不启动 capture/FakerInput/全局热键，RuntimeAuthorizationState 拒绝会话激活、任务/输入/传输；常规配置运行保持原路径。Spring transport 仅此模式接受空 token，不注入假凭据。安装包首次显示即检查版本，不依赖登录大脑成功。例子补 UUID，README 同步。
 - **打包链实查与修复：** 首包内容发现缺少 `runtime/bin/javaw.exe`，而外部安装器依赖它；JDK21 本机 jpackage help 确认默认 `--strip-native-commands`。构建显式保留 native commands，并在生成 ZIP 前确认 java/javaw 都存在。首包 `.release-build/g184-fresh-package-20260921` 为已知不完整，勿使用；未删除，保留诊断。
 - **本轮产物与边界：** 最终339源码隔离 compile 10.611s / jar 1.289s 均 exit0，jpackage/ZIP exit0。有效 fresh 启动包 `.release-build/g184-fresh-package-20260921-r2/artifacts/client-0.1.0-b20260921.2-windows-x64.zip`，277207693字节，SHA256 `6d53e1ade9172cb70937b094dc846a0306884aedb5d6a4b9ffa9f4ac32ea39a9`。只读 ZIP 确认根启动器、EXE、JAR、java/javaw 和配置例子；PS解析通过。此为 dirty=true / NOT_TESTED 本地预验包，不是已验收Gamma，现有保护不允许它自动替换或晋级Prod。独立 UI 启动验证已向用户询问，尚未运行；没有游戏输入、活动客户端重启或活动 target 写入。第二台真正升级还需干净候选A/B、远端工作流/公告凭据、人工验收和真实发布，不能把此包说成整条已打通。
@@ -14683,7 +14684,7 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | G187 | Codex | **已实现 / 隔离编译通过 / 待客户端重启实跑** | 客户端 JVM 参数真源、启动/打包脚本、轻量内存诊断 | 初始堆降至512MiB、显式上限6GiB并启用5分钟G1周期回收；统一本地与成品参数，记录真实堆/直接内存/线程/窗口/输入队列。 |
 | G186 | Codex | **已实现 / 合同2项通过 / 待重启实跑** | Cloud 修罗、五倍成功出口；通用盒子规则与合同 | 成功轮归队后先消费队长盒子，再记进度和随机休息；最后一轮也尝试，避免30秒pending被长等待吃掉。 |
 | G185 | Codex | **已实现 / 合同4项通过 / 待重启实跑** | Cloud 公共轮间休息策略、修罗、五倍；业务规则与合同 | 修罗和五倍共用七档拟人轮间休息，替代复制的三档 `80/17/3`，将140～180秒降到0.05%；主源码编译通过。 |
-| G184 | Codex | **fresh启动预验包已生成 / 双机升级未验** | 双机发布更新、专属大脑与运行中禁版 | 已解除无大脑不能打开UI的限制，并补齐安装器Java运行时；277MB本地预验包已打出，未运行/发布。正式双机升级待候选发布和验收。 |
+| G184 | Codex | **真实 B 已发布 / A 已发现更新 / 待安装重启验收** | 软件内自动更新、专属大脑与运行中禁版 | 干净 A/B 均由 master Gamma 生成；B 已签名公开并公告，A 已真实弹出更新提示。待点击后核下载、安装、指针切换与自动重启。 |
 | G183 | Codex | **历史实现 / 分布已由G185替代** | 五倍成功轮间休息边界 | 五倍只在成功且有下一轮时休息的边界继续有效；旧三档数值和私有实现已由G185公共七档策略替代。 |
 | G182 | Codex | **普通预扫已禁用 / 隔离编译通过 / 未测试待部署** | 五倍提前开包、修罗同款禁用开关 | 三入口已加false开关；正式回城及显形镜专用记录保留，召唤指代待澄清，未重启。 |
 | G181 | Codex | **G194已修复连续状态 / 双端编译通过 / 待fresh复验** | 可复用飞行初筛、公共队长连续状态、五倍绿链确保飞行 | 同一白龙马无战斗链现在复用队长状态；入战/Alt+C等边界失效。换地图误触发须以fresh无重复采样/按键确认。 |

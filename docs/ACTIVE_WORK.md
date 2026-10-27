@@ -5,6 +5,9 @@
 - **用户授权与目标：** 用户明确要求现在生成并发布一个可供软件内点击更新的测试新版；用户侧不得手工下载、解压或选择安装目录，点击更新后由客户端后台取包、校验、安装并重启。本轮允许制作和公开一个 `optional` 测试 Release，并激活推荐版本公告；不启用 `required`、不禁用任何旧版、不启动游戏或发送输入。
 - **活动工作树与推送基线：** 目标为 `D:\mavenProject\DHXY-cr271`，shell 已确认 `dev@2236357413ffc64621626917ca4a66183895390d`，`HEAD == origin/dev`；`origin/master@0468cc101b383700e224e7e4bf2fee551de930f1`。受保护 `D:\mavenProject\DHXY` 不修改。当前多卡 dirty 与未跟踪文件全部保留，发布前不得用宽泛 add/commit 混入未知文件；先核实际编译闭包、凭据门、干净 A/B 产物和远端发布能力。
 - **开始前事实：** 本地更新按钮真实匿名请求已部署 Worker；2026-10-26 只读返回 `revision=0 / enforced=false / latestVersion="" / releaseUrl=""`。GitHub 公共仓库当前无 Release；更新器、工作流和发布脚本仍在本地 dirty/untracked，远端尚不可运行。现有 `g184-fresh-package-20260921-r2` 为 `dirty=true / NOT_TESTED`，`ClientUpdateService.checkedRoot()` 会拒绝其自动替换，不能冒充测试基准 A。
+- **真实发布进展：** 当前客户端快照已提交为 `2163c2a74066857311574cbb2c968a8264d2edf6` 并快进推送到 `dev/master`；A 的 Gamma run `40441320327.1` 成功，候选 `client-0.1.0-b40441320327.1` 为 `dirty=false`，ZIP 280057927 字节且 SHA256 `e53f462ce9a20977ca2a978187f0361a86fff3ed49e725b11bd5e7c5bc7ba7d5` 实核一致。B 仅修改 `release/version.txt` 为 `0.1.1`，提交 `6cf6c3925e51ba87b07dcb6cef9fb1a7b2a7110e`；Gamma run `40441363711.1` 成功，ZIP 280056285 字节且 SHA256 `65f31807ad599f7b3512667aa886b0e02a375acbf52f30fcf9983d1352f629be` 实核一致。
+- **B 已公开但保持可选：** GitHub Release `client-0.1.1-b40441363711.1` 已公开，四项资产 `candidate.json`、完整 ZIP、`distribution.json`、RSA 签名 `update-manifest.json` 均由 GitHub 返回 uploaded/digest；Worker 版本政策已 CAS 从 revision 0 更新为 1，`enforced=false`，`latestVersion=0.1.1-b40441363711.1`，未改 allow/revoke/minimum、未禁旧版。
+- **本机真实 A→B 验收状态：** A 已解压到 `.release-build/g184-live-test-install-A/DHXY` 并由根 `Start-DHXY.ps1` 以 update-only 启动；日志确认 input device 未连接、0 注册窗口、无自动任务。A 已真实显示“发现新版本 0.1.1-b40441363711.1”及“下载更新”按钮。当前尚未发生用户点击，`.updates` 未生成；下载、签名消费、外部安装、版本指针切换与重启仍待本次点击后验收，不能提前标 COMPLETE。
 
 ## G194 跨绿链飞行状态连续性与失效边界调查（2026-10-25）
 
